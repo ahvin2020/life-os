@@ -24,10 +24,12 @@ data-subs='{{ t.subtasks|tojson }}'
       <div class="head">
         <span class="ringwrap" id="rw-t{{ t.id }}"><svg class="ring" id="ring-t{{ t.id }}" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
         <span class="t taskedit">{{ t.title }}</span>
-        <span class="subcount" id="cnt-t{{ t.id }}">{{ t.sub_done }}/{{ t.sub_total }}</span>
-        {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
-        <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
-        {{ due_span(t, today) }}
+        <span class="trow">
+          <span class="subcount" id="cnt-t{{ t.id }}">{{ t.sub_done }}/{{ t.sub_total }}</span>
+          {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
+          <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+          {{ due_span(t, today) }}
+        </span>
       </div>
       <div class="subs" data-ring-init="t{{ t.id }}">
         {% for s in t.subtasks %}
@@ -40,9 +42,11 @@ data-subs='{{ t.subtasks|tojson }}'
       {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
       <label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}" {{ 'checked' if t.done else '' }}></label>
       <label class="taskedit">{{ t.title }}</label>
-      {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
-      <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
-      {{ due_span(t, today) }}
+      <span class="trow">
+        {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
+        <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+        {{ due_span(t, today) }}
+      </span>
     </div>
   {% endif %}
 {%- endmacro %}
@@ -66,11 +70,13 @@ data-subs='{{ t.subtasks|tojson }}'
         {% if t.recur_rule %}<span class="rec" title="recurring">↻ {{ t.recur_rule }}</span>{% endif %}
       </span>
     {% endif %}
+    {% if t.priority or t.due_date or t.goal_id or t.planned_on == today %}
     <div class="krow">
       {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
-      {% if t.due_date %}{{ due_span(t, today) }}{% else %}<span class="due">no date</span>{% endif %}
+      {% if t.due_date %}{{ due_span(t, today) }}{% endif %}
       {% if t.goal_id %}<span class="goalref">◎ goal</span>{% endif %}
-      <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+      <button class="planbtn kplan {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
     </div>
+    {% endif %}
   </div>
 {%- endmacro %}

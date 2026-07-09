@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Journal{% endblock %}
 {% block content %}
-<div class="vhead"><h1>Journal</h1><span class="date">{{ today_pretty }}</span><span class="spacer"></span><span class="chip">one page per day</span></div>
+<div class="vhead"><h1>Journal</h1><span class="date">{{ today_pretty }}</span></div>
 
 <div class="jgrid">
   <div class="jmain">
@@ -25,9 +25,7 @@
       {% else %}
         <div class="empty">No entry yet. Write how the day went — what you did, ate, felt.</div>
       {% endif %}
-      <div class="erow" style="margin-top:8px">
-        <textarea id="j-text" data-day="{{ today }}" placeholder="Add a timestamped entry…" style="flex:1;min-height:70px;resize:vertical"></textarea>
-      </div>
+      <textarea id="j-text" class="jadd" data-day="{{ today }}" placeholder="Add a timestamped entry…" rows="4"></textarea>
       <div class="erow"><span class="spacer" style="flex:1"></span><button class="qgo" id="j-add" type="button">＋ Add entry</button></div>
     </div>
 
@@ -57,8 +55,12 @@
       {% for c in today_so_far.completed %}
       <div class="agrow dim"><span class="when">✓</span><span class="what">{{ c.title }}</span></div>
       {% endfor %}
-      <div class="agrow dim"><span class="when">·</span><span class="what">{{ today_so_far.captures }} captured today</span></div>
-      <div class="cap" style="border-top:1px solid var(--border);padding-top:6px"><div class="meta">material for tonight's entry — auto-collected, never written for you</div></div>
+      {% if today_so_far.captures %}
+      <div class="agrow dim"><span class="what"><span class="num">{{ today_so_far.captures }}</span> captured today</span></div>
+      {% endif %}
+      {% if not today_so_far.completed and not today_so_far.captures %}
+      <div class="empty" style="font-size:12px">Nothing done or captured yet today.</div>
+      {% endif %}
     </div>
   </div>
 </div>

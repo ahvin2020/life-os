@@ -139,6 +139,10 @@ a:hover { text-decoration: underline; }
   background-position: 0 calc(100% - .42em); background-size: 0% 1.4px;
   transition: background-size var(--dur) var(--ease), color var(--dur) var(--ease); }
 .task.done label { color: var(--muted); background-size: 100% 1.4px; }
+/* trailing chips (category, plan pill, due). display:contents = invisible wrapper on
+   desktop (row unchanged); on narrow widths it becomes a full-width SECOND row so the
+   title keeps the whole first row instead of being squeezed to a few characters. */
+.trow { display: contents; }
 .due { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
 .due.today { color: var(--accent); }
 .due.over { color: var(--bad); }
@@ -181,7 +185,7 @@ a:hover { text-decoration: underline; }
 .cap-more, .jmore { display: none; }
 @media (hover: hover) and (pointer: fine) {
   .cap .chg-toggle, .cap .cap-del, .task .planbtn, .ptask .head .planbtn,
-  .krow .planbtn, .jentry .jact { opacity: 0; transition: opacity var(--dur) var(--ease); }
+  .kcard .kplan, .jentry .jact { opacity: 0; transition: opacity var(--dur) var(--ease); }
   .cap .chg-toggle, .cap .cap-del, .goal .gdel { opacity: 0; }
   .cap:hover .chg-toggle, .cap:focus-within .chg-toggle,
   .cap:hover .cap-del, .cap:focus-within .cap-del,
@@ -201,12 +205,20 @@ a:hover { text-decoration: underline; }
 .kbd { font-family: var(--mono); font-size: 11.5px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text); }
 
 /* ---------- kanban ---------- */
+/* Standard kanban: each column caps at viewport height and its card stack scrolls
+   INTERNALLY, so a 70-item backlog never stretches the page to thousands of px. */
 .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
-.col { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
-.col h3 { margin: 0 2px 2px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; display: flex; }
+.col { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 128px); }
+.col h3 { margin: 0 2px 2px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; display: flex; flex: 0 0 auto; }
 .col h3 .count { margin-left: auto; }
+.kstack { display: flex; flex-direction: column; gap: 9px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; margin-right: -6px; }
+.col .addrow { flex: 0 0 auto; }
 /* elevation on hover/drag = lighter surface + brighter border (no shadows in dark UI) */
 .kcard { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: grab; display: flex; flex-direction: column; gap: 6px; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+/* plan pill sits in the meta row (hover-reveal on desktop, always-on when planned).
+   The meta row itself only renders when the card has a date/priority/goal OR is
+   planned, so a bare backlog card stays a single dense line. */
+.krow .kplan { margin-left: auto; }
 .kcard:hover { border-color: var(--border2); transform: translateY(-2px); background: var(--surface3); }
 .kcard.sortable-ghost { opacity: .35; }
 .kcard.sortable-chosen { transform: rotate(1.4deg) scale(1.02); background: var(--surface3); border-color: var(--accent); cursor: grabbing; }
@@ -216,7 +228,8 @@ a:hover { text-decoration: underline; }
 .krow { display: flex; align-items: center; gap: 8px; }
 .goalref { font-size: 11.5px; color: var(--link); }
 .kcard .subs { margin-left: 2px; margin-top: 2px; }
-.hint { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 14px; line-height: 1.6; }
+/* prose hint — sans + muted (mono is reserved for data, per ux-standards) */
+.hint { font-family: var(--sans); font-size: 12.5px; color: var(--muted); margin-top: 14px; line-height: 1.6; }
 
 /* ---------- notes gallery ---------- */
 .ntools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
@@ -297,6 +310,9 @@ a:hover { text-decoration: underline; }
 .agrow .when { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 0 0 46px; }
 .agrow .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agrow.dim { opacity: .4; }
+.agrow .what .num { font-family: var(--mono); }
+/* journal add-entry box — full width of its card, 4–5 rows, autogrows while typing */
+textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1.6; }
 .agrow.blocked .what { color: var(--accent); }
 .nowline { display: flex; align-items: center; gap: 8px; color: var(--accent); font-family: var(--mono); font-size: 10.5px; margin: 3px 0; }
 .nowline::before, .nowline::after { content: ""; flex: 1; height: 1px; background: rgba(226,168,75,.45); }
@@ -330,6 +346,7 @@ a:hover { text-decoration: underline; }
 .editor .ehead { display: flex; gap: 10px; align-items: center; }
 .editor .ehead input { flex: 1; background: none; border: none; color: var(--text); font: inherit; font-size: 18px; font-weight: 600; min-width: 0; }
 .editor .ehead input:focus { outline: none; }
+.editor .ehead .etag { font-size: 10.5px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; }
 .editor textarea { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 14.5px; line-height: 1.6; padding: 12px; min-height: 180px; resize: vertical; transition: border-color var(--dur) var(--ease); }
 .editor .erow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .editor .saved { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--good); }
@@ -359,6 +376,16 @@ a:hover { text-decoration: underline; }
   .qtypes { display: none; }
   .task input, .sub input { width: 20px; height: 20px; }
   .task, .sub { padding-top: 8px; padding-bottom: 8px; }
+  /* narrow: title owns the full first row (wraps ≤2 lines); chips + plan pill drop to
+     a compact second row (.trow) instead of truncating the title to ~6 chars. */
+  .task, .ptask .head { flex-wrap: wrap; align-items: flex-start; row-gap: 5px; }
+  .task > label.taskedit, .ptask .head > .t {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35;
+  }
+  .task .trow, .ptask .head .trow {
+    display: flex; flex: 1 1 100%; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
   /* ≥44px effective hit areas on phones (CLAUDE.md UX). Visible controls stay
      compact; the tap zone is grown with a transparent ::after overlay, or a
      padded wrapper for the checkbox (inputs can't take ::after). */
@@ -379,8 +406,8 @@ a:hover { text-decoration: underline; }
   .cap.acts .chg-toggle, .cap.acts .cap-del { display: inline-block; }
   .jentry .jact { display: none; }
   .jentry.acts .jact { display: inline-block; }
-  .task .planbtn, .ptask .head .planbtn, .krow .planbtn { display: none; }
-  .task .planbtn.on, .ptask .head .planbtn.on, .krow .planbtn.on { display: inline-block; }
+  .task .planbtn, .ptask .head .planbtn, .kcard .kplan { display: none; }
+  .task .planbtn.on, .ptask .head .planbtn.on, .kcard .kplan.on { display: inline-block; }
 }
 @media (max-width: 460px) { .ngrid { grid-template-columns: 1fr; } }
 

@@ -16,7 +16,7 @@
   {% for col in ['backlog', 'week', 'done'] %}
   <div class="col" data-col="{{ col }}">
     <h3>{{ titles[col] }} <span class="count">{{ counts[col] }}</span></h3>
-    <div class="kstack" style="display:flex;flex-direction:column;gap:9px;min-height:20px">
+    <div class="kstack">
       {% for t in board[col] %}{{ m.kcard(t, today) }}{% endfor %}
     </div>
     {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ add task</button>

@@ -81,3 +81,68 @@ def test_feed_delete_task_soft_deletes_and_restores(client):
     row = conn.execute("SELECT deleted_at FROM tasks WHERE id=?", (tid,)).fetchone()
     conn.close()
     assert row["deleted_at"] is None
+
+
+# ── #imported exclusion: imported TASKS (via the ledger) + today-so-far count ──
+def test_feed_excludes_imported_tasks(client, monkeypatch):
+    """Notes are filtered by the #imported tag; imported TASKS carry no tag, so the
+    captured feed must drop them via the import ledger (the missed second code path)."""
+    conn = _db()
+    with conn:
+        keep = create_task(conn, "Real task today", col="week")
+        skip = create_task(conn, "Imported task today", col="backlog")
+    conn.close()
+    import routes_main
+    monkeypatch.setattr(routes_main, "imported_task_ids", lambda: {skip})
+    home = client.get("/").data.decode()
+    assert "Real task today" in home
+    assert "Imported task today" not in home
+
+
+def test_today_so_far_count_excludes_imported_notes(client):
+    from routes_journal import today_so_far
+    vault_store.create_note(title="Fresh capture", body="x", tags=["idea"])
+    vault_store.create_note(title="Backfilled", body="y", tags=["imported"])
+    conn = _db()
+    tsf = today_so_far(conn, today_iso())
+    conn.close()
+    assert tsf["captures"] == 1        # imported backfill is not "captured today"
+
+
+# ── URL captures fetch the page's real title (og:title / <title>), mocked fetch ─
+import capture  # noqa: E402
+
+
+class _FakeResp:
+    def __init__(self, text):
+        self.text = text
+
+
+def test_url_title_prefers_og_title(monkeypatch):
+    html = '<html><head><meta property="og:title" content="Great Reel &amp; Title"></head></html>'
+    monkeypatch.setattr(capture.requests, "get", lambda *a, **k: _FakeResp(html))
+    assert capture._url_title("https://www.instagram.com/reel/abc") == "Great Reel & Title"
+
+
+def test_url_title_falls_back_to_title_tag(monkeypatch):
+    html = "<html><head><title>  Cost of living in SG  </title></head></html>"
+    monkeypatch.setattr(capture.requests, "get", lambda *a, **k: _FakeResp(html))
+    assert capture._url_title("https://example.com/x") == "Cost of living in SG"
+
+
+def test_url_title_fallback_is_domain_link_on_error(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("timeout")
+    monkeypatch.setattr(capture.requests, "get", boom)
+    assert capture._url_title("https://instagram.com/reel/abc") == "instagram.com link"
+
+
+def test_route_capture_url_note_titled_from_page(client, monkeypatch):
+    monkeypatch.setattr(capture.requests, "get",
+                        lambda *a, **k: _FakeResp("<title>Real Video Title</title>"))
+    conn = _db()
+    res = capture.route_capture(conn, "https://www.youtube.com/watch?v=xyz")
+    conn.close()
+    note = vault_store.read_note(res["slug"])
+    assert note["title"] == "Real Video Title"      # not the bare domain
+    assert "idea" in note["tags"]                    # youtube → idea domain

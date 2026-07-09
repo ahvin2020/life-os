@@ -9,13 +9,35 @@ source of truth for inserting a task, shared by route_capture and routes_tasks.
 
 from __future__ import annotations
 
+import html as _html
+import json
+import os
 import re
+
+import requests
 
 from db import now_iso, today_iso
 import vault_store
 
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _IDEA_DOMAINS = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
+
+_LEDGER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "data", "import_ledger.json")
+
+
+def imported_task_ids() -> set:
+    """Task ids created by the bulk-import tool (data/import_ledger.json). Tasks carry
+    no #imported tag, so the ledger is the ONLY record that a task was backfilled —
+    used to keep imports out of the 'captured today' feed and counts."""
+    try:
+        with open(_LEDGER_PATH, encoding="utf-8") as f:
+            ledger = json.load(f)
+    except Exception:
+        return set()
+    return {rec.get("id") for rec in ledger.values()
+            if isinstance(rec, dict) and rec.get("destination") == "task"
+            and rec.get("id") is not None}
 
 
 def next_sort_order(conn, col: str, parent_id=None) -> int:
@@ -138,11 +160,34 @@ def _as_journal(text) -> dict:
     return {"kind": "journal", "id": day, "label": "today's Journal"}
 
 
+_OG_TITLE_RE = re.compile(
+    r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', re.I)
+_OG_TITLE_RE2 = re.compile(
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']og:title["\']', re.I)
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
 def _url_title(text):
+    """Title for a URL capture: the page's og:title (or <title>), fetched with a 3s
+    timeout. Falls back to '<domain> link' so a note is never titled a bare domain."""
     m = _URL_RE.search(text)
     url = m.group(0) if m else text
-    host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
-    return host or "link"
+    host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0].strip()
+    fallback = f"{host} link" if host else "link"
+    if not m:
+        return fallback
+    try:
+        resp = requests.get(
+            url, timeout=3, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; LifeOS/1.0)"})
+        page = resp.text or ""
+        mt = _OG_TITLE_RE.search(page) or _OG_TITLE_RE2.search(page) or _TITLE_RE.search(page)
+        title = _html.unescape(re.sub(r"\s+", " ", mt.group(1)).strip()) if mt else ""
+        if title:
+            return title[:120]
+    except Exception:
+        pass
+    return fallback
 
 
 # ── refiling helpers (shared by the Change button + Claude triage) ─────────────

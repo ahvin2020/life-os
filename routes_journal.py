@@ -44,7 +44,9 @@ def today_so_far(conn, today: str) -> dict:
     completed = conn.execute(
         "SELECT title, completed_at FROM tasks WHERE done=1 AND completed_at=? "
         "AND parent_id IS NULL ORDER BY completed_at", (today,)).fetchall()
-    cap_count = sum(1 for n in vault_store.list_notes() if (n["created"] or "")[:10] == today)
+    # imports (#imported notes) are backfill, not something captured today
+    cap_count = sum(1 for n in vault_store.list_notes()
+                    if (n["created"] or "")[:10] == today and "imported" not in (n["tags"] or []))
     return {
         "completed": [{"title": r["title"]} for r in completed],
         "captures": cap_count,

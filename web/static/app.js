@@ -188,6 +188,9 @@
       var col = stack.closest(".col").dataset.col;
       Sortable.create(stack, {
         group: "kanban", animation: 140, draggable: ".kcard", ghostClass: "sortable-ghost",
+        // columns now scroll internally (viewport-height board) — keep drag usable by
+        // auto-scrolling the stack under the cursor while dragging near its edges.
+        scroll: true, scrollSensitivity: 90, scrollSpeed: 12, bubbleScroll: true,
         onEnd: function () {
           var targetStack = stack;
           var targetCol = targetStack.closest(".col").dataset.col;
@@ -241,7 +244,12 @@
     var elTitle = document.getElementById("ed-title"), elTags = document.getElementById("ed-tags"),
         elBody = document.getElementById("ed-body"), elSaved = document.getElementById("ed-saved"),
         elPin = document.getElementById("ed-pin");
-    var current = null, saveTimer = null, pinned = false, creating = false;
+    var current = null, saveTimer = null, pinned = false, creating = false, savedTimer = null;
+    function flashSaved() {
+      elSaved.textContent = "saved ✓";
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(function () { elSaved.textContent = ""; }, 1800);
+    }
     function open(slug) {
       fetch("/notes/" + slug).then(function (r) { return r.json(); }).then(function (j) {
         if (j.status !== "ok") return;
@@ -271,7 +279,7 @@
         post("/notes/" + current + "/save", {
           title: elTitle.value, tags: elTags.value, body: elBody.value,
           pinned: pinned ? "1" : "0"
-        }).then(function () { elSaved.textContent = "saved ✓"; });
+        }).then(flashSaved);
         return;
       }
       // no note yet: only create once there is real content (guard against a
@@ -284,7 +292,7 @@
       }).then(function (res) {
         creating = false;
         if (res.data && res.data.slug) {
-          current = res.data.slug; elSaved.textContent = "saved ✓";
+          current = res.data.slug; flashSaved();
         } else { elSaved.textContent = ""; }
       });
     }
@@ -534,10 +542,12 @@
   // ---- textareas grow with their content (never a scrollbar inside a box) ------
   function autogrow(el) {
     el.style.height = "auto";
-    el.style.height = Math.max(el.scrollHeight + 2, 70) + "px";
+    var min = parseInt(window.getComputedStyle(el).minHeight, 10) || 70;
+    el.style.height = Math.max(el.scrollHeight + 2, min) + "px";
   }
   document.querySelectorAll("textarea").forEach(function (t) {
     t.addEventListener("input", function () { autogrow(t); });
+    autogrow(t);   // size correctly on load (respects each textarea's min-height)
   });
 
   // ---- journal: per-entry edit / delete (byte-preserving, with undo) -----------

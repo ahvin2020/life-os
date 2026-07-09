@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kelvin.lifeos.backup</string>
+
+  <!-- Nightly SQLite backup under the repo's venv. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/.venv/bin/python</string>
+    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/scripts/backup_db.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os</string>
+
+  <!-- Fire once daily at 03:00 local time. Not KeepAlive — it runs and exits. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- If the Mac was asleep at 03:00, run the missed job on next wake. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/backup.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/backup.err.log</string>
+</dict>
+</plist>

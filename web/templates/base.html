@@ -86,9 +86,13 @@
 <div class="overlay" id="noteoverlay">
   <div class="editor" role="dialog" aria-label="Edit note">
     <div class="ehead">
-      <input id="ed-title" placeholder="Note title" aria-label="Note title">
+      <span class="etag">Note</span>
+      <span class="spacer" style="flex:1"></span>
       <button class="mini" id="ed-pin" type="button">★ pin</button>
       <button class="mini" id="ed-close" type="button">✕</button>
+    </div>
+    <div class="erow">
+      <label class="fld" style="flex:1">Title<input class="txt" id="ed-title" placeholder="Note title"></label>
     </div>
     <div class="erow">
       <label class="fld" style="flex:1">tags<input class="txt" id="ed-tags" placeholder="idea, link"></label>

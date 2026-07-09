@@ -11,7 +11,8 @@ from flask import Blueprint, render_template, request, jsonify
 from web_core import db, today_iso
 from db import now_sg
 from capture import (route_capture, convert_note_to_task, convert_task_to_note,
-                     convert_note_to_journal, convert_task_to_journal)
+                     convert_note_to_journal, convert_task_to_journal,
+                     imported_task_ids)
 from routes_tasks import today_tasks, day_score, archive_old_done
 from routes_goals import goal_progress
 import vault_store
@@ -32,11 +33,14 @@ def captured_today(conn, today: str) -> list:
                          "text": n["title"],
                          "dest": "→ Notes" + (f" · {tag_str}" if tag_str else ""),
                          "ts": n["created"]})
+    skip_ids = imported_task_ids()   # bulk-imported tasks aren't "captured today"
     rows = conn.execute(
         "SELECT id, title, created FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
         "AND substr(created,1,10)=? ORDER BY created DESC", (today,)).fetchall()
     # created is UTC ISO; compare its date loosely (SG date match is close enough for a feed)
     for r in rows:
+        if r["id"] in skip_ids:
+            continue
         feed.append({"source": "TASK", "kind": "task", "ref": r["id"],
                      "text": r["title"], "dest": "→ Tasks", "ts": r["created"]})
     feed.sort(key=lambda x: x["ts"], reverse=True)
