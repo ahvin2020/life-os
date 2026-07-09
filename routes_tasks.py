@@ -37,7 +37,7 @@ def _row_to_task(r) -> dict:
 
 def subtask_progress(conn, task_id) -> dict:
     rows = conn.execute(
-        "SELECT done FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()
+        "SELECT done FROM tasks WHERE parent_id = ? AND deleted_at IS NULL", (task_id,)).fetchall()
     total = len(rows)
     done = sum(1 for r in rows if r["done"])
     pct = (done / total * 100) if total else 0
@@ -48,8 +48,8 @@ def task_dict(conn, r) -> dict:
     """Full task dict including subtasks + ring progress (for a parent)."""
     t = _row_to_task(r)
     subs = conn.execute(
-        "SELECT * FROM tasks WHERE parent_id = ? ORDER BY sort_order, id", (r["id"],)
-    ).fetchall()
+        "SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id",
+        (r["id"],)).fetchall()
     t["subtasks"] = [_row_to_task(s) for s in subs]
     prog = subtask_progress(conn, r["id"])
     t["sub_done"], t["sub_total"], t["sub_pct"] = prog["done"], prog["total"], prog["pct"]
@@ -91,8 +91,8 @@ def _respawn_recurring(conn, r):
         priority=r["priority"], category=r["category"], due_date=next_due,
         recur_rule=r["recur_rule"], goal_id=r["goal_id"])
     subs = conn.execute(
-        "SELECT * FROM tasks WHERE parent_id = ? ORDER BY sort_order, id", (r["id"],)
-    ).fetchall()
+        "SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id",
+        (r["id"],)).fetchall()
     for s in subs:
         create_task(conn, s["title"], parent_id=new_id)
     return new_id
@@ -159,13 +159,22 @@ def archive_old_done(conn):
             (now_iso(), cutoff))
 
 
+def purge_deleted(conn):
+    """Hard-delete tasks soft-deleted more than 30 days ago (undo window elapsed).
+    Same pattern as archive_old_done; subtasks cascade via the FK."""
+    cutoff = (datetime.strptime(today_iso(), "%Y-%m-%d") - timedelta(days=30)).date().isoformat()
+    with conn:
+        conn.execute(
+            "DELETE FROM tasks WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
+
+
 def today_tasks(conn) -> list:
     """Tasks that belong on Today: parent tasks (not subtasks, not archived) that are
     due today, overdue-and-open, ☀ planned today, or completed today (dimmed)."""
     today = today_iso()
     rows = conn.execute(
         """SELECT * FROM tasks
-             WHERE parent_id IS NULL AND archived_at IS NULL AND (
+             WHERE parent_id IS NULL AND archived_at IS NULL AND deleted_at IS NULL AND (
                due_date = ?
                OR (due_date IS NOT NULL AND due_date < ? AND done = 0)
                OR planned_on = ?
@@ -188,10 +197,11 @@ def day_score(tasks) -> dict:
 def tasks_page():
     conn = db()
     archive_old_done(conn)
+    purge_deleted(conn)
     board = {c: [] for c in COLUMNS}
     rows = conn.execute(
         "SELECT * FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
-        "ORDER BY sort_order, id").fetchall()
+        "AND deleted_at IS NULL ORDER BY sort_order, id").fetchall()
     for r in rows:
         board[r["col"]].append(task_dict(conn, r))
     counts = {c: len(board[c]) for c in COLUMNS}
@@ -280,11 +290,26 @@ def task_plan(task_id):
 
 @bp.route("/tasks/<int:task_id>/delete", methods=["POST"])
 def task_delete(task_id):
+    """Soft-delete (undo, not confirmation): stamp deleted_at on the task and its
+    subtasks so they drop out of every view but stay restorable for 30 days."""
+    conn = db()
+    ts = now_iso()
+    with conn:
+        conn.execute("UPDATE tasks SET deleted_at=?, updated=? WHERE id=? OR parent_id=?",
+                     (ts, ts, task_id, task_id))
+    conn.close()
+    return jsonify({"status": "ok", "id": task_id})
+
+
+@bp.route("/tasks/<int:task_id>/restore", methods=["POST"])
+def task_restore(task_id):
+    """Undo a soft-delete: clear deleted_at on the task and its subtasks."""
     conn = db()
     with conn:
-        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        conn.execute("UPDATE tasks SET deleted_at=NULL, updated=? WHERE id=? OR parent_id=?",
+                     (now_iso(), task_id, task_id))
     conn.close()
-    return respond(True, "Task deleted", to="/tasks")
+    return jsonify({"status": "ok", "id": task_id})
 
 
 @bp.route("/tasks/reorder", methods=["POST"])

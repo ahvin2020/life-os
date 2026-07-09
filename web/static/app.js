@@ -84,13 +84,21 @@
 
   function reloadSoon() { setTimeout(function () { window.location.reload(); }, 250); }
 
-  // '/' focuses quick-add (desktop)
+  // '/' focuses quick-add (desktop). On pages without the composer, navigate to
+  // Today and focus it on arrival (#qin). Ignored while typing in a field.
   document.addEventListener("keydown", function (e) {
     if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+      e.preventDefault();
       var qin = document.getElementById("qin");
-      if (qin) { e.preventDefault(); qin.focus(); }
+      if (qin) { qin.focus(); }
+      else { window.location.href = "/#qin"; }
     }
   });
+  // Arriving at Today via /#qin (FAB, mobile, or the '/' hop) focuses the composer.
+  if (window.location.hash === "#qin") {
+    var _q = document.getElementById("qin");
+    if (_q) _q.focus();
+  }
 
   // ---- subtask progress rings -------------------------------------------------
   function updateRing(id) {
@@ -331,7 +339,11 @@
     });
     document.getElementById("te-delete").addEventListener("click", function () {
       var id = current;
-      post("/tasks/" + id + "/delete").then(function () { ov.classList.remove("on"); toast("Task deleted"); reloadSoon(); });
+      post("/tasks/" + id + "/delete").then(function () {
+        ov.classList.remove("on");
+        toast("Task deleted", function () { post("/tasks/" + id + "/restore").then(reloadSoon); });
+        reloadSoon();
+      });
     });
     function close() { ov.classList.remove("on"); current = null; }
     document.getElementById("te-close").addEventListener("click", close);
@@ -352,6 +364,26 @@
       });
     });
   })();
+
+  // ---- captured-today feed: Change / refile (task ↔ note ↔ journal) -----------
+  document.querySelectorAll(".cap .chg-toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var cap = btn.closest(".cap");
+      var box = cap.querySelector(".refile");
+      if (box) box.style.display = box.style.display === "none" ? "flex" : "none";
+    });
+  });
+  document.querySelectorAll(".cap .refile .chg").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var cap = btn.closest(".cap");
+      var kind = cap.dataset.kind, ref = cap.dataset.ref, to = btn.dataset.to;
+      post("/capture/refile", { kind: kind, ref: ref, to: to }).then(function (res) {
+        if (!res.ok) { toast("Could not refile"); return; }
+        toast("Refiled → " + (res.data.label || to));
+        reloadSoon();
+      });
+    });
+  });
 
   // ---- goals: manual number inline edit ---------------------------------------
   document.querySelectorAll(".gnum.edit").forEach(function (el) {

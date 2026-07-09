@@ -41,10 +41,26 @@ docker compose; code bind-mounted read-only from the Synology Drive synced folde
 `app.db` on a separate read-write, **unsynced** data volume (single-writer rule);
 nightly `sqlite3 .backup` into the synced tree.
 
-## Phase 2 (not yet wired up)
-Telegram capture (`capture_daemon.py`) and Claude triage (`triage/`) are written but
-untested and **no-op without their env vars** (`TELEGRAM_BOT_TOKEN`,
-`CLAUDE_CODE_OAUTH_TOKEN`). Google Calendar (Phase 4) and imports are intentionally
-not built.
+## Phase 2 — Telegram capture + triage (built, Mac-first)
+- **Capture bot** (`capture_daemon.py`) — long-polls Telegram, accepts messages only
+  from Kelvin's user id. **Just send it anything** (plain text or a voice note); it
+  replies `📥 saved`, then Claude triage sorts each item into a task, note, or journal
+  entry and replies with the outcome. `t:`/`n:`/`i:`/`j:` prefixes and links are
+  optional instant shortcuts. Voice → local **mlx-whisper** (original audio kept in
+  `vault/.audio/`, pointer in the note).
+- **Ask about your data** — the bot answers *"what are my todos"*, *"any overdue?"*,
+  *"goals"*, *"find <term>"* instantly, and open questions (*"how was my week?"*) via a
+  read-only Claude call. Intent detection is conservative — ambiguous → capture.
+- **Triage** (`triage/run_triage.py`) — the primary router; reads `vault/profile.md`
+  for personal context, calls `claude -p` (subscription, no API key), applies via the
+  shared capture helpers. Debounced ~75 s; `--sweep` for the daily fallback.
+- **Outbound** — morning digest (tasks + goals + Sunday stale-backlog nudge) at
+  `settings.digest_hour` (08:00 SGT default), sent by the daemon.
+- **Change/refile** — one-tap on Today's captured feed moves an item between
+  task / note / journal. Sidebar **health dots** show daemon/triage/backup heartbeats.
+
+Runs under **launchd** on the Mac — see [`deploy/README.md`](deploy/README.md) for the
+`launchctl load` steps, first-use flow, `profile.md` personalisation, and digest hour.
+Google Calendar (Phase 4) and imports are intentionally not built.
 
 The approved design contract lives in [`design/mockup.html`](design/mockup.html).

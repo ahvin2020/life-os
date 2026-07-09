@@ -15,7 +15,7 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -176,6 +176,57 @@ def db():
     return connect(_DB_PATH)
 
 
+# ── background-job health (staleness dots) ────────────────────────────────────
+# The capture daemon and triage runner stamp settings keys each run; the sidebar
+# dots go 'stale' (red) when a heartbeat is older than its budget, 'off' (grey)
+# when a job has never run. Budgets: capture 10 min (long-poll cycle ≈ 50 s), triage
+# and backup 26 h (daily jobs + slack).
+_HEALTH_CHECKS = (
+    ("capture", "capture_last_ran", 10),
+    ("triage", "triage_last_ran", 26 * 60),
+    ("backup", "backup_last_ran", 26 * 60),
+)
+
+
+def _parse_iso_utc(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def health_status(conn, now=None) -> dict:
+    """Per-job dot state from the settings heartbeats: 'ok' | 'stale' | 'off'.
+    Pure enough to unit-test: pass a seeded conn and a fixed `now`."""
+    now = now or datetime.now(timezone.utc)
+    out = {}
+    for name, key, budget_min in _HEALTH_CHECKS:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        ts = _parse_iso_utc(row["value"]) if row else None
+        if ts is None:
+            out[name] = "off"
+        elif (now - ts).total_seconds() > budget_min * 60:
+            out[name] = "stale"
+        else:
+            out[name] = "ok"
+    return out
+
+
+@app.context_processor
+def inject_health():
+    """Make the health dots available to every template."""
+    status = {"capture": "off", "triage": "off", "backup": "off"}
+    try:
+        conn = db()
+        status = health_status(conn)
+        conn.close()
+    except Exception:
+        pass
+    return {"health": status}
+
+
 @app.context_processor
 def inject_nav():
     """Sidebar/bottom-nav badge counts, available to every template."""
@@ -185,7 +236,7 @@ def inject_nav():
         conn = db()
         counts["tasks"] = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE parent_id IS NULL "
-            "AND archived_at IS NULL AND done = 0").fetchone()[0]
+            "AND archived_at IS NULL AND deleted_at IS NULL AND done = 0").fetchone()[0]
         conn.close()
     except Exception:
         pass

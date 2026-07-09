@@ -143,3 +143,83 @@ def _url_title(text):
     url = m.group(0) if m else text
     host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
     return host or "link"
+
+
+# ── refiling helpers (shared by the Change button + Claude triage) ─────────────
+# These are the ONE place that moves an item note↔task or retags it, so the web
+# refile endpoint and the triage runner never duplicate the mutation logic.
+def list_unsorted_notes() -> list:
+    """Notes still tagged #unsorted (what triage looks at)."""
+    return [n for n in vault_store.list_notes() if "unsorted" in (n["tags"] or [])]
+
+
+def retag_note(slug: str, tags: list) -> dict | None:
+    """Replace a note's tag set (drops #unsorted when real tags are supplied)."""
+    note = vault_store.read_note(slug)
+    if not note:
+        return None
+    tags = [t.lstrip("#") for t in (tags or [])]
+    saved = vault_store.write_note(slug, note["title"], tags, note["body"],
+                                   note["pinned"], note["created"])
+    tag_str = " ".join("#" + t for t in tags) if tags else ""
+    return {"kind": "note", "slug": slug,
+            "label": "Notes" + (f" · {tag_str}" if tag_str else ""), "tags": tags}
+
+
+def convert_note_to_task(conn, slug: str, *, title=None, category=None,
+                         priority=None, due_date=None) -> dict | None:
+    """Turn a captured note into a task (triage 'to_task' + the Change button).
+    Creates the task via create_task(), then soft-deletes the source note."""
+    note = vault_store.read_note(slug)
+    if not note:
+        return None
+    with conn:
+        tid = create_task(conn, title or note["title"] or "Untitled task",
+                          col="week", priority=priority, category=category,
+                          due_date=due_date)
+    vault_store.delete_note(slug)
+    bits = [b for b in ("high" if priority == "high" else None, category,
+                        ("due " + due_date) if due_date else None) if b]
+    label = "Tasks" + (" · " + " · ".join(bits) if bits else "")
+    return {"kind": "task", "id": tid, "label": label, "from_slug": slug}
+
+
+def convert_note_to_journal(slug: str) -> dict | None:
+    """Move a captured note into today's journal page (triage 'to_journal' + Change)."""
+    note = vault_store.read_note(slug)
+    if not note:
+        return None
+    vault_store.append_journal_entry(today_iso(), note["body"] or note["title"], source="")
+    vault_store.delete_note(slug)
+    return {"kind": "journal", "id": today_iso(), "label": "today's Journal",
+            "from_slug": slug}
+
+
+def convert_task_to_journal(conn, task_id: int) -> dict | None:
+    """Move a task into today's journal page, then delete the task row."""
+    r = conn.execute("SELECT * FROM tasks WHERE id=? AND parent_id IS NULL",
+                     (task_id,)).fetchone()
+    if not r:
+        return None
+    vault_store.append_journal_entry(today_iso(), r["title"], source="")
+    with conn:
+        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    return {"kind": "journal", "id": today_iso(), "label": "today's Journal",
+            "from_task": task_id}
+
+
+def convert_task_to_note(conn, task_id: int, tags=None) -> dict | None:
+    """Turn a task back into a note (the Change button, misfiled task→note).
+    Reads the task, writes a note, then deletes the task row."""
+    r = conn.execute("SELECT * FROM tasks WHERE id=? AND parent_id IS NULL",
+                     (task_id,)).fetchone()
+    if not r:
+        return None
+    tags = [t.lstrip("#") for t in (tags or ["unsorted"])]
+    note = vault_store.create_note(title=r["title"], body=r["title"], tags=tags)
+    with conn:
+        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    tag_str = " ".join("#" + t for t in tags) if tags else ""
+    return {"kind": "note", "slug": note["slug"],
+            "label": "Notes" + (f" · {tag_str}" if tag_str else ""),
+            "tags": tags, "from_task": task_id}

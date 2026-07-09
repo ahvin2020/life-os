@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 
 from db import connect, DB_PATH, SCHEMA_VERSION
@@ -57,6 +58,7 @@ TABLES = [
             done         INTEGER NOT NULL DEFAULT 0,
             completed_at TEXT,
             archived_at  TEXT,
+            deleted_at   TEXT,
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -77,9 +79,26 @@ INDEXES = [
 
 
 def migrate(conn) -> list:
-    """Schema migrations gated on meta.schema_version. Nothing to do at v1 — this
-    is the hook future versions extend (mirrors the invoicing migrate() pattern)."""
-    return []
+    """Schema migrations gated on meta.schema_version. Idempotent, non-destructive.
+    Runs before the CREATE-IF-NOT-EXISTS pass, so on a brand-new DB (no meta table)
+    it is a no-op and the fresh DDL already has the latest columns."""
+    applied = []
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    except sqlite3.OperationalError:
+        return applied                       # brand-new DB — nothing to migrate
+    try:
+        disk = int(row[0]) if row else 0
+    except (TypeError, ValueError):
+        disk = 0
+
+    # v2: soft-delete for tasks (undo, not confirmation).
+    if 0 < disk < 2:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "deleted_at" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
+            applied.append("v2: tasks.deleted_at")
+    return applied
 
 
 def init_db(db_path: str = DB_PATH) -> dict:

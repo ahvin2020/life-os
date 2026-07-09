@@ -27,7 +27,7 @@ def goal_progress(conn, g) -> dict:
     if g["kind"] == "rollup":
         rows = conn.execute(
             "SELECT id, title, done FROM tasks WHERE goal_id=? AND archived_at IS NULL "
-            "ORDER BY done, sort_order, id", (g["id"],)).fetchall()
+            "AND deleted_at IS NULL ORDER BY done, sort_order, id", (g["id"],)).fetchall()
         total = len(rows)
         done = sum(1 for r in rows if r["done"])
         out.update(done=done, total=total,
@@ -41,9 +41,25 @@ def goal_progress(conn, g) -> dict:
     return out
 
 
+def archive_expired_goals(conn):
+    """Auto-archive goals whose period has ended (week goals 7 days after their
+    Monday start; month goals once the following month begins). Archived goals stay
+    queryable but drop out of the active This-week / This-month sections. Same
+    pattern as the tasks-board done-archive."""
+    today = today_iso()
+    with conn:
+        conn.execute(
+            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL AND period='week' "
+            "AND date(period_start, '+7 day') <= ?", (now_iso(), today))
+        conn.execute(
+            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL AND period='month' "
+            "AND date(period_start, 'start of month', '+1 month') <= ?", (now_iso(), today))
+
+
 @bp.route("/goals")
 def goals_page():
     conn = db()
+    archive_expired_goals(conn)
     rows = conn.execute(
         "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall()
     month, week = [], []

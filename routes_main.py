@@ -10,7 +10,8 @@ from flask import Blueprint, render_template, request, jsonify
 
 from web_core import db, today_iso
 from db import now_sg
-from capture import route_capture
+from capture import (route_capture, convert_note_to_task, convert_task_to_note,
+                     convert_note_to_journal, convert_task_to_journal)
 from routes_tasks import today_tasks, day_score, archive_old_done
 from routes_goals import goal_progress
 import vault_store
@@ -25,16 +26,17 @@ def captured_today(conn, today: str) -> list:
     for n in vault_store.list_notes():
         if (n["created"] or "")[:10] == today:
             tag_str = " ".join("#" + t for t in n["tags"]) if n["tags"] else ""
-            feed.append({"source": "NOTE", "text": n["title"],
+            feed.append({"source": "NOTE", "kind": "note", "ref": n["slug"],
+                         "text": n["title"],
                          "dest": "→ Notes" + (f" · {tag_str}" if tag_str else ""),
                          "ts": n["created"]})
     rows = conn.execute(
-        "SELECT title, created FROM tasks WHERE parent_id IS NULL AND substr(created,1,10)=? "
-        "ORDER BY created DESC", (today,)).fetchall()
+        "SELECT id, title, created FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
+        "AND substr(created,1,10)=? ORDER BY created DESC", (today,)).fetchall()
     # created is UTC ISO; compare its date loosely (SG date match is close enough for a feed)
     for r in rows:
-        feed.append({"source": "TASK", "text": r["title"], "dest": "→ Tasks",
-                     "ts": r["created"]})
+        feed.append({"source": "TASK", "kind": "task", "ref": r["id"],
+                     "text": r["title"], "dest": "→ Tasks", "ts": r["created"]})
     feed.sort(key=lambda x: x["ts"], reverse=True)
     return feed[:8]
 
@@ -86,4 +88,38 @@ def capture():
     conn = db()
     result = route_capture(conn, text, source="web", forced=forced)
     conn.close()
+    return jsonify({"status": "ok", **result})
+
+
+@bp.route("/capture/refile", methods=["POST"])
+def capture_refile():
+    """Change button on the captured-today feed: move an item between the three
+    destinations (task / note / journal). Uses the shared capture helpers so the
+    web refile and the Claude triage never duplicate mutation logic."""
+    f = request.form
+    kind = f.get("kind")          # current kind: 'note' | 'task'
+    ref = f.get("ref")            # slug for a note, id for a task
+    to = f.get("to")              # target: 'task' | 'note' | 'journal'
+    if not kind or not ref or to not in ("task", "note", "journal"):
+        return jsonify({"status": "error", "message": "bad refile"}), 400
+    conn = db()
+    result = None
+    if kind == "note":
+        if to == "task":
+            result = convert_note_to_task(conn, ref)
+        elif to == "journal":
+            result = convert_note_to_journal(ref)
+    elif kind == "task":
+        try:
+            tid = int(ref)
+        except (TypeError, ValueError):
+            conn.close()
+            return jsonify({"status": "error", "message": "bad task id"}), 400
+        if to == "note":
+            result = convert_task_to_note(conn, tid)
+        elif to == "journal":
+            result = convert_task_to_journal(conn, tid)
+    conn.close()
+    if not result:
+        return jsonify({"status": "error", "message": "not found or no-op"}), 400
     return jsonify({"status": "ok", **result})

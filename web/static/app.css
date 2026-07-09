@@ -50,6 +50,9 @@ a:hover { text-decoration: underline; }
 .side .foot { margin-top: auto; padding: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.7; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--good); margin-right: 6px; }
 .dot.stale { background: var(--bad); }
+.dot.off { background: var(--muted); }
+.cap .chg { flex: 0 0 auto; margin-top: 2px; font-family: var(--mono); font-size: 10px; color: var(--muted); background: none; border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; cursor: pointer; }
+.cap .chg:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ---------- main ---------- */
 .main { flex: 1; min-width: 0; padding: 26px 30px 90px; max-width: 1120px; }

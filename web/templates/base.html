@@ -54,8 +54,9 @@
     <a class="nav-btn {{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
     <a class="nav-btn {{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
     <div class="foot">
-      <div><span class="dot"></span>capture · Phase 2</div>
-      <div><span class="dot"></span>triage · Phase 2</div>
+      <div title="Telegram capture daemon heartbeat (red if idle &gt;10 min)"><span class="dot {{ health.capture }}"></span>capture · {{ health.capture }}</div>
+      <div title="Claude triage last run (red if &gt;26 h)"><span class="dot {{ health.triage }}"></span>triage · {{ health.triage }}</div>
+      <div title="Nightly DB backup (red if &gt;26 h)"><span class="dot {{ health.backup }}"></span>backup · {{ health.backup }}</div>
     </div>
   </nav>
 

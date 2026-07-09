@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kelvin.lifeos.capture</string>
+
+  <!-- Run the Telegram capture daemon under the repo's venv. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/.venv/bin/python</string>
+    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/capture_daemon.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os</string>
+
+  <!-- Restart if it ever exits (network blips, crashes). -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- ffmpeg lives in /opt/homebrew/bin; make sure it's on PATH for voice notes. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/capture.daemon.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/capture.daemon.err.log</string>
+</dict>
+</plist>

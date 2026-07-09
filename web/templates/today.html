@@ -66,8 +66,15 @@
       <div class="chead"><h2>Captured today</h2><a href="/notes">→</a></div>
       {% if feed %}
         {% for c in feed %}
-        <div class="cap"><span class="src">{{ c.source }}</span>
-          <div class="txt">{{ c.text }}<div class="meta"><span class="filed">{{ c.dest }}</span></div></div></div>
+        <div class="cap" data-kind="{{ c.kind }}" data-ref="{{ c.ref }}"><span class="src">{{ c.source }}</span>
+          <div class="txt">{{ c.text }}<div class="meta"><span class="filed">{{ c.dest }}</span></div>
+            <div class="refile" style="display:none;margin-top:4px">
+              {% if c.kind != 'task' %}<button class="chg" data-to="task" type="button">→ Task</button>{% endif %}
+              {% if c.kind != 'note' %}<button class="chg" data-to="note" type="button">→ Note</button>{% endif %}
+              {% if c.kind != 'journal' %}<button class="chg" data-to="journal" type="button">→ Journal</button>{% endif %}
+            </div>
+          </div>
+          <button class="chg chg-toggle" type="button" title="Refile this">Change</button></div>
         {% endfor %}
       {% else %}
         <div class="empty" style="font-size:12px">Nothing captured today yet.</div>

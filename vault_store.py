@@ -44,6 +44,12 @@ def trash_dir() -> str:
     return d
 
 
+def audio_dir() -> str:
+    d = os.path.join(VAULT_DIR, ".audio")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 # ── slug + frontmatter ────────────────────────────────────────────────────────
 def slugify(title: str) -> str:
     s = re.sub(r"[^\w\s-]", "", (title or "").lower()).strip()
@@ -62,21 +68,23 @@ def _unique_slug(base: str) -> str:
     return slug
 
 
-def _emit_frontmatter(title, tags, created, pinned) -> str:
+def _emit_frontmatter(title, tags, created, pinned, audio=None) -> str:
     tags_str = "[" + ", ".join(tags) + "]"
-    return (
+    out = (
         "---\n"
         f"title: {title}\n"
         f"tags: {tags_str}\n"
         f"created: {created}\n"
         f"pinned: {'true' if pinned else 'false'}\n"
-        "---\n"
     )
+    if audio:
+        out += f"audio: {audio}\n"   # pointer to the original voice recording
+    return out + "---\n"
 
 
 def _parse_frontmatter(text: str):
     """Return (meta_dict, body). Tolerates a missing frontmatter block."""
-    meta = {"title": "", "tags": [], "created": "", "pinned": False}
+    meta = {"title": "", "tags": [], "created": "", "pinned": False, "audio": ""}
     if text.startswith("---"):
         parts = text.split("\n")
         # find closing ---
@@ -97,7 +105,7 @@ def _parse_frontmatter(text: str):
                     meta["tags"] = [t.strip().lstrip("#") for t in val.split(",") if t.strip()]
                 elif key == "pinned":
                     meta["pinned"] = val.lower() in ("true", "1", "yes")
-                elif key in ("title", "created"):
+                elif key in ("title", "created", "audio"):
                     meta[key] = val
             body = "\n".join(parts[end + 1:]).lstrip("\n")
             return meta, body
@@ -132,6 +140,7 @@ def _note_from_path(path: str) -> dict:
         "tags": meta["tags"],
         "created": meta["created"],
         "pinned": meta["pinned"],
+        "audio": meta.get("audio") or "",
         "body": body,
         "snippet": snippet,
         "domain": _domain_of(body),
@@ -160,23 +169,26 @@ def read_note(slug: str):
     return _note_from_path(path)
 
 
-def write_note(slug, title, tags, body, pinned, created=None) -> dict:
+def write_note(slug, title, tags, body, pinned, created=None, audio=None) -> dict:
     path = os.path.join(notes_dir(), slug + ".md")
-    if created is None:
+    if created is None or audio is None:
         existing = read_note(slug)
-        created = existing["created"] if existing else now_sg().isoformat(timespec="seconds")
-    content = _emit_frontmatter(title, tags, created, pinned) + (body or "")
+        if created is None:
+            created = existing["created"] if existing else now_sg().isoformat(timespec="seconds")
+        if audio is None:                       # preserve an existing audio pointer
+            audio = existing["audio"] if existing else None
+    content = _emit_frontmatter(title, tags, created, pinned, audio) + (body or "")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return _note_from_path(path)
 
 
-def create_note(title, body="", tags=None, pinned=False) -> dict:
+def create_note(title, body="", tags=None, pinned=False, audio=None) -> dict:
     tags = tags or []
     title = (title or "Untitled").strip()
     slug = _unique_slug(title)
     created = now_sg().isoformat(timespec="seconds")
-    return write_note(slug, title, tags, body, pinned, created)
+    return write_note(slug, title, tags, body, pinned, created, audio)
 
 
 def delete_note(slug: str) -> bool:

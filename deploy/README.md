@@ -47,23 +47,56 @@ ls -1t "$B"/app.*.db | tail -n +8 | xargs -r rm   # keep 7
 Backups land in the synced tree (write-once files → no sync risk) and mirror to the
 Mac, covering total NAS failure.
 
-## Phase 2 (later — Telegram capture + triage)
-1. Create a bot with **@BotFather**, note the token; find your numeric Telegram user
-   id (e.g. via @userinfobot).
-2. Put them in `deploy/.env`:
-   ```
-   TELEGRAM_BOT_TOKEN=123456:abc...
-   TELEGRAM_ALLOWED_USER_ID=11111111
-   ```
-3. Start the capture service:
-   ```sh
-   sudo docker compose --profile capture up -d --build
-   ```
-4. Triage auth: run `claude setup-token` on the Mac (needs Pro/Max), export the
-   resulting `CLAUDE_CODE_OAUTH_TOKEN` on the NAS, and wire `triage/run_triage.sh`
-   into the daemon's debounced trigger + a daily DSM fallback sweep.
-5. Write a starter `vault/profile.md` (who you are, projects, categories, people) —
-   the triage prompt reads it to classify captures personally.
+## Phase 2 — Telegram capture + triage (Mac-first, via launchd)
 
-Until those env vars exist, both the capture daemon and the triage runner exit
-cleanly as no-ops, so nothing here blocks Phase 1.
+Phase 2 runs on the **Mac** first (the NAS deploy is the last phase). Telegram queues
+messages server-side while the Mac sleeps, so capture is delayed-but-lossless. Both
+the web server and the capture daemon run under **launchd** so they survive reboots.
+
+Secrets live in the repo-root `.env` (gitignored), already populated with two keys:
+the BotFather bot token and the allowed Telegram user id (for @kelvin_lifeos_bot).
+Triage uses the Mac's already-authed `claude` CLI (subscription, no API key). Voice
+notes are transcribed locally with **mlx-whisper** (already `pip install`ed into
+`.venv`); `ffmpeg` must be on PATH (it is, via Homebrew).
+
+### Load the launchd services (Kelvin, once)
+```sh
+cp deploy/com.kelvin.lifeos.web.plist     ~/Library/LaunchAgents/
+cp deploy/com.kelvin.lifeos.capture.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kelvin.lifeos.web.plist
+launchctl load ~/Library/LaunchAgents/com.kelvin.lifeos.capture.plist
+```
+Check they're running: `launchctl list | grep lifeos`. Logs land in `data/`
+(`capture.daemon.err.log`, `web.err.log`, and the daemon's own `capture_daemon.log`).
+To stop: `launchctl unload ~/Library/LaunchAgents/com.kelvin.lifeos.<web|capture>.plist`.
+
+> The web plist runs `server.py --port 5070`; if you already run the server another
+> way, don't load the web plist (two servers can't share the port).
+
+### First-use flow
+1. Open Telegram → **@kelvin_lifeos_bot** → press **Start** (already done).
+2. Send it anything — plain text or a voice note. It replies `📥 saved — filing…`,
+   then within ~1–2 min the triage step sorts it into a **task**, **note**, or
+   **journal** entry and replies with the outcome. `t:`/`n:`/`i:`/`j:` prefixes and
+   pasted links still work as instant shortcuts.
+3. Ask questions too: *"what are my todos"*, *"any overdue?"*, *"goals"*,
+   *"find rate card"*, or open questions like *"how was my week?"* (read-only; nothing
+   is saved).
+
+### Personalise triage — `vault/profile.md`
+`vault/profile.md` is the distilled context injected into every triage call. Edit it
+to add the people you mention, your projects, and "X always means Y" shortcuts — the
+TODO lines mark what to fill in. Keep it lean; it's paid for on every triage call.
+
+### Digest hour
+The morning digest (today's tasks + goals + Sunday stale-backlog nudge) is sent at
+08:00 SGT by default. Change it by setting the `digest_hour` row in `settings`:
+```sh
+sqlite3 data/app.db "INSERT INTO settings(key,value) VALUES('digest_hour','7')
+  ON CONFLICT(key) DO UPDATE SET value=excluded.value;"
+```
+
+### On the NAS (later)
+The `capture` compose service (profile `capture`) runs the same daemon; there,
+transcription uses `faster-whisper` and triage auth is `claude setup-token` →
+`CLAUDE_CODE_OAUTH_TOKEN`. Do that when the always-on gap starts to annoy you.
