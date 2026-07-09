@@ -70,7 +70,8 @@ def test_v2_to_v3_migration_backfills_timeframe(tmp_path):
         assert c in cols, c
     assert row["timeframe"] == "week"                      # backfilled from period
     assert row["target_num"] == 500 and row["current_num"] == 438   # measure preserved
-    assert ver == "3"
+    from db import SCHEMA_VERSION
+    assert ver == str(SCHEMA_VERSION)                      # stamped to the current version
 
 
 # ── progress derivation — one per shape ───────────────────────────────────────

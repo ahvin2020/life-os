@@ -374,15 +374,23 @@ def apply_action(conn, act, ctx) -> tuple:
                              (today, now_iso(), tid))
             return (f"☀ Planned for today: {title}", f"u|plan|{tid}")
         if kind == "unplan":
+            from routes_tasks import bump_reschedule
+            row = conn.execute("SELECT planned_on FROM tasks WHERE id=?", (tid,)).fetchone()
             with conn:
                 conn.execute("UPDATE tasks SET planned_on=NULL, updated=? WHERE id=?",
                              (now_iso(), tid))
+                if row and row["planned_on"]:            # a set plan was cleared → a postpone
+                    bump_reschedule(conn, tid)
             return (f"Removed from today: {title}", None)
         if kind == "set_due":
             d = (act.get("date") or "").strip() or None
+            old_due = ctx["tasks"].get(tid, {}).get("due")
             with conn:
                 conn.execute("UPDATE tasks SET due_date=?, updated=? WHERE id=?",
                              (d, now_iso(), tid))
+                if d and old_due and d > old_due:        # pushed strictly later → a postpone
+                    from routes_tasks import bump_reschedule
+                    bump_reschedule(conn, tid)
             lbl = _due_label(d, today) if d else "no date"
             return (f"⏰ {title} — due {lbl}", None)
         if kind == "rename_task":

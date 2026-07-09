@@ -301,22 +301,62 @@ def build_digest(conn, day=None, now=None) -> str:
 
 
 def maybe_send_digest(conn, tg, chat_id, now=None) -> bool:
-    """Send the digest once per day at/after digest_hour. Returns True if sent."""
+    """Send the AI morning brief once per day at/after digest_hour (default 7). On
+    Sundays a fresh backlog triage is woven into the brief. Returns True if sent.
+    build_digest (above) remains the deterministic fallback inside proactive."""
     from db import today_iso, now_sg
+    import proactive
     now = now or now_sg()
     today = today_iso()
     try:
-        hour = int(_get_setting(conn, "digest_hour", "8"))
+        hour = int(_get_setting(conn, "digest_hour", "7"))
     except (TypeError, ValueError):
-        hour = 8
+        hour = 7
     if now.hour < hour:
         return False
     if _get_setting(conn, "digest_last_sent") == today:
         return False
-    text = build_digest(conn, today, now)
+    backlog = None
+    if now.weekday() == 6:                       # Sunday → weave backlog intelligence in
+        try:
+            backlog = proactive.backlog_triage(conn)
+        except Exception as e:
+            _log(f"sunday backlog triage failed: {e}")
+    text = proactive.morning_brief(conn, today, now, backlog_summary=backlog)
     tg.send_message(chat_id, text)
     _set_setting(conn, "digest_last_sent", today)
-    _log("morning digest sent")
+    _log("morning brief sent")
+    return True
+
+
+def _parse_hhmm(val, default_h, default_m):
+    """Parse an 'HH:MM' (or bare 'HH') setting into (hour, minute)."""
+    try:
+        s = str(val)
+        if ":" in s:
+            h, m = s.split(":", 1)
+            return int(h), int(m)
+        return int(s), 0
+    except (TypeError, ValueError):
+        return default_h, default_m
+
+
+def maybe_send_reflection(conn, tg, chat_id, now=None) -> bool:
+    """Send the evening journal reflection once per day at/after reflection_hour
+    (default 21:30). Returns True if sent."""
+    from db import today_iso, now_sg
+    import proactive
+    now = now or now_sg()
+    today = today_iso()
+    h, m = _parse_hhmm(_get_setting(conn, "reflection_hour", "21:30"), 21, 30)
+    if (now.hour, now.minute) < (h, m):
+        return False
+    if _get_setting(conn, "reflection_last_sent") == today:
+        return False
+    text = proactive.evening_reflection(conn, today, now)
+    tg.send_message(chat_id, text)
+    _set_setting(conn, "reflection_last_sent", today)
+    _log("evening reflection sent")
     return True
 
 
@@ -377,12 +417,16 @@ def main() -> int:
                 except Exception as e:
                     _log(f"daily sweep failed: {e}")
 
-            # Outbound: morning digest (checked each poll cycle ~every {POLL_TIMEOUT_S}s).
+            # Outbound: morning brief + evening reflection (checked each poll cycle).
             if allowed:
                 try:
                     maybe_send_digest(conn, tg, allowed)
                 except Exception as e:
                     _log(f"digest failed: {e}")
+                try:
+                    maybe_send_reflection(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"reflection failed: {e}")
 
         except Exception as e:                       # never crash the loop
             _log(f"poll error: {e}")
@@ -487,6 +531,17 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
         if ans is not None:
             tg.send_message(chat_id, ans)
             return False
+
+    # Fast path 3: an explicit backlog-triage request → run backlog intelligence and
+    # reply, skipping the router (its only job would be to decide to run this anyway).
+    import proactive
+    if proactive.is_backlog_triage_request(text):
+        try:
+            tg.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        tg.send_message(chat_id, proactive.backlog_triage(conn))
+        return False
 
     # The agentic router — the ONE Claude entry point. Acts on instructions,
     # answers open questions, files captures, all in a single call.

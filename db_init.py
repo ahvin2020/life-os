@@ -68,6 +68,7 @@ TABLES = [
             completed_at TEXT,
             archived_at  TEXT,
             deleted_at   TEXT,
+            reschedule_count INTEGER NOT NULL DEFAULT 0,
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -119,6 +120,16 @@ def migrate(conn) -> list:
                 applied.append(f"v3: goals.{col}")
         conn.execute("UPDATE goals SET timeframe=period WHERE timeframe IS NULL")
         applied.append("v3: goals.timeframe backfilled from period")
+
+    # v4: postpone counter — feeds the backlog-intelligence "postponed N×" signal.
+    # Incremented when a task's due_date moves later or a set planned_on is cleared.
+    if 0 < disk < 4 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "reschedule_count" not in cols:
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0")
+            applied.append("v4: tasks.reschedule_count")
     return applied
 
 

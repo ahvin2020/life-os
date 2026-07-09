@@ -185,6 +185,18 @@ def today_tasks(conn) -> list:
     return [task_dict(conn, r) for r in rows]
 
 
+def bump_reschedule(conn, task_id):
+    """Increment a task's postpone counter — called when a due_date moves later or a
+    previously-set planned_on is cleared. Feeds the backlog-intelligence 'postponed N×'
+    signal. Best-effort: never the primary effect of an edit, so it never raises."""
+    try:
+        conn.execute(
+            "UPDATE tasks SET reschedule_count = COALESCE(reschedule_count, 0) + 1 WHERE id=?",
+            (task_id,))
+    except Exception:
+        pass
+
+
 def day_score(tasks) -> dict:
     total = len(tasks)
     done = sum(1 for t in tasks if t["done"])
@@ -239,6 +251,13 @@ def task_new():
 def task_edit(task_id):
     f = request.form
     conn = db()
+    # A due_date moved strictly later counts as a postpone (compare against the old value).
+    postponed = False
+    if "due_date" in f:
+        old = conn.execute("SELECT due_date FROM tasks WHERE id=?", (task_id,)).fetchone()
+        new_due = f.get("due_date") or None
+        if old and old["due_date"] and new_due and new_due > old["due_date"]:
+            postponed = True
     fields, params = [], []
     for col in ("title", "priority", "category", "due_date", "recur_rule"):
         if col in f:
@@ -256,6 +275,8 @@ def task_edit(task_id):
     params.append(task_id)
     with conn:
         conn.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id=?", params)
+        if postponed:
+            bump_reschedule(conn, task_id)
     conn.close()
     return respond(True, "Task updated", to="/tasks")
 
@@ -284,6 +305,8 @@ def task_plan(task_id):
     with conn:
         conn.execute("UPDATE tasks SET planned_on=?, updated=? WHERE id=?",
                      (new_val, now_iso(), task_id))
+        if new_val is None and r["planned_on"]:      # a set plan was cleared → a postpone
+            bump_reschedule(conn, task_id)
     conn.close()
     return jsonify({"status": "ok", "planned": bool(new_val)})
 
