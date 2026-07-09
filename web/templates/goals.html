@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Goals{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Goals</h1><span class="spacer"></span><button class="mini addbtn" id="goal-new" type="button">＋ New goal</button></div>
+
+<form id="goalform" class="card hide" method="post" action="/goals/new" style="margin-bottom:16px">
+  <div class="erow">
+    <label class="fld" style="flex:2">title<input class="txt" name="title" placeholder="e.g. Publish 2 long-form videos" required></label>
+    <label class="fld">period<select name="period"><option value="week">This week</option><option value="month">This month</option></select></label>
+    <label class="fld">type<select name="kind" id="goal-kind"><option value="rollup">count linked tasks</option><option value="number">a number I update</option></select></label>
+    <label class="fld">target<input class="txt" name="target" type="number" step="any" placeholder="500"></label>
+  </div>
+  <div class="erow"><span class="spacer" style="flex:1"></span><button class="qgo" type="submit">Create goal</button></div>
+</form>
+
+{% macro goal_card(g) -%}
+<div class="goal">
+  <div class="ghead"><span class="t">{{ g.title }}</span>
+    {% if g.kind == 'number' %}
+      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ g.progress.current }}">{{ g.progress.current|int }} / {{ g.progress.target|int }}</span>
+    {% else %}
+      <span class="gnum">{{ g.progress.done }} / {{ g.progress.total }}</span>
+    {% endif %}
+  </div>
+  <div class="bar {{ 'full' if g.progress.pct >= 100 else '' }}"><i style="width:{{ g.progress.pct if g.progress.pct <= 100 else 100 }}%"></i></div>
+  {% if g.kind == 'rollup' %}
+    {% if g.progress.linked %}
+    <div class="gtasks">
+      {% for t in g.progress.linked %}
+      <div class="gt {{ 'done' if t.done else '' }}"><span class="s {{ 'd' if t.done else '' }}">{{ '✓' if t.done else '○' }}</span>{{ t.title }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="gsrc">link tasks to this goal via the task editor (◎)</div>
+    {% endif %}
+  {% endif %}
+  <div class="erow"><span class="spacer" style="flex:1"></span><form method="post" action="/goals/{{ g.id }}/delete"><button class="mini danger" type="submit">delete</button></form></div>
+</div>
+{%- endmacro %}
+
+<div class="nsec">This month · {{ month_label }}</div>
+{% if month_goals %}
+<div class="goalgrid">{% for g in month_goals %}{{ goal_card(g) }}{% endfor %}</div>
+{% else %}<div class="empty">No monthly goals yet.</div>{% endif %}
+
+<div class="nsec">This week · {{ week_label }}</div>
+{% if week_goals %}
+<div class="goalgrid">{% for g in week_goals %}{{ goal_card(g) }}{% endfor %}</div>
+{% else %}<div class="empty">No weekly goals yet.</div>{% endif %}
+
+<p class="hint">+ New goal → name it, pick week/month, pick type: count linked tasks (auto) or a number you tap to update · link tasks via the task editor · Sunday's weekly-review task is when you set next week's goals</p>
+{% endblock %}

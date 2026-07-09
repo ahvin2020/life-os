@@ -1,0 +1,747 @@
+<title>Life OS — UI mockup</title>
+<style>
+  :root {
+    --bg: #0F1013;
+    --surface: #16181D;
+    --surface2: #1D2026;
+    --border: #262A31;
+    --text: #E8E6E1;
+    --muted: #8F94A0;
+    --accent: #E2A84B;
+    --accent-dim: rgba(226,168,75,.14);
+    --good: #58C08A;
+    --good-dim: rgba(88,192,138,.14);
+    --bad: #E06C6C;
+    --link: #7FA6D9;
+    --link-dim: rgba(127,166,217,.13);
+    --sans: "Avenir Next", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html { background: var(--bg); }
+  body { font-family: var(--sans); color: var(--text); background: var(--bg); font-size: 14.5px; line-height: 1.45; }
+  * { box-sizing: border-box; }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  input[type="search"] { font: inherit; }
+  button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  a, a:visited, a:active { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .read { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; min-width: 0; }
+  .read a { flex: 0 0 auto; font-weight: 500; }
+  .read .due { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; font-family: var(--sans); font-size: 12.5px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  .banner {
+    background: var(--accent-dim); color: var(--accent);
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+    padding: 6px 14px; text-align: center; border-bottom: 1px solid var(--border);
+  }
+
+  .shell { display: flex; min-height: calc(100vh - 30px); }
+
+  /* ---------- sidebar ---------- */
+  .side { width: 232px; flex: 0 0 232px; border-right: 1px solid var(--border); padding: 20px 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 16px; }
+  .brand b { font-size: 16px; font-weight: 600; }
+  .brand span { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .nav-label { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); padding: 14px 10px 5px; }
+  .nav-btn { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 7px; color: var(--muted); font-weight: 500; }
+  .nav-btn .ico { width: 18px; text-align: center; }
+  .nav-btn:hover { background: var(--surface); color: var(--text); }
+  .nav-btn.active { background: var(--surface2); color: var(--text); }
+  .nav-btn.active .ico { color: var(--accent); }
+  .count { margin-left: auto; font-family: var(--mono); font-size: 11px; background: var(--surface2); border: 1px solid var(--border); padding: 0 7px; border-radius: 99px; color: var(--muted); }
+  .nav-btn.active .count { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
+  .side .foot { margin-top: auto; padding: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.7; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--good); margin-right: 6px; }
+
+  /* ---------- main ---------- */
+  .main { flex: 1; min-width: 0; padding: 26px 30px 90px; max-width: 1120px; }
+  .view { display: none; }
+  .view.on { display: block; }
+  .vhead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  .vhead h1 { font-size: 21px; font-weight: 600; margin: 0; text-wrap: balance; }
+  .vhead .date { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .vhead .spacer { flex: 1; }
+  .chip { font-family: var(--mono); font-size: 11.5px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .chip.warn { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+  .card.hero { padding: 20px 22px; }
+  .card.hero .task { padding: 9px 0; font-size: 16px; }
+  .card.hero .task input { width: 18px; height: 18px; }
+  .card.hero .due { font-size: 12px; }
+  .card.hero .ptask .head .t { font-size: 16px; }
+  .card.hero .sub { font-size: 14px; }
+  .card.sub2 { padding: 12px 14px; gap: 7px; font-size: 12.5px; }
+  .card.sub2 .chead h2 { font-size: 9.5px; }
+  .card.sub2 .cap { padding: 5px 0; }
+  .card.sub2 .uprow { padding: 2px 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .card.wide { grid-column: 1 / -1; }
+  .chead { display: flex; align-items: baseline; gap: 10px; }
+  .chead h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); margin: 0; }
+  .chead a { margin-left: auto; font-size: 12px; color: var(--link); text-decoration: none; }
+  .chead a:hover { text-decoration: underline; }
+
+  /* ---------- progress ring ---------- */
+  .ring { width: 24px; height: 24px; flex: 0 0 auto; transform: rotate(-90deg); }
+  .ring .track { fill: none; stroke: var(--border); stroke-width: 3.6; }
+  .ring .fill { fill: none; stroke: var(--accent); stroke-width: 3.6; stroke-linecap: round; stroke-dasharray: 0 100; transition: stroke-dasharray .35s ease, stroke .35s ease; }
+  .ring.full .fill { stroke: var(--good); }
+  .ringwrap { position: relative; width: 24px; height: 24px; flex: 0 0 auto; }
+  .ringwrap .check { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: var(--good); opacity: 0; transition: opacity .3s; }
+  .ringwrap.full .check { opacity: 1; }
+
+  /* tasks (simple rows) */
+  .task { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .task input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 auto; }
+  .task label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task.done label { color: var(--muted); text-decoration: line-through; }
+  .due { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .due.today { color: var(--accent); }
+  .due.over { color: var(--bad); }
+  .pri { width: 6px; height: 6px; border-radius: 99px; flex: 0 0 auto; }
+  .pri.h { background: var(--bad); } .pri.m { background: var(--accent); } .pri.l { background: var(--muted); opacity: .5; }
+  .rec { font-size: 11px; color: var(--muted); }
+  .subcount { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  /* parent task w/ subtasks */
+  .ptask { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .ptask .head { display: flex; align-items: center; gap: 10px; }
+  .ptask .head .t { font-weight: 500; flex: 1; }
+  .subs { margin-left: 34px; display: flex; flex-direction: column; gap: 2px; }
+  .sub { display: flex; align-items: center; gap: 9px; padding: 3px 0; color: var(--muted); }
+  .sub input { accent-color: var(--good); width: 14px; height: 14px; }
+  .sub label { flex: 1; }
+  .sub.done label { text-decoration: line-through; opacity: .6; }
+
+  /* captured-today feed */
+  .cap { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--border); }
+  .cap:first-of-type { border-top: 0; }
+  .src { flex: 0 0 auto; font-family: var(--mono); font-size: 10px; letter-spacing: .05em; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; margin-top: 2px; }
+  .cap .txt { flex: 1; min-width: 0; }
+  .cap .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+  .filed { color: var(--good); }
+  .mini { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); color: var(--muted); flex: 0 0 auto; }
+  .mini:hover { color: var(--text); border-color: var(--muted); }
+
+  /* pipeline summary + upcoming */
+  .tag { font-family: var(--mono); font-size: 10px; padding: 1px 7px; border-radius: 99px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .tag.pub { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+
+  .kbd { font-family: var(--mono); font-size: 11px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text); }
+
+  /* ---------- kanban ---------- */
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+  .col { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .col h3 { margin: 0 2px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; display: flex; }
+  .col h3 .count { margin-left: auto; }
+  .kcard { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: grab; display: flex; flex-direction: column; gap: 6px; }
+  .kcard:hover { border-color: var(--muted); }
+  .kcard .t { font-weight: 500; }
+  .kcard .khead { display: flex; align-items: center; gap: 9px; }
+  .kcard .khead .t { flex: 1; }
+  .krow { display: flex; align-items: center; gap: 8px; }
+  .goalref { font-size: 11px; color: var(--link); }
+  .kcard .subs { margin-left: 2px; margin-top: 2px; }
+  .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 14px; }
+
+  /* ---------- notes gallery ---------- */
+  .ntools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .search { flex: 1 1 220px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); min-width: 160px; }
+  .search::placeholder { color: var(--muted); }
+  .tagbtn { font-family: var(--mono); font-size: 11.5px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .tagbtn:hover { color: var(--text); border-color: var(--muted); }
+  .tagbtn.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+  .nsec { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 18px 2px 10px; }
+  .ngrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .note {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+    cursor: pointer; transition: transform .15s ease, border-color .15s ease;
+  }
+  .note:hover { transform: translateY(-2px); border-color: var(--muted); }
+  .note .nt { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+  .note .nt .star { color: var(--accent); font-size: 12px; }
+  .note .snip { font-size: 12.5px; color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .note .nfoot { display: flex; gap: 6px; align-items: center; margin-top: auto; flex-wrap: wrap; }
+  .note .nfoot .due { margin-left: auto; }
+  .tag.idea { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+  .tag.lnk { color: var(--link); background: var(--link-dim); border-color: transparent; }
+  .domain { display: inline-flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--link); }
+  .note.hide { display: none; }
+
+  /* ---------- pipeline board ---------- */
+
+  /* ---------- habits month grid ---------- */
+  .statrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { flex: 1; min-width: 130px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  .stat b { font-family: var(--mono); font-size: 20px; font-weight: 600; display: block; }
+  .stat b.up { color: var(--good); }
+  .stat span { font-size: 11px; color: var(--muted); }
+  .mwrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .mgrid { display: grid; grid-template-columns: 96px repeat(31, 19px) 64px; gap: 3px; align-items: center; min-width: 760px; }
+  .mgrid .dh { font-family: var(--mono); font-size: 9px; color: var(--muted); text-align: center; }
+  .mgrid .dh.tod { color: var(--accent); font-weight: 700; }
+  .mgrid .hname { font-weight: 500; font-size: 13px; padding-right: 8px; }
+  .mgrid .streak { text-align: right; }
+  .mtick { width: 17px; height: 17px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); padding: 0; }
+  .mtick.y { background: var(--good-dim); border-color: rgba(88,192,138,.35); position: relative; }
+  .mtick.y::after { content: ""; position: absolute; inset: 4px; border-radius: 3px; background: var(--good); opacity: .85; }
+  .mtick.tod { border-color: var(--accent); border-style: dashed; cursor: pointer; }
+  .mtick.tod:hover { background: var(--accent-dim); }
+  .mtick.fut { opacity: .35; }
+  .mtick { position: relative; display: block; }
+
+  /* ---------- goals ---------- */
+  .goal { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+  .goal .ghead { display: flex; align-items: center; gap: 12px; }
+  .goal .ghead .t { font-weight: 600; flex: 1; }
+  .goal .gnum { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .bar { height: 7px; border-radius: 99px; background: var(--surface2); border: 1px solid var(--border); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .35s ease; }
+  .bar.full i { background: var(--good); }
+  .goal .gtasks { display: flex; flex-direction: column; gap: 2px; }
+  .goal .gt { display: flex; gap: 9px; align-items: center; font-size: 13px; color: var(--muted); padding: 2px 0; }
+  .goal .gt .s { font-size: 11px; width: 14px; text-align: center; }
+  .goal .gt .s.d { color: var(--good); }
+  .goal .gt.done { text-decoration: line-through; opacity: .6; }
+  .goal .gsrc { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+
+  /* ---------- calendar week ---------- */
+
+  /* ---------- quick capture + today grid ---------- */
+  .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(226,168,75,.35); border-radius: 10px; padding: 6px 6px 6px 14px; }
+  .qplus { color: var(--accent); font-size: 19px; font-weight: 600; flex: 0 0 auto; }
+  .qcap input { flex: 1; background: none; border: none; padding: 8px 4px; color: var(--text); font: inherit; min-width: 0; }
+  .qcap input:focus { outline: none; }
+  .qcap input::placeholder { color: var(--muted); }
+  .qtypes { display: flex; gap: 4px; flex: 0 0 auto; }
+  .qt { font-family: var(--mono); font-size: 10.5px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .qt.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+  .qgo { background: var(--accent); color: #1A1204; border-radius: 8px; padding: 8px 18px; font-weight: 600; flex: 0 0 auto; }
+  .qgo:hover { filter: brightness(1.08); }
+  .qgo.did { background: var(--good); color: #06130C; }
+  .todaygrid { display: grid; grid-template-columns: 5fr 3fr; gap: 14px; align-items: start; }
+  .rcol { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .cat { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+
+  /* ---------- day agenda ---------- */
+  .agrow { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 12.5px; }
+  .agrow .when { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 0 0 46px; }
+  .agrow .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agrow.dim { opacity: .4; }
+  .agrow.blocked .what { color: var(--accent); }
+  .nowline { display: flex; align-items: center; gap: 8px; color: var(--accent); font-family: var(--mono); font-size: 10px; margin: 3px 0; }
+  .nowline::before, .nowline::after { content: ""; flex: 1; height: 1px; background: rgba(226,168,75,.45); }
+
+  .goalgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+  .goalgrid .goal { margin-bottom: 0; }
+  .jgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+  .jmain { min-width: 0; }
+  .flash { border-left: 2px solid var(--border); padding-left: 10px; }
+  .flash .fdate { font-family: var(--mono); font-size: 10.5px; color: var(--accent); margin-bottom: 2px; }
+  .flash p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- calendar month ---------- */
+
+  /* ---------- toast ---------- */
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(80px); background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: 13px; z-index: 20; box-shadow: 0 6px 24px rgba(0,0,0,.5); transition: transform .25s ease; }
+  .toast.on { transform: translateX(-50%) translateY(0); }
+  .toast button { color: var(--accent); font-weight: 600; }
+
+  /* ---------- note editor modal ---------- */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 15; padding: 20px; }
+  .overlay.on { display: grid; }
+  .editor { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(640px, 100%); max-height: 85vh; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .editor .ehead { display: flex; gap: 10px; align-items: center; }
+  .editor .ehead input { flex: 1; background: none; border: none; color: var(--text); font: inherit; font-size: 17px; font-weight: 600; min-width: 0; }
+  .editor .ehead input:focus { outline: none; }
+  .editor textarea { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.6; padding: 12px; min-height: 180px; resize: vertical; }
+  .editor .erow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .editor .saved { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--good); }
+  .editor .danger { color: var(--bad); border-color: rgba(224,108,108,.35); }
+
+  /* ---------- mobile ---------- */
+  .bottomnav { display: none; }
+  .fab { display: none; }
+  .addbtn { color: var(--accent); border-color: rgba(226,168,75,.4); }
+  .addrow { border: 1px dashed var(--border); border-radius: 8px; padding: 7px 10px; color: var(--muted); font-size: 12.5px; text-align: left; }
+  .addrow:hover { color: var(--text); border-color: var(--muted); }
+  @media (max-width: 760px) {
+    .side { display: none; }
+    .main { padding: 18px 14px 86px; }
+    .grid, .grid3, .todaygrid, .goalgrid, .jgrid, .board { grid-template-columns: 1fr; }
+    .ngrid { grid-template-columns: 1fr 1fr; }
+    .habit { grid-template-columns: 72px 1fr auto; }
+    .bottomnav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); z-index: 5; }
+    .bottomnav button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; color: var(--muted); padding: 4px 0; border-radius: 8px; }
+    .bottomnav button .ico { font-size: 17px; }
+    .bottomnav button.active { color: var(--accent); }
+    .fab { display: grid; position: fixed; right: 16px; bottom: calc(66px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 99px; background: var(--accent); color: #1A1204; font-size: 26px; font-weight: 600; place-items: center; z-index: 6; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+    .qtypes { display: none; }
+    .task input, .sub input { width: 20px; height: 20px; }
+    .task, .sub { padding-top: 8px; padding-bottom: 8px; }
+  }
+  @media (max-width: 460px) { .ngrid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="banner">STATIC MOCKUP · FAKE DATA · tick the subtasks on “Publish CPF Life video” · resize window for phone layout</div>
+
+<div class="shell">
+  <!-- ================= sidebar ================= -->
+  <nav class="side" aria-label="Main">
+    <div class="brand"><b>Life OS</b><span>DS423+ · up 14d</span></div>
+
+    <button class="nav-btn active" data-view="home"><span class="ico">◈</span>Today</button>
+    <button class="nav-btn" data-view="tasks"><span class="ico">☑</span>Tasks<span class="count">7</span></button>
+    <button class="nav-btn" data-view="notes"><span class="ico">✎</span>Notes<span class="count">48</span></button>
+    <button class="nav-btn" data-view="journal"><span class="ico">✦</span>Journal</button>
+    <button class="nav-btn" data-view="goals"><span class="ico">◎</span>Goals</button>
+
+    <div class="foot">
+      <div><span class="dot"></span>capture · 2 min ago</div>
+      <div><span class="dot"></span>triage · 10:41</div>
+      <div><span class="dot"></span>backup · 03:00</div>
+    </div>
+  </nav>
+
+  <!-- ================= main ================= -->
+  <main class="main">
+
+    <!-- ========== TODAY ========== -->
+    <section class="view on" id="v-home">
+      <div class="vhead">
+        <h1>Thursday</h1><span class="date">9 Jul 2026 · 13:23 · Asia/Singapore</span>
+        <span class="spacer"></span>
+        <span class="ringwrap" title="day score"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915" style="stroke-dasharray:38 100"></circle></svg></span>
+        <span class="chip warn">3/8 done · on track</span>
+      </div>
+
+      <div class="qcap">
+        <span class="qplus">＋</span>
+        <input type="text" id="qin" placeholder="Add a task, note, or journal entry… (or paste a link)" aria-label="Quick add">
+        <div class="qtypes" id="qtypes">
+          <button class="qt active" data-t="auto">auto</button>
+          <button class="qt" data-t="task">task</button>
+          <button class="qt" data-t="note">note</button>
+          <button class="qt" data-t="journal">journal</button>
+        </div>
+        <button class="qgo" id="qgo">Add</button>
+      </div>
+
+      <div class="todaygrid">
+        <div class="card hero">
+          <div class="chead"><h2>Today’s tasks</h2><a href="#" data-go="tasks">all tasks →</a></div>
+          <div class="task"><span class="pri m"></span><input type="checkbox" id="t2"><label for="t2">Reply sponsor email (Moomoo campaign)</label><span class="cat">BUSINESS</span><span class="due today">today</span></div>
+          <div class="task"><span class="pri m"></span><input type="checkbox" id="t3"><label for="t3">Review thumbnail v3 — bank stocks rally</label><span class="cat">CONTENT</span><span class="due over">yesterday</span></div>
+
+          <div class="ptask" data-ring="r1">
+            <div class="head">
+              <span class="ringwrap" id="rw-r1"><svg class="ring" id="ring-r1" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
+              <span class="t">Publish CPF Life video</span>
+              <span class="subcount" id="cnt-r1">1/4</span>
+              <span class="cat">CONTENT</span>
+              <span class="due today">today</span>
+            </div>
+            <div class="subs">
+              <div class="sub done"><input type="checkbox" checked data-ring="r1" id="s1a"><label for="s1a">Record voiceover</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r1" id="s1b"><label for="s1b">Review final cut</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r1" id="s1c"><label for="s1c">Approve thumbnail v3</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r1" id="s1d"><label for="s1d">Schedule upload — Sun 20:00</label></div>
+            </div>
+          </div>
+
+          <div class="task"><span class="pri l"></span><input type="checkbox" id="t5"><label for="t5">Draft newsletter #12 intro</label><span class="cat">BUSINESS</span><span class="due" style="color:var(--good)">☀ planned</span></div>
+
+          <div class="task done" style="opacity:.55"><span class="pri l"></span><input type="checkbox" id="t4" checked><label for="t4">Pay invoice — editor June</label><span class="cat">BUSINESS</span><span class="due">done 09:14</span></div>
+          <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">a task is here because it’s: due today · overdue · or ☀ you planned it (tap ☀ on any task) — nothing auto-appears</div></div>
+        </div>
+
+        <div class="rcol">
+          <div class="card sub2">
+            <div class="chead"><h2>Today · timeline</h2></div>
+            <div class="agrow dim"><span class="when">09:30</span><span class="what">Deep work — script polish</span></div>
+            <div class="nowline">NOW · 13:23</div>
+            <div class="agrow"><span class="when">14:00</span><span class="what">Editor sync — cut review</span><span class="tag">meet</span></div>
+            <div class="agrow"><span class="when">18:30</span><span class="what">Gym — push day</span></div>
+          </div>
+
+          <div class="card sub2">
+            <div class="chead"><h2>Goals</h2><a href="#" data-go="goals">→</a></div>
+            <div class="ghead"><span class="t" style="font-weight:500">2 long-form videos</span><span class="gnum">1/2</span></div>
+            <div class="bar"><i style="width:50%"></i></div>
+            <div class="ghead"><span class="t" style="font-weight:500">Newsletter → 500</span><span class="gnum">438</span></div>
+            <div class="bar"><i style="width:87%"></i></div>
+            <div class="ghead"><span class="t" style="font-weight:500">Sponsor deliverables</span><span class="gnum">2/3</span></div>
+            <div class="bar"><i style="width:67%"></i></div>
+          </div>
+
+          <div class="card sub2">
+            <div class="chead"><h2>Captured today</h2><a href="#" data-go="notes">→</a></div>
+            <div class="cap"><span class="src">VOICE</span>
+              <div class="txt">“compare SSB vs T-bills vs HYSA…”
+                <div class="meta"><span class="filed">→ Notes · #idea</span></div></div></div>
+            <div class="cap"><span class="src">URL</span>
+              <div class="txt">instagram.com/reel/DVXvIDxE…
+                <div class="meta"><span class="filed">→ Notes · #link #idea</span></div></div></div>
+            <div class="cap"><span class="src">TEXT</span>
+              <div class="txt">“renew passport before september”
+                <div class="meta"><span class="filed">→ Task · due Aug</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== TASKS ========== -->
+    <section class="view" id="v-tasks">
+      <div class="vhead"><h1>Tasks</h1>
+        <button class="tagbtn active" data-cat="all">All</button>
+        <button class="tagbtn" data-cat="content">Content</button>
+        <button class="tagbtn" data-cat="business">Business</button>
+        <button class="tagbtn" data-cat="personal">Personal</button>
+        <span class="spacer"></span><button class="mini addbtn">＋ New task</button></div>
+      <div class="board">
+        <div class="col"><h3>Backlog <span class="count">2</span></h3>
+          <div class="kcard" data-cat="content"><span class="t">Research: covered-call ETF video angle</span><div class="krow"><span class="pri m"></span><span class="due">no date</span><span class="goalref">◎ 2 videos/mo</span></div></div>
+          <div class="kcard" data-cat="personal"><span class="t">Renew passport</span><div class="krow"><span class="pri m"></span><span class="due">Aug 2026</span></div></div>
+          <button class="addrow">＋ add task</button>
+        </div>
+        <div class="col"><h3>This week <span class="count">3</span></h3>
+          <div class="kcard" data-cat="content" data-ring="r2">
+            <div class="khead">
+              <span class="ringwrap" id="rw-r2"><svg class="ring" id="ring-r2" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
+              <span class="t">Publish CPF Life video</span>
+              <span class="subcount" id="cnt-r2">1/4</span>
+            </div>
+            <div class="subs">
+              <div class="sub done"><input type="checkbox" checked data-ring="r2" id="s2a"><label for="s2a">Record voiceover</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r2" id="s2b"><label for="s2b">Review final cut</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r2" id="s2c"><label for="s2c">Approve thumbnail v3</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r2" id="s2d"><label for="s2d">Schedule upload — Sun 20:00</label></div>
+              <div class="sub" style="opacity:.55"><span style="width:14px;text-align:center">＋</span><label>add subtask</label></div>
+            </div>
+            <div class="krow"><span class="pri h"></span><span class="due today">today</span><span class="goalref">◎ 2 videos/mo</span></div>
+          </div>
+          <div class="kcard" data-cat="business" data-ring="r3">
+            <div class="khead">
+              <span class="ringwrap" id="rw-r3"><svg class="ring" id="ring-r3" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
+              <span class="t">Moomoo sponsor deliverables</span>
+              <span class="subcount" id="cnt-r3">2/3</span>
+            </div>
+            <div class="subs">
+              <div class="sub done"><input type="checkbox" checked data-ring="r3" id="s3a"><label for="s3a">Draft integration script</label></div>
+              <div class="sub done"><input type="checkbox" checked data-ring="r3" id="s3b"><label for="s3b">Send draft for approval</label></div>
+              <div class="sub"><input type="checkbox" data-ring="r3" id="s3c"><label for="s3c">Invoice after publish</label></div>
+            </div>
+            <div class="krow"><span class="pri m"></span><span class="due">Fri</span></div>
+          </div>
+          <div class="kcard" data-cat="personal"><span class="t">Weekly review <span class="rec" title="recurring">↻ every Sun</span></span><div class="krow"><span class="pri l"></span><span class="due">Sun</span></div></div>
+          <button class="addrow">＋ add task</button>
+        </div>
+        <div class="col"><h3>Done <span class="count">2</span></h3>
+          <div class="kcard" data-cat="business" style="opacity:.55"><span class="t">Pay invoice — editor June</span><div class="krow"><span class="due">today 09:14</span></div></div>
+          <div class="kcard" data-cat="content" style="opacity:.55"><span class="t">Upload short — T-bill ladder</span><div class="krow"><span class="due">Tue</span></div></div>
+          <div class="hint" style="margin-top:2px">auto-archives after 7 days</div>
+        </div>
+      </div>
+      <p class="hint">↻ recurring tasks respawn on completion · ◎ links task to a goal · ring turns green + task auto-completes when every subtask is done<br>tap any card to edit: title, due date, priority, category, goal link, subtasks, delete · no deadline? drag order IS the priority · stale 30+ day items get flagged in the Sunday digest</p>
+    </section>
+
+    <!-- ========== NOTES ========== -->
+    <section class="view" id="v-notes">
+      <div class="vhead"><h1>Notes</h1><span class="spacer"></span><span class="chip">vault/ · markdown · Obsidian-compatible</span><button class="mini addbtn">＋ New note</button></div>
+
+      <div class="ntools">
+        <input class="search" id="nsearch" type="search" placeholder="Search notes…  (try “cash”)" aria-label="Search notes">
+        <button class="tagbtn active" data-tag="all">All</button>
+        <button class="tagbtn" data-tag="idea">#idea</button>
+        <button class="tagbtn" data-tag="link">#link</button>
+        <button class="tagbtn" data-tag="research">#research</button>
+        <button class="tagbtn" data-tag="business">#business</button>
+        <button class="tagbtn" data-tag="craft">#craft</button>
+      </div>
+
+      <div class="nsec">★ Pinned</div>
+      <div class="ngrid" id="npinned">
+        <div class="note" data-tags="craft">
+          <div class="nt"><span class="star">★</span>Video hooks that worked</div>
+          <div class="snip">Running list. “The CPF board doesn’t want you to know this” — 12% CTR. Question-form hooks beat statement hooks 8 of 10 times…</div>
+          <div class="nfoot"><span class="tag">#craft</span><span class="due">updated Jun 28</span></div>
+        </div>
+        <div class="note" data-tags="business">
+          <div class="nt"><span class="star">★</span>Sponsor rate card 2026</div>
+          <div class="snip">Integration 60–90s: $X. Dedicated video: $Y. Shorts bundle ×3: $Z. Always: script approval stays with me, one revision round…</div>
+          <div class="nfoot"><span class="tag">#business</span><span class="due">updated Jul 02</span></div>
+        </div>
+      </div>
+
+      <div class="nsec">Recent</div>
+      <div class="ngrid" id="nrecent">
+        <div class="note" data-tags="idea">
+          <div class="nt">SSB vs T-bills vs HYSA — parked cash</div>
+          <div class="snip">Airport layover analogy: your cash is “between flights”. Compare lock-up, yield, liquidity. Could be a short AND a long-form…</div>
+          <div class="nfoot"><span class="tag idea">#idea</span><span class="due today">today · via voice</span></div>
+        </div>
+        <div class="note" data-tags="idea link">
+          <div class="nt">Creator dashboard walkthrough <span class="domain">instagram.com ↗</span></div>
+          <div class="snip">Reel showing a self-built content dashboard — good reference for the pipeline board layout.</div>
+          <div class="nfoot"><span class="tag idea">#idea</span><span class="tag lnk">#link</span><span class="due today">today</span></div>
+        </div>
+        <div class="note" data-tags="research">
+          <div class="nt">DBS Q2 earnings preview <span class="domain">seekingalpha.com ↗</span></div>
+          <div class="snip">NIM compression expected but fee income up. Relevant for the bank-stocks-rally video — cite Q2 numbers if out before publish.</div>
+          <div class="nfoot"><span class="tag">#research</span><span class="tag lnk">#link</span><span class="due">Jul 05</span></div>
+        </div>
+        <div class="note" data-tags="idea">
+          <div class="nt">Covered-call ETF angle</div>
+          <div class="snip">Everyone covers QYLD badly. Angle: “the yield isn’t income, it’s your own money” — show total-return chart vs QQQ…</div>
+          <div class="nfoot"><span class="tag idea">#idea</span><span class="due">Jul 04</span></div>
+        </div>
+        <div class="note" data-tags="business">
+          <div class="nt">Editor SOP — handoff checklist</div>
+          <div class="snip">Raw footage in Drive by Mon. Cut review call Wed. B-roll requests in the doc, not WhatsApp. Final export specs: 4K H.264…</div>
+          <div class="nfoot"><span class="tag">#business</span><span class="due">Jun 30</span></div>
+        </div>
+        <div class="note" data-tags="craft">
+          <div class="nt">Thumbnail rules I keep breaking</div>
+          <div class="snip">Max 3 words. Face + one object. No red arrows (tested, CTR flat). Contrast against YouTube dark mode, not light…</div>
+          <div class="nfoot"><span class="tag">#craft</span><span class="due">Jun 24</span></div>
+        </div>
+      </div>
+      <p class="hint">＋ New note opens a blank editor · tap any card to open &amp; edit (markdown) · ★ pins/unpins · voice notes and links from Telegram file here automatically with suggested tags · works in Obsidian too</p>
+    </section>
+
+    <!-- ========== JOURNAL ========== -->
+    <section class="view" id="v-journal">
+      <div class="vhead"><h1>Journal</h1><span class="date">Thu 9 Jul 2026</span><span class="spacer"></span><span class="chip">one page per day</span><button class="mini addbtn">＋ Add entry</button></div>
+
+      <div class="jgrid">
+      <div class="jmain">
+      <div class="card" style="margin-bottom:14px">
+        <div class="chead"><h2>Today · Thursday 9 July</h2></div>
+        <div>
+          <div class="due" style="margin-bottom:2px">08:20</div>
+          <p style="margin:0 0 12px">Slept badly, skipped the morning walk. Kaya toast + kopi c for breakfast. Dreading the voiceover recording but blocking 3pm for it anyway.</p>
+          <div class="due" style="margin-bottom:2px">13:05 · via voice</div>
+          <p style="margin:0 0 12px">Editor call went better than expected — the cut is basically there. Felt a real lift after. Chicken rice for lunch, ate too fast as usual.</p>
+        </div>
+      </div>
+
+      <div class="nsec">Previous days</div>
+      <div class="card">
+        <div class="read"><a href="#">Wed 8 Jul</a><span class="due">“GST filing done, huge weight off. Dinner with WL at the hawker…”</span></div>
+        <div class="read"><a href="#">Tue 7 Jul</a><span class="due">“Short went out, decent first hour. Energy low all afternoon…”</span></div>
+        <div class="read"><a href="#">Mon 6 Jul</a><span class="due">“Planned the week. Gym after a long break — legs are done…”</span></div>
+      </div>
+      </div>
+
+      <div class="rcol">
+        <div class="card sub2">
+          <div class="chead"><h2>On this day</h2></div>
+          <div class="flash"><div class="fdate">a week ago · Thu 2 Jul</div><p>“T-bill ladder video went live. Weirdly calm about it this time…”</p></div>
+          <div class="flash"><div class="fdate">a month ago · 9 Jun</div><p>“First day trying the new thumbnail workflow. Skeptical but the v1s look better…”</p></div>
+          <div class="flash"><div class="fdate">a year ago · 9 Jul 2025</div><p>“Crossed 10k subs today. Told nobody. Bought chicken rice to celebrate.”</p></div>
+        </div>
+        <div class="card sub2">
+          <div class="chead"><h2>Today so far</h2></div>
+          <div class="agrow dim"><span class="when">09:14</span><span class="what">✓ Pay invoice — editor June</span></div>
+          <div class="agrow dim"><span class="when">10:41</span><span class="what">captured 1 idea via voice</span></div>
+          <div class="agrow"><span class="when">14:00</span><span class="what">Editor sync — cut review</span></div>
+          <div class="cap" style="border-top:1px solid var(--border);padding-top:6px"><div class="meta">material for tonight’s entry — auto-collected, never written for you</div></div>
+        </div>
+      </div>
+      </div>
+      <p class="hint">tap a previous day to open &amp; edit its page · plain markdown (vault/journal/2026-07-09.md), one file per day — greppable, Obsidian-compatible, and Claude sessions can read your week when you ask “how was my week?”</p>
+    </section>
+
+    <!-- ========== GOALS ========== -->
+    <section class="view" id="v-goals">
+      <div class="vhead"><h1>Goals</h1><span class="spacer"></span><button class="mini addbtn">＋ New goal</button></div>
+
+      <div class="nsec">This month · July</div>
+      <div class="goalgrid">
+      <div class="goal">
+        <div class="ghead"><span class="t">Publish 2 long-form videos</span><span class="gnum">1 / 2 · 4 tasks open</span></div>
+        <div class="bar"><i style="width:50%"></i></div>
+        <div class="gtasks">
+          <div class="gt done"><span class="s d">✓</span>T-bill ladder video — published Jul 2</div>
+          <div class="gt"><span class="s">○</span>Publish CPF Life video (3 subtasks left)</div>
+          <div class="gt"><span class="s">○</span>Script — SG bank stocks rally</div>
+        </div>
+      </div>
+      <div class="goal">
+        <div class="ghead"><span class="t">Grow newsletter to 500 subs</span><span class="gnum">438 / 500</span></div>
+        <div class="bar"><i style="width:87%"></i></div>
+        <div class="gtasks"><div class="gt"><span class="s">○</span>Add signup CTA to CPF video description</div></div>
+      </div>
+      </div>
+
+      <div class="nsec">This week · Jul 6 – 12</div>
+      <div class="goalgrid">
+      <div class="goal">
+        <div class="ghead"><span class="t">Clear sponsor deliverables</span><span class="gnum">2 / 3</span></div>
+        <div class="bar"><i style="width:67%"></i></div>
+        <div class="gsrc">rolls up from “Moomoo sponsor deliverables” subtasks</div>
+      </div>
+      </div>
+      <p class="hint">+ New goal → name it, pick week/month, pick type: count linked tasks (auto) or a number you update (“438 / 500”) · link tasks via ◎ on the task card · Sunday’s weekly-review task is when you set next week’s goals · progress appears in the morning digest</p>
+    </section>
+
+  </main>
+</div>
+
+<!-- mobile bottom nav -->
+<nav class="bottomnav" aria-label="Mobile">
+  <button class="active" data-view="home"><span class="ico">◈</span>Today</button>
+  <button data-view="tasks"><span class="ico">☑</span>Tasks</button>
+  <button data-view="notes"><span class="ico">✎</span>Notes</button>
+  <button data-view="journal"><span class="ico">✦</span>Journal</button>
+  <button data-view="goals"><span class="ico">◎</span>Goals</button>
+</nav>
+
+<div class="overlay" id="noteoverlay">
+  <div class="editor" role="dialog" aria-label="Edit note">
+    <div class="ehead"><input id="ed-title" value=""><button class="mini" id="ed-pin">★ pin</button><button class="mini" id="ed-close">✕</button></div>
+    <div class="erow"><span class="tag idea">#idea</span><button class="mini" style="font-size:11px">＋ tag</button><span class="saved">saved ✓ · vault/notes/…md</span></div>
+    <textarea id="ed-body"></textarea>
+    <div class="erow"><button class="mini danger">delete</button><span class="saved" style="color:var(--muted)">autosaves as you type — this is a plain markdown file</span></div>
+  </div>
+</div>
+
+<button class="fab" aria-label="Quick add — capture anything">＋</button>
+
+<script>
+  // view switching
+  function show(view) {
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + view));
+    document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    window.scrollTo({ top: 0 });
+  }
+  document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
+  document.querySelectorAll('[data-go]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); show(a.dataset.go); }));
+
+  // toast with optional undo
+  var toastEl = null, toastTimer = null;
+  function toast(msg, undoCb) {
+    if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'toast'; document.body.appendChild(toastEl); }
+    toastEl.innerHTML = '';
+    toastEl.appendChild(document.createTextNode(msg));
+    if (undoCb) {
+      var u = document.createElement('button'); u.textContent = 'Undo';
+      u.addEventListener('click', function () { undoCb(); toastEl.classList.remove('on'); });
+      toastEl.appendChild(u);
+    }
+    requestAnimationFrame(function () { toastEl.classList.add('on'); });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('on'); }, 3200);
+  }
+
+  // simple task rows — complete with undo
+  document.querySelectorAll('.task input').forEach(c => c.addEventListener('change', () => {
+    c.closest('.task').classList.toggle('done', c.checked);
+    if (c.checked) toast('Task completed', function () { c.checked = false; c.closest('.task').classList.remove('done'); });
+  }));
+
+  // task category filters
+  document.querySelectorAll('[data-cat].tagbtn').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('[data-cat].tagbtn').forEach(x => x.classList.toggle('active', x === b));
+    var want = b.dataset.cat;
+    document.querySelectorAll('.kcard').forEach(k => {
+      k.style.display = (want === 'all' || k.dataset.cat === want) ? '' : 'none';
+    });
+  }));
+
+  // note editor modal
+  var ov = document.getElementById('noteoverlay');
+  document.querySelectorAll('.note').forEach(n => n.addEventListener('click', () => {
+    var t = n.querySelector('.nt').textContent.replace('★', '').trim();
+    document.getElementById('ed-title').value = t;
+    document.getElementById('ed-body').value = n.querySelector('.snip').textContent.trim() + "\n\n(full markdown body opens here — edit freely, it autosaves)";
+    ov.classList.add('on');
+  }));
+  document.getElementById('ed-close').addEventListener('click', () => ov.classList.remove('on'));
+  ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('on'); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') ov.classList.remove('on'); });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+      e.preventDefault(); show('home'); document.getElementById('qin').focus();
+    }
+  });
+  document.querySelector('.fab').addEventListener('click', () => { show('home'); document.getElementById('qin').focus(); });
+
+  // subtask progress rings — the circumference is 100 so dasharray maps 1:1 to percent
+  function updateRing(id) {
+    const boxes = document.querySelectorAll('input[data-ring="' + id + '"]');
+    const done = [...boxes].filter(b => b.checked).length;
+    const pct = boxes.length ? (done / boxes.length) * 100 : 0;
+    const ring = document.getElementById('ring-' + id);
+    const wrap = document.getElementById('rw-' + id);
+    const cnt = document.getElementById('cnt-' + id);
+    if (ring) ring.querySelector('.fill').style.strokeDasharray = pct + ' 100';
+    if (ring) ring.classList.toggle('full', pct === 100);
+    if (wrap) wrap.classList.toggle('full', pct === 100);
+    if (cnt) cnt.textContent = done + '/' + boxes.length;
+  }
+  document.querySelectorAll('input[data-ring]').forEach(c => {
+    c.addEventListener('change', () => {
+      c.closest('.sub').classList.toggle('done', c.checked);
+      updateRing(c.dataset.ring);
+    });
+  });
+  ['r1', 'r2', 'r3'].forEach(updateRing);
+
+  // notes: tag filter + live search
+  let activeTag = 'all';
+  function filterNotes() {
+    const q = document.getElementById('nsearch').value.trim().toLowerCase();
+    document.querySelectorAll('.note').forEach(n => {
+      const tagOk = activeTag === 'all' || (n.dataset.tags || '').split(' ').includes(activeTag);
+      const qOk = !q || n.textContent.toLowerCase().includes(q);
+      n.classList.toggle('hide', !(tagOk && qOk));
+    });
+  }
+  document.querySelectorAll('.tagbtn[data-tag]').forEach(b => b.addEventListener('click', () => {
+    activeTag = b.dataset.tag;
+    document.querySelectorAll('.tagbtn[data-tag]').forEach(x => x.classList.toggle('active', x === b));
+    filterNotes();
+  }));
+  document.getElementById('nsearch').addEventListener('input', filterNotes);
+
+  // quick add: type chips + live detection + add feedback
+  (function () {
+    var qin = document.getElementById('qin'), qgo = document.getElementById('qgo');
+    var chips = document.querySelectorAll('#qtypes .qt');
+    var manual = null;
+    function setActive(t) {
+      chips.forEach(function (c) { c.classList.toggle('active', c.dataset.t === t); });
+    }
+    chips.forEach(function (c) {
+      c.addEventListener('click', function () { manual = c.dataset.t; setActive(manual); qin.focus(); });
+    });
+    qin.addEventListener('input', function () {
+      if (manual) return;
+      var v = qin.value.trim().toLowerCase();
+      var t = 'auto';
+      if (v.startsWith('t:')) t = 'task';
+      else if (v.startsWith('n:') || v.startsWith('i:')) t = 'note';
+      else if (v.startsWith('j:')) t = 'journal';
+      else if (/^https?:\/\//.test(v) || v.includes('instagram.com') || v.includes('youtube.com') || v.includes('youtu.be')) t = 'note';
+      setActive(t);
+    });
+    function add() {
+      if (!qin.value.trim()) { qin.focus(); return; }
+      var active = document.querySelector('#qtypes .qt.active');
+      var t = active ? active.dataset.t : 'auto';
+      var dest = { auto: 'Notes (auto-filed)', task: 'Tasks', note: 'Notes', journal: 'today’s Journal' }[t];
+      qgo.textContent = '✓ Added'; qgo.classList.add('did');
+      qin.value = ''; manual = null; setActive('auto');
+      toast('Added → ' + dest, function () {});
+      setTimeout(function () { qgo.textContent = 'Add'; qgo.classList.remove('did'); }, 1200);
+    }
+    qgo.addEventListener('click', add);
+    qin.addEventListener('keydown', function (e) { if (e.key === 'Enter') add(); });
+  })();
+</script>

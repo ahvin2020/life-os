@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Journal{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Journal</h1><span class="date">{{ today_pretty }}</span><span class="spacer"></span><span class="chip">one page per day</span></div>
+
+<div class="jgrid">
+  <div class="jmain">
+    <div class="card" style="margin-bottom:14px">
+      <div class="chead"><h2>Today · {{ today_pretty }}</h2></div>
+      {% if page and page.entries %}
+        {% for e in page.entries %}
+        <div class="jentry">
+          <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}</div>
+          <p>{{ e.text }}</p>
+        </div>
+        {% endfor %}
+      {% elif page and page.raw.strip() %}
+        <p style="white-space:pre-wrap">{{ page.raw }}</p>
+      {% else %}
+        <div class="empty">No entry yet. Write how the day went — what you did, ate, felt.</div>
+      {% endif %}
+      <div class="erow" style="margin-top:8px">
+        <textarea id="j-text" data-day="{{ today }}" placeholder="Add a timestamped entry…" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;padding:10px;min-height:70px;resize:vertical"></textarea>
+      </div>
+      <div class="erow"><span class="spacer" style="flex:1"></span><button class="qgo" id="j-add" type="button">＋ Add entry</button></div>
+    </div>
+
+    <div class="nsec">Previous days</div>
+    <div class="card">
+      {% if prev_days %}
+        {% for d in prev_days %}
+        <div class="read"><a href="/journal/{{ d.day }}">{{ d.day | fdate }}</a><span class="due">{{ d.preview }}</span></div>
+        {% endfor %}
+      {% else %}
+        <div class="empty">No previous entries yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="rcol">
+    {% if flashbacks %}
+    <div class="card sub2">
+      <div class="chead"><h2>On this day</h2></div>
+      {% for f in flashbacks %}
+      <div class="flash"><div class="fdate">{{ f.label }} · {{ f.date }}</div><p>{{ f.text }}</p></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="card sub2">
+      <div class="chead"><h2>Today so far</h2></div>
+      {% for c in today_so_far.completed %}
+      <div class="agrow dim"><span class="when">✓</span><span class="what">{{ c.title }}</span></div>
+      {% endfor %}
+      <div class="agrow dim"><span class="when">·</span><span class="what">{{ today_so_far.captures }} captured today</span></div>
+      <div class="cap" style="border-top:1px solid var(--border);padding-top:6px"><div class="meta">material for tonight's entry — auto-collected, never written for you</div></div>
+    </div>
+  </div>
+</div>
+<p class="hint">tap a previous day to open &amp; edit its page · plain markdown (vault/journal/{{ today }}.md), one file per day — greppable &amp; Obsidian-compatible</p>
+{% endblock %}

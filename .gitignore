@@ -1,0 +1,18 @@
+# Runtime data — the NAS is the single writer; app.db lives OUTSIDE the synced tree.
+data/
+data-backups/
+
+# User content — synced by Synology Drive, not git.
+vault/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets / local env
+.env
+*.secret
+
+# OS
+.DS_Store

@@ -1,0 +1,49 @@
+# Life OS — Container Manager (docker compose) project for the Synology DS423+.
+#
+# Two bind mounts, two very different trust levels:
+#   - CODE  (this repo, the Synology Drive synced folder): mounted READ-ONLY.
+#           Edit on the Mac → Drive syncs to the NAS → restart the container.
+#   - DATA  (/volume1/docker/life-os/data): mounted READ-WRITE, and NOT synced —
+#           app.db lives here so it never round-trips through file-sync (the
+#           single-writer rule that removes the SQLite-over-sync corruption risk).
+#   - VAULT (repo/vault): mounted read-write; notes/journal markdown, synced.
+#
+# Adjust the two host paths below to match your NAS before `docker compose up -d`:
+#   CODE  path = the Drive-synced Documents/life-os folder on the NAS
+#               (e.g. /volume1/homes/kelvin/Drive/Documents/life-os)
+#   DATA  path = /volume1/docker/life-os/data  (create it first, see README)
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.app
+    working_dir: /app
+    volumes:
+      - /volume1/homes/kelvin/Drive/Documents/life-os:/app:ro
+      - /volume1/docker/life-os/data:/data:rw
+      - /volume1/homes/kelvin/Drive/Documents/life-os/vault:/app/vault:rw
+    environment:
+      - TZ=Asia/Singapore
+      - LIFEOS_DB_PATH=/data/app.db
+    ports:
+      - "5060:5060"
+    restart: unless-stopped
+
+  # PHASE 2 — starts only when explicitly enabled:  docker compose --profile capture up -d
+  capture:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.capture
+    working_dir: /app
+    profiles: ["capture"]
+    volumes:
+      - /volume1/homes/kelvin/Drive/Documents/life-os:/app:ro
+      - /volume1/docker/life-os/data:/data:rw
+      - /volume1/homes/kelvin/Drive/Documents/life-os/vault:/app/vault:rw
+    environment:
+      - TZ=Asia/Singapore
+      - LIFEOS_DB_PATH=/data/app.db
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+    restart: unless-stopped

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Journal · {{ day }}{% endblock %}
+{% block content %}
+<div class="vhead"><h1>{{ pretty }}</h1><span class="spacer"></span><a class="mini" href="/journal">← today</a></div>
+<div class="card">
+  <textarea id="j-raw" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;line-height:1.6;padding:14px;min-height:340px;resize:vertical">{{ page.raw if page else '' }}</textarea>
+  <div class="erow"><span class="saved" id="j-saved" style="color:var(--muted)">plain markdown — vault/journal/{{ day }}.md</span><button class="qgo" id="j-save" type="button" style="margin-left:auto">Save</button></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var box = document.getElementById("j-raw"), saved = document.getElementById("j-saved");
+  var timer = null;
+  function save() {
+    saved.textContent = "saving…";
+    var fd = new FormData(); fd.append("raw", box.value);
+    fetch("/journal/{{ day }}/save", { method: "POST", body: fd }).then(function () { saved.textContent = "saved ✓"; });
+  }
+  box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(save, 800); });
+  box.addEventListener("blur", save);
+  document.getElementById("j-save").addEventListener("click", save);
+})();
+</script>
+{% endblock %}

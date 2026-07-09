@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Notes{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Notes</h1><span class="spacer"></span>
+  <span class="chip">vault/ · markdown · Obsidian-compatible</span>
+  <button class="mini addbtn" id="note-new" type="button">＋ New note</button></div>
+
+<div class="ntools">
+  <input class="search" id="nsearch" type="search" placeholder="Search notes…" aria-label="Search notes">
+  <button class="tagbtn active" data-tag="all" type="button">All</button>
+  {% for t in tags %}<button class="tagbtn" data-tag="{{ t }}" type="button">#{{ t }}</button>{% endfor %}
+</div>
+
+{% macro note_card(n) -%}
+<div class="note" data-slug="{{ n.slug }}" data-tags="{{ n.tags|join(' ') }}">
+  <div class="nt">{% if n.pinned %}<span class="star">★</span>{% endif %}{{ n.title }}
+    {% if n.domain %}<span class="domain">{{ n.domain }} ↗</span>{% endif %}</div>
+  <div class="snip">{{ n.snippet }}</div>
+  <div class="nfoot">
+    {% for t in n.tags %}<span class="tag {{ 'idea' if t=='idea' else ('lnk' if t=='link' else '') }}">#{{ t }}</span>{% endfor %}
+    <span class="due">updated {{ n.updated | fdate }}</span>
+  </div>
+</div>
+{%- endmacro %}
+
+{% if pinned %}
+<div class="nsec">★ Pinned</div>
+<div class="ngrid">{% for n in pinned %}{{ note_card(n) }}{% endfor %}</div>
+{% endif %}
+
+<div class="nsec">Recent</div>
+{% if recent %}
+<div class="ngrid">{% for n in recent %}{{ note_card(n) }}{% endfor %}</div>
+{% elif not pinned %}
+<div class="empty">No notes yet — click ＋ New note, or send <span class="kbd">n:</span> / a link to your bot (Phase 2). Notes are plain markdown in <span class="kbd">vault/notes/</span>.</div>
+{% endif %}
+<p class="hint">＋ New note opens a blank editor · tap any card to open &amp; edit (markdown) · ★ pins/unpins · works in Obsidian too</p>
+{% endblock %}

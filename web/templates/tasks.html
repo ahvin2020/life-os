@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Tasks{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Tasks</h1>
+  <button class="tagbtn active" data-cat="all" type="button">All</button>
+  {% for c in categories %}<button class="tagbtn" data-cat="{{ c }}" type="button">{{ c|capitalize }}</button>{% endfor %}
+  <span class="spacer"></span><button class="mini addbtn" data-newtask="week" type="button">＋ New task</button></div>
+
+<div class="board">
+  {% set titles = {'backlog': 'Backlog', 'week': 'This week', 'done': 'Done'} %}
+  {% for col in ['backlog', 'week', 'done'] %}
+  <div class="col" data-col="{{ col }}">
+    <h3>{{ titles[col] }} <span class="count">{{ counts[col] }}</span></h3>
+    <div class="kstack" style="display:flex;flex-direction:column;gap:9px;min-height:20px">
+      {% for t in board[col] %}{{ m.kcard(t, today) }}{% endfor %}
+    </div>
+    {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ add task</button>
+    {% else %}<div class="hint" style="margin-top:2px">auto-archives after 7 days</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p class="hint">↻ recurring tasks respawn on completion · ◎ links a task to a goal · ring turns green + task auto-completes when every subtask is done<br>tap any card title to edit: title, due date, priority, category, goal, subtasks, delete · drag to reorder — order IS the priority</p>
+{% endblock %}
+{% block scripts %}
+<script>window.LIFEOS_GOALS = [{% for g in goals %}{"id":{{ g.id }},"title":{{ g.title|tojson }}}{{ "," if not loop.last }}{% endfor %}];</script>
+{% endblock %}

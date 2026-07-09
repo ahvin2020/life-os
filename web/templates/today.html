@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Today{% endblock %}
+{% block content %}
+<div class="vhead">
+  <h1>{{ weekday }}</h1><span class="date">{{ date_str }}</span>
+  <span class="spacer"></span>
+  <span class="ringwrap" title="day score"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915" style="stroke-dasharray:{{ score.pct }} 100"></circle></svg></span>
+  <span class="chip warn">{{ score.done }}/{{ score.total }} done</span>
+</div>
+
+<div class="qcap">
+  <span class="qplus">＋</span>
+  <input type="text" id="qin" placeholder="Add a task, note, or journal entry… (or paste a link)" aria-label="Quick add">
+  <div class="qtypes" id="qtypes">
+    <button class="qt active" data-t="auto" type="button">auto</button>
+    <button class="qt" data-t="task" type="button">task</button>
+    <button class="qt" data-t="note" type="button">note</button>
+    <button class="qt" data-t="journal" type="button">journal</button>
+  </div>
+  <button class="qgo" id="qgo" type="button">Add</button>
+</div>
+
+{% if first_run %}
+<div class="card" style="margin-bottom:14px">
+  <div class="chead"><h2>Welcome to Life OS</h2></div>
+  <div class="empty">Get started:</div>
+  <div class="task"><span class="pri l"></span><label>Add your first task — type <span class="kbd">t: buy groceries</span> above</label></div>
+  <div class="task"><span class="pri l"></span><label>Jot a note — type <span class="kbd">n: video idea</span> above</label></div>
+  <div class="task"><span class="pri l"></span><label>Set a goal on the <a href="/goals">Goals</a> page</label></div>
+  <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">Telegram capture, voice notes, and NAS deploy arrive in Phase 2.</div></div>
+</div>
+{% endif %}
+
+<div class="todaygrid">
+  <div class="card hero">
+    <div class="chead"><h2>Today's tasks</h2><a href="/tasks">all tasks →</a></div>
+    {% if tasks %}
+      {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
+    {% else %}
+      <div class="empty">Nothing planned for today. Add a task above, or open a task and tap ☀ to plan it for today.</div>
+    {% endif %}
+    <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">a task is here because it's: due today · overdue · or ☀ you planned it — nothing auto-appears</div></div>
+  </div>
+
+  <div class="rcol">
+    <div class="card sub2">
+      <div class="chead"><h2>Today · timeline</h2></div>
+      <div class="empty" style="font-size:12px">Google Calendar timeline arrives in Phase 4.</div>
+    </div>
+
+    <div class="card sub2">
+      <div class="chead"><h2>Goals</h2><a href="/goals">→</a></div>
+      {% if goals %}
+        {% for g in goals %}
+        <div class="ghead"><span class="t" style="font-weight:500">{{ g.title }}</span>
+          <span class="gnum">{% if g.kind == 'number' %}{{ g.progress.current|int }}/{{ g.progress.target|int }}{% else %}{{ g.progress.done }}/{{ g.progress.total }}{% endif %}</span></div>
+        <div class="bar {{ 'full' if g.progress.pct >= 100 else '' }}"><i style="width:{{ g.progress.pct if g.progress.pct <= 100 else 100 }}%"></i></div>
+        {% endfor %}
+      {% else %}
+        <div class="empty" style="font-size:12px">No goals yet — <a href="/goals">add one</a>.</div>
+      {% endif %}
+    </div>
+
+    <div class="card sub2">
+      <div class="chead"><h2>Captured today</h2><a href="/notes">→</a></div>
+      {% if feed %}
+        {% for c in feed %}
+        <div class="cap"><span class="src">{{ c.source }}</span>
+          <div class="txt">{{ c.text }}<div class="meta"><span class="filed">{{ c.dest }}</span></div></div></div>
+        {% endfor %}
+      {% else %}
+        <div class="empty" style="font-size:12px">Nothing captured today yet.</div>
+      {% endif %}
+    </div>
+
+    {% if journal_empty %}
+    <div class="card sub2">
+      <div class="chead"><h2>Journal</h2><a href="/journal">→</a></div>
+      <div class="empty" style="font-size:12px">No entry today — <a href="/journal">write today's page</a>.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.LIFEOS_GOALS = {{ goals_list | default([]) | tojson }};</script>
+{% endblock %}

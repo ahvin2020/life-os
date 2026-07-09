@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}Life OS{% endblock %} · Life OS</title>
+  <script>
+    // CSRF: expose the session token and auto-attach it to same-origin mutating
+    // requests. fetch() POSTs get the X-CSRFToken header; server-rendered <form
+    // method=post> get a hidden csrf_token input injected on load. Lifted from the
+    // invoicing base template. Patched here (head) so it wraps every fetch.
+    (function () {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      window.CSRF_TOKEN = meta ? meta.getAttribute('content') : '';
+      var _fetch = window.fetch;
+      window.fetch = function (input, init) {
+        init = init || {};
+        var method = (init.method || (typeof input === 'object' && input && input.method) || 'GET').toUpperCase();
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(window.location.origin) === 0;
+        if (sameOrigin && ['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) !== -1) {
+          var h = new Headers(init.headers || (typeof input === 'object' && input && input.headers) || {});
+          if (!h.has('X-CSRFToken')) h.set('X-CSRFToken', window.CSRF_TOKEN);
+          if (!h.has('X-Requested-With')) h.set('X-Requested-With', 'XMLHttpRequest');
+          init.headers = h;
+        }
+        return _fetch.call(this, input, init);
+      };
+      function _ensureCsrf(f) {
+        if (!f || f.tagName !== 'FORM') return;
+        if ((f.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+        if (f.querySelector('input[name="csrf_token"]')) return;
+        var inp = document.createElement('input');
+        inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = window.CSRF_TOKEN;
+        f.appendChild(inp);
+      }
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('form').forEach(_ensureCsrf);
+      });
+      document.addEventListener('submit', function (e) { _ensureCsrf(e.target); }, true);
+    })();
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <nav class="side" aria-label="Main">
+    <div class="brand"><b>Life OS</b><span>DS423+</span></div>
+    <a class="nav-btn {{ 'active' if active=='home' else '' }}" href="/"><span class="ico">◈</span>Today</a>
+    <a class="nav-btn {{ 'active' if active=='tasks' else '' }}" href="/tasks"><span class="ico">☑</span>Tasks<span class="count">{{ nav_counts.tasks }}</span></a>
+    <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes<span class="count">{{ nav_counts.notes }}</span></a>
+    <a class="nav-btn {{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
+    <a class="nav-btn {{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+    <div class="foot">
+      <div><span class="dot"></span>capture · Phase 2</div>
+      <div><span class="dot"></span>triage · Phase 2</div>
+    </div>
+  </nav>
+
+  <main class="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flashes">
+          {% for cat, msg in messages %}<li class="{{ cat }}">{{ msg }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<nav class="bottomnav" aria-label="Mobile">
+  <a class="{{ 'active' if active=='home' else '' }}" href="/"><span class="ico">◈</span>Today</a>
+  <a class="{{ 'active' if active=='tasks' else '' }}" href="/tasks"><span class="ico">☑</span>Tasks</a>
+  <a class="{{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
+  <a class="{{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
+  <a class="{{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+</nav>
+
+<a class="fab" href="/#qin" aria-label="Quick add">＋</a>
+
+<!-- note editor modal -->
+<div class="overlay" id="noteoverlay">
+  <div class="editor" role="dialog" aria-label="Edit note">
+    <div class="ehead">
+      <input id="ed-title" placeholder="Note title">
+      <button class="mini" id="ed-pin" type="button">★ pin</button>
+      <button class="mini" id="ed-close" type="button">✕</button>
+    </div>
+    <div class="erow">
+      <input class="txt" id="ed-tags" style="flex:1" placeholder="tags, comma separated (idea, link)">
+      <span class="saved" id="ed-saved"></span>
+    </div>
+    <textarea id="ed-body" placeholder="Write markdown…"></textarea>
+    <div class="erow">
+      <button class="mini danger" id="ed-delete" type="button">delete</button>
+      <span class="saved" style="color:var(--muted)">autosaves as you type — a plain markdown file in vault/notes/</span>
+    </div>
+  </div>
+</div>
+
+<!-- task editor modal -->
+<div class="overlay" id="taskoverlay">
+  <div class="editor" role="dialog" aria-label="Edit task">
+    <div class="ehead">
+      <input id="te-title" placeholder="Task title">
+      <button class="mini" id="te-close" type="button">✕</button>
+    </div>
+    <div class="erow">
+      <label class="fld">due date<input class="txt" id="te-due" type="date"></label>
+      <label class="fld">priority
+        <select id="te-priority"><option value="">—</option><option value="high">high</option><option value="med">med</option><option value="low">low</option></select>
+      </label>
+      <label class="fld">category
+        <select id="te-category"><option value="">—</option><option value="content">content</option><option value="business">business</option><option value="personal">personal</option></select>
+      </label>
+    </div>
+    <div class="erow">
+      <label class="fld">column
+        <select id="te-col"><option value="backlog">Backlog</option><option value="week">This week</option><option value="done">Done</option></select>
+      </label>
+      <label class="fld">recurrence<input class="txt" id="te-recur" placeholder="daily / weekly:sun / monthly:1"></label>
+      <label class="fld">goal<select id="te-goal"><option value="">—</option></select></label>
+    </div>
+    <div class="erow"><button class="mini" id="te-plan" type="button">☀ plan for today</button><span class="saved" id="te-saved"></span></div>
+    <div id="te-subs" class="subs" style="margin-left:0"></div>
+    <div class="erow"><input class="txt" id="te-subnew" style="flex:1" placeholder="add subtask…"><button class="mini" id="te-subadd" type="button">＋</button></div>
+    <div class="erow"><button class="mini danger" id="te-delete" type="button">delete</button><button class="qgo" id="te-save" type="button" style="margin-left:auto">Save</button></div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
