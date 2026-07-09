@@ -192,6 +192,23 @@ def today_tasks(conn) -> list:
     return [task_dict(conn, r) for r in rows]
 
 
+def week_tasks(conn) -> list:
+    """Open top-level tasks parked in the 'week' column that are NOT already on Today —
+    a view-only pool shown under the Today list so the week's pending work is visible and
+    one tap ('Do today') promotes it. Excludes anything due today, overdue, planned today,
+    or done (those already belong to Today); this does NOT change Today membership."""
+    today = today_iso()
+    rows = conn.execute(
+        """SELECT * FROM tasks
+             WHERE parent_id IS NULL AND archived_at IS NULL AND deleted_at IS NULL
+               AND col = 'week' AND done = 0
+               AND (due_date IS NULL OR due_date > ?)
+               AND (planned_on IS NULL OR planned_on != ?)
+           ORDER BY sort_order, id""",
+        (today, today)).fetchall()
+    return [task_dict(conn, r) for r in rows]
+
+
 def bump_reschedule(conn, task_id):
     """Increment a task's postpone counter — called when a due_date moves later or a
     previously-set planned_on is cleared. Feeds the backlog-intelligence 'postponed N×'

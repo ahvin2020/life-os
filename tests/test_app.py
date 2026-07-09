@@ -7,7 +7,8 @@ import db_init  # noqa: F401  (ensures path set up by conftest import order)
 import web_core
 import vault_store
 from capture import create_task, route_capture
-from routes_tasks import next_due_date, complete_task, today_tasks, archive_old_done
+from routes_tasks import (next_due_date, complete_task, today_tasks, week_tasks,
+                          archive_old_done)
 from db import connect, today_iso, now_iso
 
 
@@ -132,6 +133,44 @@ def test_today_membership(client):
     conn.close()
     assert due in ids and over in ids and planned in ids
     assert len(ids) == 3
+
+
+def test_week_pool_excludes_today_overlap(client):
+    """The Today 'This week' pool = open col='week' tasks NOT already on Today:
+    future-due or undated week tasks appear; anything due today / overdue / planned
+    today / done, plus backlog-column tasks, are excluded (no duplicate sections)."""
+    conn = _db()
+    today = today_iso()
+    future = "2099-01-01"
+    with conn:
+        undated = create_task(conn, "Undated week", col="week")
+        futured = create_task(conn, "Future week", col="week", due_date=future)
+        parent = create_task(conn, "Parent week", col="week")
+        create_task(conn, "sub", parent_id=parent)
+        # overlaps with Today — must be excluded from the pool
+        due = create_task(conn, "Due today", col="week", due_date=today)
+        over = create_task(conn, "Overdue", col="week", due_date="2020-01-01")
+        planned = create_task(conn, "Planned", col="week", planned_on=today)
+        done = create_task(conn, "Done", col="week")
+        conn.execute("UPDATE tasks SET done=1, completed_at=? WHERE id=?", (today, done))
+        backlog = create_task(conn, "Backlog", col="backlog")  # wrong column
+    ids = {t["id"] for t in week_tasks(conn)}
+    conn.close()
+    assert {undated, futured, parent} <= ids            # the week pool
+    assert not ({due, over, planned, done, backlog} & ids)  # no Today/backlog overlap
+
+
+def test_week_pool_hidden_when_empty(client):
+    """Section is view-only and hidden when there's nothing to show: no `week` rows
+    render, and today.html omits the 'This week' card entirely."""
+    conn = _db()
+    today = today_iso()
+    with conn:
+        # a single week task that IS on Today (planned) — pool should be empty
+        create_task(conn, "On today", col="week", planned_on=today)
+    assert week_tasks(conn) == []
+    conn.close()
+    assert 'class="card weekpool"' not in client.get("/").data.decode()
 
 
 # ── capture routing ───────────────────────────────────────────────────────────

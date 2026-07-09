@@ -51,6 +51,22 @@ data-subs='{{ t.subtasks|tojson }}'
   {% endif %}
 {%- endmacro %}
 
+{# A "This week" pool row: quieter than a Today row — no checkbox, no ring (those
+   are Today-hero affordances). Priority dot, title (opens the editor), optional
+   subtask count, due label, and the Do-today pill to promote it into Today. #}
+{% macro week_item(t, today) -%}
+  <div class="task weekrow" {{ _data(t) }}>
+    {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
+    <label class="taskedit">{{ t.title }}</label>
+    <span class="trow">
+      {% if t.sub_total and t.sub_total > 0 %}<span class="subcount">{{ t.sub_done }}/{{ t.sub_total }}</span>{% endif %}
+      {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
+      <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+      {{ due_span(t, today) }}
+    </span>
+  </div>
+{%- endmacro %}
+
 {# A kanban card. #}
 {% macro kcard(t, today) -%}
   <div class="kcard" data-cat="{{ t.category or '' }}" {{ _data(t) }} {% if t.done %}style="opacity:.55"{% endif %}>

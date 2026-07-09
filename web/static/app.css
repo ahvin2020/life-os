@@ -360,7 +360,12 @@ a.domain:hover { color: var(--text); text-decoration: none; }
 .qgo:hover { filter: brightness(1.08); }
 .qgo.did { background: var(--good); color: #06130C; }
 .todaygrid { display: grid; grid-template-columns: 5fr 3fr; gap: 14px; align-items: start; }
-.rcol { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.lcol, .rcol { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* "This week" pool — secondary to the Today hero: smaller rows, no checkbox/ring. */
+.weekpool { padding: 14px 22px; }
+.weekpool .task { padding: 6px 0; font-size: 14.5px; }
+.weekpool .task label.taskedit { color: var(--muted); }
+.weekpool .task:hover label.taskedit, .weekpool .task:focus-within label.taskedit { color: var(--text); }
 .cat { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; color: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; white-space: nowrap; text-transform: uppercase; }
 
 /* ---------- day agenda ---------- */

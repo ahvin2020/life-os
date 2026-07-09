@@ -13,7 +13,7 @@ from db import now_sg
 from capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal,
                      imported_task_ids)
-from routes_tasks import today_tasks, day_score, archive_old_done
+from routes_tasks import today_tasks, week_tasks, day_score, archive_old_done
 from routes_goals import goal_progress
 import vault_store
 
@@ -57,6 +57,7 @@ def home():
     conn = db()
     archive_old_done(conn)
     tasks = today_tasks(conn)
+    week = week_tasks(conn)
     score = day_score(tasks)
 
     goal_rows = conn.execute(
@@ -84,7 +85,7 @@ def home():
         "today.html", active="home",
         weekday=now.strftime("%A"),
         date_str=now.strftime("%-d %b %Y · %H:%M · Asia/Singapore"),
-        tasks=tasks, score=score, goals=goals, feed=feed, goals_list=goals_list,
+        tasks=tasks, week=week, score=score, goals=goals, feed=feed, goals_list=goals_list,
         first_run=first_run, journal_empty=journal_empty)
 
 

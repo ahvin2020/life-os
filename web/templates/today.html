@@ -33,12 +33,21 @@
 {% endif %}
 
 <div class="todaygrid">
-  <div class="card hero">
-    <div class="chead"><h2>Today's tasks</h2><a href="/tasks">all tasks →</a></div>
-    {% if tasks %}
-      {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
-    {% else %}
-      <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>
+  <div class="lcol">
+    <div class="card hero">
+      <div class="chead"><h2>Today's tasks</h2><a href="/tasks">all tasks →</a></div>
+      {% if tasks %}
+        {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
+      {% else %}
+        <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>
+      {% endif %}
+    </div>
+
+    {% if week %}
+    <div class="card weekpool">
+      <div class="chead"><h2>This week</h2><a href="/tasks">→</a></div>
+      {% for t in week %}{{ m.week_item(t, today) }}{% endfor %}
+    </div>
     {% endif %}
   </div>
 

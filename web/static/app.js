@@ -179,11 +179,15 @@
     b.addEventListener("click", function (e) {
       e.stopPropagation();
       var id = b.dataset.taskId;
+      var inWeekPool = !!b.closest(".weekpool");
       post("/tasks/" + id + "/plan").then(function (res) {
         var on = res.data && res.data.planned;
         b.classList.toggle("on", !!on);
         b.textContent = on ? "☀ On today ✓" : "☀ Do today";
         toast(on ? "Planned for today ☀" : "Removed from today");
+        // Promoting from the "This week" pool moves the task into Today — reload so it
+        // leaves the pool and appears (and scores) in the hero list.
+        if (inWeekPool && on) setTimeout(function () { location.reload(); }, 350);
       });
     });
   });
