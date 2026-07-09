@@ -66,17 +66,14 @@ data-subs='{{ t.subtasks|tojson }}'
         {% endfor %}
       </div>
     {% else %}
-      <span class="t taskedit">{{ t.title }}
+      <span class="t taskedit">{% if t.priority %}<span class="pri {{ t.priority }}"></span> {% endif %}{{ t.title }}
         {% if t.recur_rule %}<span class="rec" title="recurring">↻ {{ t.recur_rule }}</span>{% endif %}
       </span>
     {% endif %}
-    {% if t.priority or t.due_date or t.goal_id or t.planned_on == today %}
-    <div class="krow">
-      {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
+    <div class="krow{% if not (t.due_date or t.goal_id or t.planned_on == today) %} ghost{% endif %}">
       {% if t.due_date %}{{ due_span(t, today) }}{% endif %}
       {% if t.goal_id %}<span class="goalref">◎ goal</span>{% endif %}
       <button class="planbtn kplan {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
     </div>
-    {% endif %}
   </div>
 {%- endmacro %}

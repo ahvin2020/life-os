@@ -226,6 +226,9 @@ a:hover { text-decoration: underline; }
 .kcard .khead { display: flex; align-items: center; gap: 9px; }
 .kcard .khead .t { flex: 1; cursor: pointer; }
 .krow { display: flex; align-items: center; gap: 8px; }
+.krow.ghost { display: none; }
+.kcard:hover .krow.ghost, .kcard:focus-within .krow.ghost { display: flex; }
+.kcard .t .pri { display: inline-block; vertical-align: middle; margin-right: 2px; }
 .goalref { font-size: 11.5px; color: var(--link); }
 .kcard .subs { margin-left: 2px; margin-top: 2px; }
 /* prose hint — sans + muted (mono is reserved for data, per ux-standards) */
