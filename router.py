@@ -187,6 +187,12 @@ def build_context(conn) -> dict:
     if jentries:
         lines += ["", "TODAY'S JOURNAL:"] + [f"  {e['time']} {e['text'][:160]}" for e in jentries]
 
+    import library
+    shelves = library.shelf_summary()
+    if shelves:
+        lines += ["", "IDEA LIBRARY (imported saves, one topic each — pull with "
+                  "library_ideas): " + shelves]
+
     exchanges = load_exchanges(conn)
     if exchanges:
         lines += ["", "RECENT CONVERSATION (oldest first — use it to resolve follow-ups "
@@ -226,6 +232,7 @@ create_goal    {"action":"create_goal","title":str,"timeframe":"week|month|quart
 update_goal_number {"action":"update_goal_number","id":int,"value":number}   # "newsletter is at 450"
 mark_goal_achieved {"action":"mark_goal_achieved","id":int}                  # "I hit my <goal>", "mark <goal> achieved"
 link_goal      {"action":"link_goal","task_id":int,"goal_id":int|null}        # "link task 62 to goal 2"; goal_id:null unlinks
+library_ideas  {"action":"library_ideas","topic":str,"count":int|null}   # pull saved ideas from his imported library: "give me 5 ideas about CPF", "ideas for my next video", "what have I saved about bank promos". `topic` = what he asked about, verbatim-ish; `count` only if he named one.
 answer         {"action":"answer","text":str}                   # a QUESTION about his data — answer from the context below
 clarify        {"action":"clarify","question":str}              # genuinely ambiguous — ask one short question
 multi          {"action":"multi","actions":[ ...two or more of the above... ]}   # compound message
@@ -240,6 +247,8 @@ Rules:
   keep → create_note. A question ("how many videos this week?", "am I overloaded?")
   → answer, using the context; if the context doesn't say, say so plainly.
 - Use multi for compound messages ("mark cpf done and remind me to invoice friday").
+- "Ideas about X" / "ideas for my next video" / "what have I saved about X" → library_ideas
+  (pull from his saved library, listed under IDEA LIBRARY). This is NOT create_note.
 - Output ONLY the JSON object.
 """
 
@@ -538,6 +547,14 @@ def apply_action(conn, act, ctx) -> tuple:
                  timeframe, end_date, unit, now_iso()))
         return (f"🎯 Goal ({timeframe}): {title}", None)
 
+    if kind == "library_ideas":
+        import library
+        reply, mem = library.pull_ideas(conn, act.get("topic"),
+                                        act.get("count"), ctx.get("claude_fn"))
+        if mem:                       # store a compact numbered title list (not the long
+            ctx["mem_override"] = mem  # reply) so "save #2 as a task" resolves
+        return (reply, None)
+
     if kind == "answer":
         return ((act.get("text") or "").strip() or "🤔 I'm not sure.", None)
 
@@ -579,6 +596,7 @@ def route(conn, message, source: str = "telegram", claude_fn=None,
     prompt = build_prompt(message, ctx, image_path)
     timeout = CLAUDE_IMAGE_TIMEOUT if image_path else CLAUDE_TIMEOUT
     runner = claude_fn or (lambda p: call_claude(p, timeout))
+    ctx["claude_fn"] = runner                                 # reused by library_ideas
     obj = _decide(runner, prompt)
     if obj is None:                                           # safety rail #2
         # Preserve the input as an #unsorted note (caption, or a photo marker).
@@ -587,7 +605,9 @@ def route(conn, message, source: str = "telegram", claude_fn=None,
                   "applied": ["fallback_note"]}
     else:
         result = apply_result(conn, obj, ctx)
-    record_exchange(conn, mem_repr, result.get("reply", ""))
+    # library_ideas stores a compact numbered title list in memory (via ctx) so the long
+    # sent reply doesn't blow the per-entry cap and follow-ups still resolve.
+    record_exchange(conn, mem_repr, ctx.get("mem_override") or result.get("reply", ""))
     return result
 
 

@@ -45,6 +45,12 @@ def is_query(text: str) -> bool:
     t = (text or "").strip().lower()
     if not t:
         return False
+    # Idea-pulls from the clustered library ("give me 5 ideas about CPF", "find me some
+    # ideas for my next video") always need Claude — never a deterministic answer. Let
+    # them fall through to the router so `library_ideas` can fire (else the find/​list
+    # handlers below would swallow them into a fruitless note search).
+    if re.search(r"\bideas?\b", t):
+        return False
     if _FIND_RE.match(t):
         return True
     has_noun = any(re.search(r"\b" + re.escape(n) + r"\b", t) for n in _QNOUNS)
