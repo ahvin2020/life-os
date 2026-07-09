@@ -4,7 +4,7 @@ the Telegram bot), which delegates to capture.route_capture."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, jsonify
 
@@ -34,10 +34,14 @@ def captured_today(conn, today: str) -> list:
                          "dest": "→ Notes" + (f" · {tag_str}" if tag_str else ""),
                          "ts": n["created"]})
     skip_ids = imported_task_ids()   # bulk-imported tasks aren't "captured today"
+    # tasks.created is UTC ISO; "today" is an SG date — query the UTC window that
+    # spans SG midnight-to-midnight (a plain date match loses 00:00–08:00 SG captures)
+    sg_midnight = datetime.fromisoformat(today).replace(tzinfo=now_sg().tzinfo)
+    start = sg_midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (sg_midnight + timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
         "SELECT id, title, created FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
-        "AND substr(created,1,10)=? ORDER BY created DESC", (today,)).fetchall()
-    # created is UTC ISO; compare its date loosely (SG date match is close enough for a feed)
+        "AND created >= ? AND created < ? ORDER BY created DESC", (start, end)).fetchall()
     for r in rows:
         if r["id"] in skip_ids:
             continue
