@@ -39,6 +39,20 @@ input, select, textarea { font: inherit; }
 input[type="search"] { font: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
+/* themed scrollbars — the browser default renders a bright bar that clashes with
+   the dark UI. Thin, transparent track, thumb = border colour, lighter on hover.
+   Applies to every internal scroll area (kanban stacks, modal editor, textarea)
+   + the page. Firefox uses scrollbar-width/-color; WebKit uses ::-webkit-*. */
+* { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border2); border-radius: 99px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-corner { background: transparent; }
+
 /* ---------- global form controls (system dark, never raw browser defaults) ----
    Base look for EVERY text-like input/select/textarea; the amber focus ring mirrors
    the .qcap treatment. Placed high so purpose-built controls (.qcap, .editor, .search)
@@ -253,6 +267,10 @@ a:hover { text-decoration: underline; }
 .tag.idea { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
 .tag.lnk, .tag.link { color: var(--link); background: var(--link-dim); border-color: transparent; }
 .domain { display: inline-flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--link); }
+a.domain { cursor: pointer; transition: color var(--dur-fast) var(--ease); }
+a.domain:hover { color: var(--text); text-decoration: none; }
+/* linkified URLs inside a note snippet: real links, never purple, wrap gracefully */
+.snip .inlink { color: var(--link); overflow-wrap: anywhere; }
 .note.hide { display: none; }
 
 /* ---------- stats ---------- */

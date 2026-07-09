@@ -146,3 +146,34 @@ def test_route_capture_url_note_titled_from_page(client, monkeypatch):
     note = vault_store.read_note(res["slug"])
     assert note["title"] == "Real Video Title"      # not the bare domain
     assert "idea" in note["tags"]                    # youtube → idea domain
+
+
+# ── Recent notes sort strictly by CREATED, newest first (finding 2) ────────────
+def test_recent_notes_sorted_by_created_not_mtime(client):
+    """A newer-created note wins even if an OLD note's file mtime is fresher (the bug:
+    yesterday's bulk retitle refreshed mtime on old imports and buried new captures)."""
+    old = vault_store.write_note("old-import", "Old import", ["imported"], "body",
+                                 False, "2026-07-01T09:00:00+08:00")
+    new = vault_store.write_note("fresh-capture", "Fresh capture", ["link"], "body",
+                                 False, "2026-07-09T09:00:00+08:00")
+    # Simulate a bulk-retitle touching the OLD note's file after the new one existed.
+    os.utime(os.path.join(vault_store.notes_dir(), "old-import.md"), None)
+    order = [n["slug"] for n in vault_store.list_notes()]
+    assert order.index("fresh-capture") < order.index("old-import")
+    # And the composer-created note lands first on the Notes page.
+    html = client.get("/notes").data.decode()
+    assert html.index("Fresh capture") < html.index("Old import")
+
+
+# ── dead links become real, clickable links (finding 3) ────────────────────────
+def test_note_card_domain_chip_and_snippet_are_links(client):
+    vault_store.create_note(
+        title="instagram.com",
+        body="check this https://www.instagram.com/reel/DXlGR2QDA_W/ out",
+        tags=["link"])
+    html = client.get("/notes").data.decode()
+    # domain chip is a real anchor to the note's first URL, opens in a new tab
+    assert '<a class="domain" href="https://www.instagram.com/reel/DXlGR2QDA_W/"' in html
+    assert 'target="_blank"' in html and 'rel="noopener"' in html
+    # the URL in the snippet is linkified (not dead plain text)
+    assert 'class="inlink"' in html

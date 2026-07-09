@@ -14,8 +14,8 @@
 {% macro note_card(n) -%}
 <div class="note" data-slug="{{ n.slug }}" data-tags="{{ n.tags|join(' ') }}">
   <div class="nt">{% if n.pinned %}<span class="star">★</span>{% endif %}{{ n.title }}
-    {% if n.domain %}<span class="domain">{{ n.domain }} ↗</span>{% endif %}</div>
-  <div class="snip">{{ n.snippet }}</div>
+    {% if n.domain %}{% if n.url %}<a class="domain" href="{{ n.url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{ n.domain }} ↗</a>{% else %}<span class="domain">{{ n.domain }} ↗</span>{% endif %}{% endif %}</div>
+  <div class="snip">{{ n.snippet | linkify }}</div>
   <div class="nfoot">
     {% for t in n.tags %}<span class="tag {{ 'idea' if t=='idea' else ('lnk' if t=='link' else '') }}">#{{ t }}</span>{% endfor %}
     <span class="due">updated {{ n.updated | fdate }}</span>

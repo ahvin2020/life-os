@@ -327,7 +327,12 @@
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
 
     document.querySelectorAll(".note[data-slug]").forEach(function (n) {
-      n.addEventListener("click", function () { open(n.dataset.slug); });
+      n.addEventListener("click", function (e) {
+        // a real link on the card (domain chip, linkified snippet URL) navigates on
+        // its own — don't hijack that click to open the editor.
+        if (e.target.closest("a")) return;
+        open(n.dataset.slug);
+      });
     });
     var newBtn = document.getElementById("note-new");
     if (newBtn) newBtn.addEventListener("click", openBlank);

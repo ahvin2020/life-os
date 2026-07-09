@@ -13,6 +13,8 @@ import html as _html
 import json
 import os
 import re
+import threading
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, quote
 
 import requests
 
@@ -21,6 +23,13 @@ import vault_store
 
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _IDEA_DOMAINS = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
+
+# Query params that identify a share/campaign, not the content — dropped when
+# normalising a URL so a re-shared link maps to the SAME note (no twin).
+_STRIP_PARAMS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "igsh", "igshid", "fbclid", "gclid", "si", "feature", "ref", "ref_src",
+}
 
 _LEDGER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "data", "import_ledger.json")
@@ -113,10 +122,23 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto") ->
     if low.startswith("j:"):
         return _as_journal(_strip_prefix(body, "j:"))
     if _looks_like_url(body):
+        # Dedupe by normalised URL: a re-shared link touches the existing #link note
+        # instead of minting a twin (strip utm/igsh/etc first).
+        url = first_url(body)
+        existing = find_link_note_by_url(url) if url else None
+        if existing:
+            vault_store.touch_note(existing["slug"])
+            schedule_enrichment(existing["slug"])
+            tag_str = " ".join("#" + t for t in existing["tags"]) if existing["tags"] else ""
+            return {"kind": "note", "slug": existing["slug"],
+                    "label": "Notes" + (f" · {tag_str}" if tag_str else ""),
+                    "tags": existing["tags"], "deduped": True}
         tags = ["link"]
         if any(d in low for d in _IDEA_DOMAINS):
             tags.append("idea")
-        return _as_note(conn, body, tags=tags, title=_url_title(body))
+        res = _as_note(conn, body, tags=tags, title=_url_title(body))
+        schedule_enrichment(res["slug"])   # async: capture stays instant
+        return res
     # ambiguous → filed now as an unsorted note; triage refiles later (Phase 2)
     return _as_note(conn, body, tags=["unsorted"])
 
@@ -188,6 +210,232 @@ def _url_title(text):
     except Exception:
         pass
     return fallback
+
+
+# ── link enrichment ────────────────────────────────────────────────────────────
+# When a URL is captured the raw note is just the link ("instagram.com" / "Add to
+# note https://…"). Enrichment fetches page metadata best-effort, then makes ONE
+# claude -p call combining that metadata + the user's accompanying words + profile.md
+# to produce {title, summary, tags}, and rewrites the note. It runs ASYNC after the
+# instant save so capture stays instant; any network/claude failure leaves the note
+# untouched (same never-block-capture contract as triage).
+_PROFILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "vault", "profile.md")
+_ADD_TO_NOTE_RE = re.compile(r"^\s*add to note\s*", re.I)
+
+
+def first_url(text: str):
+    """First http(s) URL in `text`, or None. Trailing punctuation trimmed."""
+    m = _URL_RE.search(text or "")
+    if not m:
+        return None
+    return m.group(0).rstrip(").,;'\"")
+
+
+def normalize_url(url: str) -> str:
+    """Canonical key for dedupe: lowercase host, drop 'www.', strip tracking params
+    (utm_*/igsh/fbclid/…), drop the fragment, and trim a trailing slash. Two shares of
+    the same link (with different igsh=/utm= tails) collapse to one key."""
+    if not url:
+        return ""
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return url.strip().lower()
+    host = (p.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
+         if k.lower() not in _STRIP_PARAMS]
+    query = urlencode(sorted(q))
+    path = p.path.rstrip("/")
+    # scheme collapsed to https so http/https of the same resource share one key
+    return urlunparse(("https", host, path, "", query, ""))
+
+
+def find_link_note_by_url(url: str):
+    """The existing #link note whose first URL normalises to the same key as `url`
+    (earliest-created wins), or None. Powers going-forward URL dedupe."""
+    if not url:
+        return None
+    key = normalize_url(url)
+    matches = []
+    for n in vault_store.list_notes():
+        if "link" not in (n["tags"] or []):
+            continue
+        nu = n.get("url") or first_url(n["body"])
+        if nu and normalize_url(nu) == key:
+            matches.append(n)
+    if not matches:
+        return None
+    matches.sort(key=lambda n: (n["created"] or "", n["slug"]))
+    return matches[0]
+
+
+_OG_DESC_RE = re.compile(
+    r'<meta[^>]+(?:property|name)=["\']og:description["\'][^>]*content=["\']([^"\']*)["\']', re.I)
+_OG_DESC_RE2 = re.compile(
+    r'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']og:description["\']', re.I)
+
+
+def fetch_link_metadata(url: str, timeout: int = 5) -> dict:
+    """Best-effort page metadata: {title, author, description, site}. YouTube uses the
+    unauthenticated oEmbed endpoint; everything else parses og:/<title>. Instagram &
+    TikTok are attempted the same way but usually block — we degrade to {} silently.
+    Never raises."""
+    if not url:
+        return {}
+    low = url.lower()
+    try:
+        if "youtube.com" in low or "youtu.be" in low:
+            return _fetch_youtube_oembed(url, timeout)
+        return _fetch_og(url, timeout)
+    except Exception:
+        return {}
+
+
+def _fetch_youtube_oembed(url: str, timeout: int) -> dict:
+    api = "https://www.youtube.com/oembed?url=" + quote(url, safe="") + "&format=json"
+    resp = requests.get(api, timeout=timeout,
+                        headers={"User-Agent": "Mozilla/5.0 (compatible; LifeOS/1.0)"})
+    data = resp.json()
+    return {
+        "title": (data.get("title") or "").strip(),
+        "author": (data.get("author_name") or "").strip(),
+        "description": "",
+        "site": "youtube",
+    }
+
+
+def _fetch_og(url: str, timeout: int) -> dict:
+    resp = requests.get(url, timeout=timeout, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0 (compatible; LifeOS/1.0)"})
+    page = resp.text or ""
+    mt = _OG_TITLE_RE.search(page) or _OG_TITLE_RE2.search(page) or _TITLE_RE.search(page)
+    md = _OG_DESC_RE.search(page) or _OG_DESC_RE2.search(page)
+    title = _html.unescape(re.sub(r"\s+", " ", mt.group(1)).strip()) if mt else ""
+    desc = _html.unescape(re.sub(r"\s+", " ", md.group(1)).strip()) if md else ""
+    host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+    return {"title": title[:200], "author": "", "description": desc[:500], "site": host}
+
+
+def _user_words(body: str, url: str) -> str:
+    """The user's own accompanying text (their 'reason'): the note body minus the URL
+    and the 'Add to note' capture boilerplate."""
+    text = (body or "")
+    if url:
+        text = text.replace(url, " ")
+    text = _URL_RE.sub(" ", text)          # drop any other URLs too
+    text = _ADD_TO_NOTE_RE.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _read_profile() -> str:
+    try:
+        with open(_PROFILE_PATH, encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def _enrich_prompt(url: str, meta: dict, words: str, profile: str) -> str:
+    meta_lines = "\n".join(f"{k}: {v}" for k, v in meta.items() if v) or "(none available)"
+    return (
+        "You enrich a saved link for a personal notes app. Using the fetched page "
+        "metadata, the user's own words (their REASON for saving it), and their "
+        "profile, produce STRICT JSON: "
+        '{"title": "...", "summary": "one line, why this matters to THEM", '
+        '"tags": ["lowercase", "no-hash"]}. '
+        "Title: concise, human (never a bare domain). Summary: <=140 chars, specific. "
+        "Tags: 2-4, reuse the profile's vocabulary. Respond with ONLY the JSON.\n\n"
+        f"=== URL ===\n{url}\n\n"
+        f"=== FETCHED METADATA ===\n{meta_lines}\n\n"
+        f"=== USER'S WORDS (their reason) ===\n{words or '(none)'}\n\n"
+        f"=== vault/profile.md ===\n{profile}\n"
+    )
+
+
+def _parse_enrichment(raw: str) -> dict | None:
+    if not raw:
+        return None
+    raw = raw.strip()
+    fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.S)
+    if fence:
+        raw = fence.group(1).strip()
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = (data.get("title") or "").strip()
+    summary = (data.get("summary") or "").strip()
+    tags = [str(t).lstrip("#").strip().lower() for t in (data.get("tags") or []) if str(t).strip()]
+    if not title and not summary:
+        return None
+    return {"title": title, "summary": summary, "tags": tags}
+
+
+def _default_claude(prompt: str) -> str:
+    from claude_cli import call_claude
+    return call_claude(prompt, timeout=45)
+
+
+def enrich_note(slug: str, *, fetch_fn=None, claude_fn=None) -> dict | None:
+    """Enrich ONE captured link note in place. Fetches metadata, makes one claude call,
+    and rewrites title/tags/body = URL + summary + user's words + fetched description.
+    Returns the saved note, or None if there's no URL / claude fails (note untouched)."""
+    note = vault_store.read_note(slug)
+    if not note:
+        return None
+    url = first_url(note["body"])
+    if not url:
+        return None
+    meta = (fetch_fn or fetch_link_metadata)(url) or {}
+    words = _user_words(note["body"], url)
+    prompt = _enrich_prompt(url, meta, words, _read_profile())
+    try:
+        raw = (claude_fn or _default_claude)(prompt)
+    except Exception:
+        raw = ""
+    data = _parse_enrichment(raw)
+    if not data:
+        return None   # never-block-capture: leave the raw note exactly as it was
+    title = data["title"] or note["title"]
+    tags = list(dict.fromkeys((note["tags"] or []) + data["tags"]))
+    parts = [url]
+    if data["summary"]:
+        parts.append(data["summary"])
+    if words:
+        parts.append(words)
+    if meta.get("description") and meta["description"] not in (words, data["summary"]):
+        parts.append(meta["description"])
+    body = "\n\n".join(parts)
+    return vault_store.write_note(slug, title, tags, body, note["pinned"], note["created"])
+
+
+def _enrich_enabled() -> bool:
+    """Async enrichment is on unless LIFEOS_ENRICH_LINKS=0 (the test suite sets 0 so
+    captures never spawn a background claude call)."""
+    return os.environ.get("LIFEOS_ENRICH_LINKS", "1") != "0"
+
+
+def schedule_enrichment(slug: str) -> None:
+    """Kick enrich_note in a daemon thread so the capture returns instantly. No-op when
+    disabled. All errors are swallowed — enrichment must never break a capture."""
+    if not slug or not _enrich_enabled():
+        return
+
+    def _run():
+        try:
+            enrich_note(slug)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, name=f"enrich-{slug}", daemon=True).start()
 
 
 # ── refiling helpers (shared by the Change button + Claude triage) ─────────────

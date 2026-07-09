@@ -11,6 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TMP = tempfile.mkdtemp(prefix="lifeos-test-")
 os.environ["LIFEOS_DB_PATH"] = os.path.join(_TMP, "app.db")
 os.environ["LIFEOS_VAULT_DIR"] = os.path.join(_TMP, "vault")
+# Never spawn a background claude enrichment thread during tests; the enrichment
+# functions are exercised directly (with mocks) in test_enrich.py.
+os.environ["LIFEOS_ENRICH_LINKS"] = "0"
 
 import pytest  # noqa: E402
 

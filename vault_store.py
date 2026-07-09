@@ -124,12 +124,18 @@ def _parse_frontmatter(text: str):
 _URL_RE = re.compile(r"https?://[^\s<>\")]+")
 
 
-def _domain_of(body: str):
+def first_url(body: str):
+    """The first http(s) URL in a note body, or None."""
     m = _URL_RE.search(body or "")
-    if not m:
+    return m.group(0) if m else None
+
+
+def _domain_of(body: str):
+    url = first_url(body)
+    if not url:
         return None
     try:
-        host = urlparse(m.group(0)).netloc
+        host = urlparse(url).netloc
         return host[4:] if host.startswith("www.") else host
     except Exception:
         return None
@@ -153,6 +159,7 @@ def _note_from_path(path: str) -> dict:
         "body": body,
         "snippet": snippet,
         "domain": _domain_of(body),
+        "url": first_url(body),
         "updated": mtime.date().isoformat(),
         "updated_ts": os.path.getmtime(path),
     }
@@ -167,7 +174,11 @@ def list_notes() -> list:
                 out.append(_note_from_path(os.path.join(d, name)))
             except Exception:
                 continue
-    out.sort(key=lambda n: n["updated_ts"], reverse=True)
+    # "Recent" = strictly newest-CREATED first (stable tiebreak by slug). Sorting by
+    # file mtime broke this: a bulk retitle refreshed `updated` on old imported notes
+    # and pushed them above genuinely new captures. `created` is a fixed +08:00 ISO
+    # string, so lexical order == chronological order.
+    out.sort(key=lambda n: (n["created"] or "", n["slug"]), reverse=True)
     return out
 
 
@@ -200,6 +211,16 @@ def create_note(title, body="", tags=None, pinned=False, audio=None, media=None)
     slug = _unique_slug(title)
     created = now_sg().isoformat(timespec="seconds")
     return write_note(slug, title, tags, body, pinned, created, audio, media)
+
+
+def touch_note(slug: str):
+    """Re-save a note unchanged (bumps file mtime) — used when a re-shared URL maps to
+    an existing note, so the capture registers a 'touch' instead of minting a twin."""
+    n = read_note(slug)
+    if not n:
+        return None
+    return write_note(slug, n["title"], n["tags"], n["body"], n["pinned"],
+                      n["created"], n["audio"] or None, n["media"] or None)
 
 
 def delete_note(slug: str) -> bool:

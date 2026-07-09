@@ -111,9 +111,22 @@ def apply_item(conn, raw: str, result: dict, ledger: dict, *, role: str = "") ->
 
     if t == "note":
         tags = list(dict.fromkeys([*(result.get("tags") or []), IMPORTED_TAG]))
+        body = result.get("body") if result.get("body") is not None else raw
+        # Going-forward URL dedupe: a re-shared #link URL touches the existing note
+        # instead of minting a twin (normalised, so utm/igsh tails don't fool it).
+        from capture import find_link_note_by_url, first_url
+        url = first_url(body)
+        if "link" in tags and url:
+            dup = find_link_note_by_url(url)
+            if dup:
+                vault_store.touch_note(dup["slug"])
+                ledger[key] = {"destination": "note", "slug": dup["slug"],
+                               "imported_at": now_iso(), "deduped": True}
+                return {"status": "already", "destination": "note",
+                        "slug": dup["slug"], "key": key, "deduped": True}
         note = vault_store.create_note(
             title=result.get("title") or "Untitled",
-            body=result.get("body") if result.get("body") is not None else raw,
+            body=body,
             tags=tags,
         )
         ledger[key] = {"destination": "note", "slug": note["slug"], "imported_at": now_iso()}

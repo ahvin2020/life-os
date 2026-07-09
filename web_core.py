@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 
@@ -146,9 +147,31 @@ def _due_label(value):
     return _fmt_date(value)
 
 
+_LINKIFY_RE = re.compile(r"https?://[^\s<>\"')]+")
+
+
+def _linkify(value):
+    """Escape text, then turn bare URLs into real, non-purple links that open in a new
+    tab. Used for note snippets so a shared URL is clickable, not dead plain text."""
+    from markupsafe import Markup, escape
+    if value is None:
+        return ""
+    text = str(value)
+    out, last = [], 0
+    for m in _LINKIFY_RE.finditer(text):
+        out.append(str(escape(text[last:m.start()])))
+        url = str(escape(m.group(0)))
+        out.append(f'<a href="{url}" target="_blank" rel="noopener" '
+                   f'class="inlink" onclick="event.stopPropagation()">{url}</a>')
+        last = m.end()
+    out.append(str(escape(text[last:])))
+    return Markup("".join(out))
+
+
 app.jinja_env.filters["fdate"] = _fmt_date
 app.jinja_env.filters["days_ago"] = _days_ago
 app.jinja_env.filters["due_label"] = _due_label
+app.jinja_env.filters["linkify"] = _linkify
 
 
 # ── request helpers ───────────────────────────────────────────────────────────
