@@ -57,6 +57,7 @@ data-subs='{{ t.subtasks|tojson }}'
 {% macro week_item(t, today) -%}
   <div class="task weekrow" {{ _data(t) }}>
     {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
+    {% if not (t.sub_total and t.sub_total > 0) %}<label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}"></label>{% endif %}
     <label class="taskedit">{{ t.title }}</label>
     <span class="trow">
       {% if t.sub_total and t.sub_total > 0 %}<span class="subcount">{{ t.sub_done }}/{{ t.sub_total }}</span>{% endif %}
