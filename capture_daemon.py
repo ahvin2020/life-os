@@ -642,31 +642,35 @@ def _handle_voice(conn, tg, msg, chat_id) -> bool:
     tmpdir = tempfile.mkdtemp(prefix="lifeos-voice-")
     oga = os.path.join(tmpdir, "in.oga")
     wav = os.path.join(tmpdir, "in.wav")
-    try:
-        fpath = tg.get_file_path(file_id)
-        tg.download_file(fpath, oga)
-        oga_to_wav(oga, wav)
-        lang = _get_setting(conn, "voice_language", _VOICE_LANGUAGE) or _VOICE_LANGUAGE
-        model = _get_setting(conn, "whisper_model", _WHISPER_MODEL) or _WHISPER_MODEL
-        text = transcribe_wav(wav, language=lang, model=model)
-    except Exception as e:
-        _log(f"voice transcription failed: {e}")
-        tg.send_message(chat_id, "⚠️ Could not transcribe that voice note.")
-        return False
-    if not text:
-        tg.send_message(chat_id, "🔇 Heard silence — nothing to file.")
-        return False
-    _preserve_audio(oga)                              # audio is never lost
-    snippet = text if len(text) <= 80 else text[:77] + "…"
-    tg.send_message(chat_id, f"🎙 \"{snippet}\"")
-    import router
-    try:
-        tg.send_chat_action(chat_id, "typing")
-    except Exception:
-        pass
-    out = router.route(conn, text, source="voice")
-    tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
-    return bool(out.get("fell_back"))
+    try:                                              # always clean up the scratch dir
+        try:
+            fpath = tg.get_file_path(file_id)
+            tg.download_file(fpath, oga)
+            oga_to_wav(oga, wav)
+            lang = _get_setting(conn, "voice_language", _VOICE_LANGUAGE) or _VOICE_LANGUAGE
+            model = _get_setting(conn, "whisper_model", _WHISPER_MODEL) or _WHISPER_MODEL
+            text = transcribe_wav(wav, language=lang, model=model)
+        except Exception as e:
+            _log(f"voice transcription failed: {e}")
+            tg.send_message(chat_id, "⚠️ Could not transcribe that voice note.")
+            return False
+        if not text:
+            tg.send_message(chat_id, "🔇 Heard silence — nothing to file.")
+            return False
+        _preserve_audio(oga)                          # audio is never lost
+        snippet = text if len(text) <= 80 else text[:77] + "…"
+        tg.send_message(chat_id, f"🎙 \"{snippet}\"")
+        import router
+        try:
+            tg.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        out = router.route(conn, text, source="voice")
+        tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+        return bool(out.get("fell_back"))
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _preserve_audio(oga_path: str) -> None:

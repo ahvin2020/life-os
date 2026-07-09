@@ -85,7 +85,14 @@ def next_due_date(rule: str, from_date: str = None) -> str:
 def _respawn_recurring(conn, r):
     """Insert a fresh copy of a completed recurring task with the next due date,
     carrying its subtasks over as unchecked."""
-    next_due = next_due_date(r["recur_rule"], r["due_date"] or today_iso())
+    # Base the next occurrence off the LATER of the old due date and today, so
+    # completing a long-overdue recurring task lands the respawn in the future
+    # instead of another already-overdue copy.
+    today = today_iso()
+    from_date = r["due_date"] or today
+    if from_date < today:
+        from_date = today
+    next_due = next_due_date(r["recur_rule"], from_date)
     new_id = create_task(
         conn, r["title"], col=r["col"] if r["col"] != "done" else "week",
         priority=r["priority"], category=r["category"], due_date=next_due,

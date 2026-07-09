@@ -43,7 +43,7 @@ def today_so_far(conn, today: str) -> dict:
     """Material for tonight's entry: tasks completed today + captures made today."""
     completed = conn.execute(
         "SELECT title, completed_at FROM tasks WHERE done=1 AND completed_at=? "
-        "AND parent_id IS NULL ORDER BY completed_at", (today,)).fetchall()
+        "AND parent_id IS NULL AND deleted_at IS NULL ORDER BY completed_at", (today,)).fetchall()
     # imports (#imported notes) are backfill, not something captured today
     cap_count = sum(1 for n in vault_store.list_notes()
                     if (n["created"] or "")[:10] == today and "imported" not in (n["tags"] or []))
