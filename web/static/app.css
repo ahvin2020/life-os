@@ -250,6 +250,17 @@ a:hover { text-decoration: underline; }
 
 /* ---------- notes gallery ---------- */
 .ntools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+/* search on its own row; chips flow full-width beneath it */
+.ntools .search { flex: 1 0 100%; max-width: 340px; }
+.chiprow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex: 1 0 100%; min-width: 0; }
+/* phone: 17 wrapped chips would eat half the viewport before the first note —
+   collapse to one swipeable row (the YouTube-chips pattern) */
+@media (max-width: 700px) {
+  .ntools .search { max-width: none; }
+  .chiprow { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .chiprow::-webkit-scrollbar { display: none; }
+  .chiprow .tagbtn { flex: 0 0 auto; }
+}
 .search { flex: 1 1 220px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); min-width: 160px; transition: border-color var(--dur) var(--ease); }
 .search::placeholder { color: var(--muted); }
 .tagbtn { font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
