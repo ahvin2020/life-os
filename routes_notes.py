@@ -45,6 +45,19 @@ def note_new():
     return respond(True, "Note created", to="/notes")
 
 
+@bp.route("/notes/ask", methods=["POST"])
+def notes_ask():
+    """Semantic library question over the saved idea notes (the same engine the bot
+    uses). READ-ONLY. Returns the ranked 3–5 picks as {slug,title,why,url,cluster};
+    `fallback` flags the deterministic recency answer used when Claude is unavailable."""
+    import library
+    q = (request.form.get("q") or "").strip()
+    if not q:
+        return jsonify({"status": "ok", "q": q, "results": [], "fallback": False})
+    results, fallback = library.rank_notes(q)
+    return jsonify({"status": "ok", "q": q, "results": results, "fallback": fallback})
+
+
 @bp.route("/notes/<slug>")
 def note_get(slug):
     note = vault_store.read_note(slug)

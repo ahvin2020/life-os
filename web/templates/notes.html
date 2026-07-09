@@ -6,7 +6,10 @@
   <button class="mini addbtn" id="note-new" type="button">＋ New note</button></div>
 
 <div class="ntools">
-  <input class="search" id="nsearch" type="search" placeholder="Search notes…" aria-label="Search notes">
+  <div class="askrow">
+    <input class="search" id="nsearch" type="search" placeholder="Search notes…" aria-label="Search notes">
+    <button class="mini askbtn" id="note-ask" type="button" title="Ask your library a question (Cmd/Ctrl+Enter)">Ask</button>
+  </div>
   <div class="chiprow">
     <button class="tagbtn active" data-tag="all" type="button">All <span class="cnt">{{ count }}</span></button>
     {% for t, c in chips %}<button class="tagbtn" data-tag="{{ t }}" type="button">#{{ t }} <span class="cnt">{{ c }}</span></button>{% endfor %}
@@ -25,6 +28,9 @@
 </div>
 {%- endmacro %}
 
+<div id="ask-panel" class="hide" aria-live="polite"></div>
+
+<div id="notes-grid">
 {% if pinned %}
 <div class="nsec">★ Pinned</div>
 <div class="ngrid">{% for n in pinned %}{{ note_card(n) }}{% endfor %}</div>
@@ -36,4 +42,5 @@
 {% elif not pinned %}
 <div class="empty">No notes yet — click ＋ New note, or send <span class="kbd">n:</span> / a link to your bot (Phase 2). Notes are plain markdown in <span class="kbd">vault/notes/</span>.</div>
 {% endif %}
+</div>
 {% endblock %}

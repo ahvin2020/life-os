@@ -157,12 +157,19 @@
       var row = c.closest(".task"); var id = c.dataset.taskId;
       row.classList.toggle("done", c.checked);
       var wasChecked = c.checked;
-      post("/tasks/" + id + "/complete", { done: wasChecked ? "1" : "0" });
       if (wasChecked) {
-        toast("Task completed", function () {
-          c.checked = false; row.classList.remove("done");
-          post("/tasks/" + id + "/complete", { done: "0" });
+        post("/tasks/" + id + "/complete", { done: "1" }).then(function (res) {
+          // A recurring task spawns its next occurrence on completion; the undo
+          // inverse must also remove that fresh copy (soft-delete, itself undoable).
+          var respawn = res.data && res.data.respawned;
+          toast("Task completed", function () {
+            c.checked = false; row.classList.remove("done");
+            post("/tasks/" + id + "/complete", { done: "0" });
+            if (respawn) post("/tasks/" + respawn + "/delete");
+          });
         });
+      } else {
+        post("/tasks/" + id + "/complete", { done: "0" });
       }
     });
   });
@@ -228,6 +235,105 @@
       });
     });
     if (search) search.addEventListener("input", filterNotes);
+
+    // ---- Ask: semantic library question (reuses the bot's library engine) ------
+    // Typing still live-filters (input handler above); Ask is the DELIBERATE action —
+    // a clicked button or Cmd/Ctrl+Enter — because the answer costs a 5-15s Claude call
+    // and must not fire on every keystroke. Enter alone keeps plain live-filter.
+    var askBtn = document.getElementById("note-ask");
+    var panel = document.getElementById("ask-panel");
+    var grid = document.getElementById("notes-grid");
+    if (askBtn && panel && grid && search) {
+      function domainOf(url) {
+        try { return new URL(url).hostname.replace(/^www\./, "") + " ↗"; }
+        catch (e) { return "link ↗"; }
+      }
+      function askCard(r) {
+        var card = document.createElement("div");
+        card.className = "note"; card.dataset.slug = r.slug;
+        var nt = document.createElement("div"); nt.className = "nt";
+        nt.textContent = r.title;
+        if (r.url) {
+          var a = document.createElement("a"); a.className = "domain";
+          a.href = r.url; a.target = "_blank"; a.rel = "noopener";
+          a.textContent = domainOf(r.url);
+          a.addEventListener("click", function (e) { e.stopPropagation(); });
+          nt.appendChild(document.createTextNode(" ")); nt.appendChild(a);
+        }
+        card.appendChild(nt);
+        if (r.why) {
+          var w = document.createElement("div"); w.className = "why";
+          w.textContent = r.why; card.appendChild(w);
+        }
+        var foot = document.createElement("div"); foot.className = "nfoot";
+        if (r.cluster) {
+          var tag = document.createElement("span"); tag.className = "tag";
+          tag.textContent = "#" + r.cluster; foot.appendChild(tag);
+        }
+        card.appendChild(foot);
+        card.addEventListener("click", function (e) {
+          if (e.target.closest("a")) return;
+          if (window.openNote) window.openNote(r.slug);
+        });
+        return card;
+      }
+      function askHead(caption, thinking) {
+        var head = document.createElement("div"); head.className = "askhead";
+        var lbl = document.createElement("span");
+        lbl.className = "askfor" + (thinking ? " asking" : "");
+        lbl.textContent = caption;
+        head.appendChild(lbl);
+        if (!thinking) {
+          var clr = document.createElement("button");
+          clr.className = "mini"; clr.type = "button"; clr.textContent = "Clear";
+          clr.addEventListener("click", clearAsk);
+          head.appendChild(clr);
+        }
+        return head;
+      }
+      function clearAsk() {
+        panel.classList.add("hide"); panel.innerHTML = "";
+        grid.classList.remove("hide");
+      }
+      window._clearAsk = clearAsk;
+      function askLibrary() {
+        var q = search.value.trim();
+        if (!q) { search.focus(); return; }
+        // Immediate thinking state (Doherty: instant feedback before the slow call).
+        panel.innerHTML = "";
+        panel.appendChild(askHead("Reading your library for “" + q + "”…", true));
+        panel.classList.remove("hide"); grid.classList.add("hide");
+        post("/notes/ask", { q: q }).then(function (res) {
+          var data = (res && res.data) || {};
+          var results = data.results || [];
+          panel.innerHTML = "";
+          if (!results.length) {
+            panel.appendChild(askHead("No matches for “" + q + "”", false));
+            var e = document.createElement("div"); e.className = "empty";
+            e.textContent = "Nothing in your saved library answers that yet — try a broader topic, or Clear to browse everything.";
+            panel.appendChild(e);
+            return;
+          }
+          var cap = data.fallback
+            ? "recent saves for “" + q + "”"
+            : "showing answers for “" + q + "”";
+          panel.appendChild(askHead(cap, false));
+          var g = document.createElement("div"); g.className = "ngrid";
+          results.forEach(function (r) { g.appendChild(askCard(r)); });
+          panel.appendChild(g);
+        });
+      }
+      askBtn.addEventListener("click", askLibrary);
+      search.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); askLibrary(); }
+      });
+      document.addEventListener("keydown", function (e) {
+        // Esc clears the answers — but never steal Esc from the note editor overlay.
+        var ov = document.getElementById("noteoverlay");
+        if (e.key === "Escape" && !panel.classList.contains("hide") &&
+            !(ov && ov.classList.contains("on"))) clearAsk();
+      });
+    }
   })();
 
   // ---- task category filter (Tasks page) --------------------------------------
@@ -287,7 +393,10 @@
         return;
       }
       // no note yet: only create once there is real content (guard against a
-      // debounce + blur double-fire creating two notes before the POST resolves)
+      // debounce + blur double-fire creating two notes before the POST resolves).
+      // Bail if the editor has already closed — a debounce timer that survives
+      // close()/delete would otherwise resurrect a zombie note under a new slug.
+      if (!ov.classList.contains("on")) return;
       if (creating) return;
       if (!elTitle.value.trim() && !elBody.value.trim()) return;
       creating = true; elSaved.textContent = "saving…";
@@ -310,6 +419,7 @@
       elPin.textContent = pinned ? "★ pinned" : "★ pin"; save();
     });
     document.getElementById("ed-delete").addEventListener("click", function () {
+      clearTimeout(saveTimer);            // kill any pending autosave — no zombie recreate
       var slug = current;
       ov.classList.remove("on");
       if (!slug) { current = null; return; }   // blank unsaved note — nothing to delete
@@ -325,7 +435,7 @@
       });
       current = null;
     });
-    function close() { save(); ov.classList.remove("on"); current = null; }
+    function close() { clearTimeout(saveTimer); save(); ov.classList.remove("on"); current = null; }
     document.getElementById("ed-close").addEventListener("click", close);
     ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
@@ -570,6 +680,15 @@
         var prev = res.data.prev_raw;
         entry.classList.add("removing");
         setTimeout(function () { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 220);
+        // Same-minute siblings are disambiguated by occurrence idx; removing this
+        // one shifts the file's indices down, so decrement every later sibling's
+        // data-idx in place — otherwise its next edit/delete targets a stale idx (404).
+        var delIdx = parseInt(idx, 10);
+        document.querySelectorAll(".jentry").forEach(function (e) {
+          if (e === entry || e.dataset.day !== day || e.dataset.time !== time) return;
+          var ei = parseInt(e.dataset.idx, 10);
+          if (ei > delIdx) e.dataset.idx = ei - 1;
+        });
         toast("Entry deleted", function () {
           post("/journal/" + day + "/save", { raw: prev }).then(reloadSoon);
         });

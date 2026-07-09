@@ -285,6 +285,17 @@ a.domain:hover { color: var(--text); text-decoration: none; }
 /* linkified URLs inside a note snippet: real links, never purple, wrap gracefully */
 .snip .inlink { color: var(--link); overflow-wrap: anywhere; }
 .note.hide { display: none; }
+/* ---------- notes: Ask (semantic library question) ---------- */
+.askrow { display: flex; gap: 8px; align-items: center; flex: 1 0 100%; max-width: 400px; }
+.askrow .search { flex: 1 1 auto; max-width: none; min-width: 0; }
+.askbtn { flex: 0 0 auto; color: var(--accent); border-color: rgba(226,168,75,.4); }
+@media (max-width: 640px) { .askrow { max-width: none; } }
+#ask-panel { margin-bottom: 4px; animation: fade-in var(--dur-slow) var(--ease) both; }
+.askhead { display: flex; align-items: center; gap: 10px; margin: 6px 2px 12px; }
+.askfor { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.askfor.asking { color: var(--accent); animation: ask-pulse 1.1s var(--ease) infinite; }
+@keyframes ask-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.note .why { font-size: 13px; color: var(--text); line-height: 1.5; opacity: .85; }
 
 /* ---------- stats ---------- */
 .statrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }

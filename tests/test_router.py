@@ -492,6 +492,27 @@ def test_handle_callback_garbage_is_safe(client):
     conn.close()
 
 
+def test_recurring_complete_undo_removes_respawn(client):
+    """Completing a recurring task spawns its next occurrence; the undo payload must
+    carry that respawn id and the Undo tap must soft-delete it (no orphaned copy)."""
+    conn = _db()
+    tid = _open_task(conn, "Daily standup", recur_rule="daily", due_date=today_iso())
+    out = router.route(conn, "done with standup",
+                       claude_fn=_fn({"action": "complete_task", "id": tid}))
+    cb = out["keyboard"]["inline_keyboard"][0][0]["callback_data"]
+    # payload is u|comp|<tid>|<respawn>
+    parts = cb.split("|")
+    assert parts[:3] == ["u", "comp", str(tid)] and len(parts) == 4 and parts[3].isdigit()
+    respawn = int(parts[3])
+    assert conn.execute("SELECT deleted_at FROM tasks WHERE id=?",
+                        (respawn,)).fetchone()["deleted_at"] is None   # live before undo
+    router.handle_callback(conn, cb)
+    assert conn.execute("SELECT done FROM tasks WHERE id=?", (tid,)).fetchone()["done"] == 0
+    assert conn.execute("SELECT deleted_at FROM tasks WHERE id=?",
+                        (respawn,)).fetchone()["deleted_at"] is not None  # respawn removed
+    conn.close()
+
+
 # ── daemon callback wiring ────────────────────────────────────────────────────
 def test_daemon_process_callback(client):
     import capture_daemon as cd

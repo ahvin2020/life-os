@@ -236,3 +236,47 @@ def test_queries_ignores_idea_pulls():
     # a genuine deterministic query is unaffected
     assert is_query("what are my todos") is True
     assert is_query("any overdue?") is True
+
+
+# ── web /notes/ask (structured sibling of pull_ideas) ──────────────────────────
+def test_rank_notes_structured_picks(client):
+    c1 = _lib_note("CPF top-up hacks", "cpf-epf-retirement", created="2026-07-05T09:00:00+08:00",
+                   url="https://youtu.be/abc")
+    _lib_note("Retirement sum explained", "cpf-epf-retirement", created="2026-07-01T09:00:00+08:00")
+
+    def fake(prompt):
+        return json.dumps({"picks": [{"slug": c1["slug"], "why": "punchy CPF hook"}]})
+
+    results, fallback = library.rank_notes("cpf", claude_fn=fake)
+    assert fallback is False and len(results) == 1
+    r = results[0]
+    assert set(r.keys()) == {"slug", "title", "why", "url", "cluster"}
+    assert r["slug"] == c1["slug"] and r["why"] == "punchy CPF hook"
+    assert r["cluster"] == "cpf-epf-retirement" and r["url"] == "https://youtu.be/abc"
+
+
+def test_rank_notes_fallback_on_claude_failure(client):
+    newer = _lib_note("Newer CPF idea", "cpf-epf-retirement", created="2026-07-06T09:00:00+08:00")
+    _lib_note("Older CPF idea", "cpf-epf-retirement", created="2026-07-01T09:00:00+08:00")
+
+    def boom(prompt):
+        raise RuntimeError("claude down")
+
+    results, fallback = library.rank_notes("cpf", claude_fn=boom)
+    assert fallback is True and results
+    assert results[0]["slug"] == newer["slug"]          # newest-first recency fallback
+    assert results[0]["why"] == ""                       # fallback carries no why
+
+
+def test_rank_notes_empty_topic_no_match(client):
+    # empty library → nothing to rank
+    results, fallback = library.rank_notes("cpf")
+    assert results == [] and fallback is False
+
+
+def test_notes_ask_endpoint_shape(client):
+    r = client.post("/notes/ask", data={"q": ""},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["status"] == "ok" and j["results"] == [] and j["fallback"] is False and j["q"] == ""

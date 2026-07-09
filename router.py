@@ -371,8 +371,12 @@ def apply_action(conn, act, ctx) -> tuple:
         if kind == "complete_task":
             from routes_tasks import complete_task
             with conn:
-                complete_task(conn, tid, True)
-            return (f"✓ Done: {title}", f"u|comp|{tid}")
+                res = complete_task(conn, tid, True)
+            # Carry any respawned recurring copy in the undo payload so the Undo tap
+            # can remove it too (otherwise undo orphans the fresh occurrence).
+            respawn = res.get("respawned")
+            undo = f"u|comp|{tid}|{respawn}" if respawn else f"u|comp|{tid}"
+            return (f"✓ Done: {title}", undo)
         if kind == "uncomplete_task":
             from routes_tasks import complete_task
             with conn:
@@ -624,8 +628,13 @@ def handle_callback(conn, data: str) -> str:
         return "Nothing to undo."
     if op == "comp":
         from routes_tasks import complete_task
+        respawn = _as_int(parts[3]) if len(parts) >= 4 and parts[3] != "" else None
         with conn:
             complete_task(conn, tid, False)
+            if respawn is not None:      # remove the recurring copy the completion spawned
+                ts = now_iso()
+                conn.execute("UPDATE tasks SET deleted_at=?, updated=? WHERE id=? OR parent_id=?",
+                             (ts, ts, respawn, respawn))
         return "↩ Undone — task reopened."
     if op == "del":
         with conn:
