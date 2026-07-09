@@ -249,3 +249,35 @@ def test_sheet_map_tab_tracker_tracks_done_section():
     assert mapped[0]["results"][0]["type"] == "skip"
     assert [r["type"] for r in mapped[1]["results"]] == ["task", "note"]
     assert mapped[3]["results"][0]["tags"] == ["video", "release-queue"]
+
+
+# ── cluster tagging (vault_store.add_tag / remove_tag — surgical, byte-safe) ────
+def test_add_tag_rewrites_only_tags_line_byte_identical_otherwise():
+    n = vault_store.create_note(
+        "Best REITs 2026", body="https://insta.gr/x\n\nGreat SG REIT breakdown",
+        tags=["ig", "link", "idea", "imported"])
+    path = os.path.join(vault_store.notes_dir(), n["slug"] + ".md")
+    before = open(path).read()
+    assert vault_store.add_tag(n["slug"], "market-investing") is True
+    after = open(path).read()
+    b, a = before.split("\n"), after.split("\n")
+    changed = [i for i, (x, y) in enumerate(zip(b, a)) if x != y]
+    assert len(b) == len(a) and len(changed) == 1        # ONLY the tags line moved
+    assert a[changed[0]] == "tags: [ig, link, idea, imported, market-investing]"
+    assert "market-investing" in vault_store.read_note(n["slug"])["tags"]
+
+
+def test_add_tag_idempotent_and_remove_restores():
+    n = vault_store.create_note("Note", body="body text\n", tags=["imported"])
+    path = os.path.join(vault_store.notes_dir(), n["slug"] + ".md")
+    original = open(path).read()
+    assert vault_store.add_tag(n["slug"], "personal-admin") is True
+    assert vault_store.add_tag(n["slug"], "personal-admin") is False   # idempotent no-op
+    assert vault_store.remove_tag(n["slug"], "personal-admin") is True
+    assert open(path).read() == original                 # byte-identical round-trip
+    assert vault_store.remove_tag(n["slug"], "personal-admin") is False
+
+
+def test_add_tag_missing_note_is_safe():
+    assert vault_store.add_tag("does-not-exist", "x") is False
+    assert vault_store.remove_tag("does-not-exist", "x") is False

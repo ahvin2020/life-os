@@ -255,6 +255,8 @@ a:hover { text-decoration: underline; }
 .tagbtn { font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 .tagbtn:hover { color: var(--text); border-color: var(--muted); }
 .tagbtn.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+.tagbtn .cnt { color: var(--muted); font-size: 11px; margin-left: 2px; }
+.tagbtn.active .cnt, .tagbtn:hover .cnt { color: inherit; opacity: .7; }
 .nsec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 18px 2px 10px; }
 .ngrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .note { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; cursor: pointer; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
@@ -308,6 +310,17 @@ a.domain:hover { color: var(--text); text-decoration: none; }
 .gchips { display: flex; flex-wrap: wrap; gap: 6px; }
 .gmeasure { display: flex; gap: 10px; flex-wrap: wrap; }
 .gmeasure .gfield { flex: 1 1 120px; }
+
+/* ---------- settings ---------- */
+.foot .setlink { display: block; color: var(--muted); font-size: 11px; padding-bottom: 8px; transition: color var(--dur-fast) var(--ease); }
+.foot .setlink:visited { color: var(--muted); }
+.foot .setlink:hover, .foot .setlink.active { color: var(--text); text-decoration: none; }
+.setrow { display: flex; align-items: center; gap: 10px; }
+.setrow input[type="checkbox"] { accent-color: var(--good); width: 16px; height: 16px; flex: 0 0 auto; }
+.setrow .hint { display: block; margin-top: 2px; font-size: 12px; }
+.setstat { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.setstat .mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.gearlink { display: none; }
 
 /* ---------- quick capture + today grid ---------- */
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(226,168,75,.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
@@ -420,6 +433,9 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
   /* comfortable ≥44px form targets on phones */
   .gform input, .gform select, .gform textarea { min-height: 44px; }
   .gform .qt, .gform .gachieve, .goal .gachieve { min-height: 40px; padding-top: 9px; padding-bottom: 9px; }
+  .setrow { min-height: 44px; }
+  .setrow input[type="checkbox"] { min-height: 0; }
+  .gearlink { display: grid; place-items: center; position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 12px; width: 44px; height: 44px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-size: 20px; z-index: 6; }
   /* row actions behind ⋯ on phones; "Do today" lives in the task editor there —
      but an ON pill is status and stays visible */
   .cap-more, .jmore { display: inline-block; }

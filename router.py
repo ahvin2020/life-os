@@ -225,6 +225,7 @@ delete_task    {"action":"delete_task","id":int}                # "drop X", "rem
 create_goal    {"action":"create_goal","title":str,"timeframe":"week|month|quarter|year|by_date|ongoing","target":number|null,"unit":str|null}
 update_goal_number {"action":"update_goal_number","id":int,"value":number}   # "newsletter is at 450"
 mark_goal_achieved {"action":"mark_goal_achieved","id":int}                  # "I hit my <goal>", "mark <goal> achieved"
+link_goal      {"action":"link_goal","task_id":int,"goal_id":int|null}        # "link task 62 to goal 2"; goal_id:null unlinks
 answer         {"action":"answer","text":str}                   # a QUESTION about his data — answer from the context below
 clarify        {"action":"clarify","question":str}              # genuinely ambiguous — ask one short question
 multi          {"action":"multi","actions":[ ...two or more of the above... ]}   # compound message
@@ -443,6 +444,30 @@ def apply_action(conn, act, ctx) -> tuple:
         row = conn.execute("SELECT title FROM goals WHERE id=?", (gid,)).fetchone()
         return (f"🎯 Achieved: {row['title']} ✓", None)
 
+    # --- link/unlink a task to a goal (valid TASK id; GOAL id or null to unlink) ---
+    if kind == "link_goal":
+        tid = _as_int(act.get("task_id"))
+        if tid is None or tid not in ctx["task_ids"]:
+            return ("❓ I couldn't find that task — which one did you mean?", None)
+        raw_gid = act.get("goal_id")
+        gid = None
+        if raw_gid is not None:
+            gid = _as_int(raw_gid)
+            if gid is None or gid not in ctx["goal_ids"]:
+                return ("❓ I couldn't find that goal — which one?", None)
+        prev_row = conn.execute("SELECT goal_id FROM tasks WHERE id=?", (tid,)).fetchone()
+        prev = prev_row["goal_id"] if prev_row else None         # capture before writing
+        with conn:
+            conn.execute("UPDATE tasks SET goal_id=?, updated=? WHERE id=?",
+                         (gid, now_iso(), tid))
+        title = _title(conn, ctx, tid)
+        prev_part = str(prev) if prev is not None else ""        # empty → restore to unlinked
+        if gid is None:
+            return (f"🔗 Unlinked from goal: {title}", f"u|link|{tid}|{prev_part}")
+        grow = conn.execute("SELECT title FROM goals WHERE id=?", (gid,)).fetchone()
+        gtitle = grow["title"] if grow else f"#{gid}"
+        return (f"🔗 Linked: {title} → {gtitle}", f"u|link|{tid}|{prev_part}")
+
     # --- creates (no id validation needed) ---
     if kind == "create_task":
         title = (act.get("title") or "").strip()
@@ -569,7 +594,8 @@ def route(conn, message, source: str = "telegram", claude_fn=None,
 # ── inline-keyboard Undo (inverse operations) ────────────────────────────────-
 def handle_callback(conn, data: str) -> str:
     """Apply the inverse of a prior action from an inline-keyboard Undo tap.
-    callback_data formats: u|comp|<id>, u|del|<id>, u|plan|<id>, u|move|<id>|<prevcol>."""
+    callback_data formats: u|comp|<id>, u|del|<id>, u|plan|<id>, u|move|<id>|<prevcol>,
+    u|link|<id>|<prev_goal_id> (empty prev_goal_id → restore to unlinked)."""
     parts = (data or "").split("|")
     if len(parts) < 3 or parts[0] != "u":
         return "Nothing to undo."
@@ -596,4 +622,10 @@ def handle_callback(conn, data: str) -> str:
             conn.execute("UPDATE tasks SET col=?, updated=? WHERE id=?",
                          (parts[3], now_iso(), tid))
         return f"↩ Undone — moved back to {parts[3]}."
+    if op == "link":
+        prev = _as_int(parts[3]) if len(parts) >= 4 and parts[3] != "" else None
+        with conn:
+            conn.execute("UPDATE tasks SET goal_id=?, updated=? WHERE id=?",
+                         (prev, now_iso(), tid))
+        return "↩ Undone — goal link restored."
     return "Nothing to undo."

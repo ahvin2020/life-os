@@ -16,9 +16,21 @@ def notes_page():
     notes = vault_store.list_notes()
     pinned = [n for n in notes if n["pinned"]]
     recent = [n for n in notes if not n["pinned"]]
-    tagset = sorted({t for n in notes for t in n["tags"]})
     return render_template("notes.html", pinned=pinned, recent=recent,
-                           tags=tagset, count=len(notes), active="notes")
+                           chips=_tag_chips(notes), count=len(notes), active="notes")
+
+
+def _tag_chips(notes) -> list:
+    """Filter chips as (tag, count), most-used first. A tag on >80% of notes matches
+    almost everything — a filter that filters nothing — so it's dropped (idea/imported/
+    link/ig all qualify), leaving the topic tags as the browsable shelves."""
+    from collections import Counter
+    total = len(notes)
+    counts = Counter(t for n in notes for t in n["tags"])
+    threshold = total * 0.8
+    chips = [(t, c) for t, c in counts.items() if c <= threshold]
+    chips.sort(key=lambda tc: (-tc[1], tc[0]))
+    return chips
 
 
 @bp.route("/notes/new", methods=["POST"])

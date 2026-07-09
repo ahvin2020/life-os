@@ -213,6 +213,81 @@ def create_note(title, body="", tags=None, pinned=False, audio=None, media=None)
     return write_note(slug, title, tags, body, pinned, created, audio, media)
 
 
+def add_tag(slug: str, tag: str) -> bool:
+    """Append ONE tag to a note's frontmatter `tags:` list, rewriting ONLY that line and
+    leaving title/created/pinned/audio/media and the body BYTE-IDENTICAL. Idempotent —
+    a tag already present (or a missing file / no frontmatter) is a no-op returning False.
+    Returns True iff the file was modified. Used by the one-time clustering script; kept
+    surgical so it can never disturb note order (Notes sorts by `created`) or other fields."""
+    tag = (tag or "").strip().lstrip("#")
+    if not tag:
+        return False
+    path = os.path.join(notes_dir(), slug + ".md")
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+    lines = raw.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return False
+    for i in range(1, end):
+        key, sep, val = lines[i].partition(":")
+        if sep and key.strip() == "tags":
+            inner = val.strip().strip("[]")
+            current = [t.strip().lstrip("#") for t in inner.split(",") if t.strip()]
+            if tag in current:
+                return False                     # idempotent
+            current.append(tag)
+            lines[i] = "tags: [" + ", ".join(current) + "]"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))        # every other byte preserved verbatim
+            return True
+    return False                                 # no tags line in frontmatter
+
+
+def remove_tag(slug: str, tag: str) -> bool:
+    """Inverse of add_tag — drop ONE tag from the frontmatter `tags:` list, rewriting only
+    that line. No-op (False) if the tag isn't present. Used by cluster_undo.py."""
+    tag = (tag or "").strip().lstrip("#")
+    if not tag:
+        return False
+    path = os.path.join(notes_dir(), slug + ".md")
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+    lines = raw.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return False
+    for i in range(1, end):
+        key, sep, val = lines[i].partition(":")
+        if sep and key.strip() == "tags":
+            inner = val.strip().strip("[]")
+            current = [t.strip().lstrip("#") for t in inner.split(",") if t.strip()]
+            if tag not in current:
+                return False
+            current = [t for t in current if t != tag]
+            lines[i] = "tags: [" + ", ".join(current) + "]"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            return True
+    return False
+
+
 def touch_note(slug: str):
     """Re-save a note unchanged (bumps file mtime) — used when a re-shared URL maps to
     an existing note, so the capture registers a 'touch' instead of minting a twin."""

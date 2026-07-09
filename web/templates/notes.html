@@ -7,8 +7,8 @@
 
 <div class="ntools">
   <input class="search" id="nsearch" type="search" placeholder="Search notes…" aria-label="Search notes">
-  <button class="tagbtn active" data-tag="all" type="button">All</button>
-  {% for t in tags %}<button class="tagbtn" data-tag="{{ t }}" type="button">#{{ t }}</button>{% endfor %}
+  <button class="tagbtn active" data-tag="all" type="button">All <span class="cnt">{{ count }}</span></button>
+  {% for t, c in chips %}<button class="tagbtn" data-tag="{{ t }}" type="button">#{{ t }} <span class="cnt">{{ c }}</span></button>{% endfor %}
 </div>
 
 {% macro note_card(n) -%}

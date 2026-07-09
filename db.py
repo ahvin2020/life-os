@@ -55,3 +55,21 @@ def today_iso() -> str:
 def now_sg() -> datetime:
     """Current wall-clock datetime in Asia/Singapore."""
     return datetime.now(TZ)
+
+
+def get_setting(conn, key, default=None):
+    """Single settings accessor shared by web + daemon (key/value TEXT table)."""
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(conn, key, value):
+    with conn:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+
+
+def delete_setting(conn, key):
+    with conn:
+        conn.execute("DELETE FROM settings WHERE key=?", (key,))

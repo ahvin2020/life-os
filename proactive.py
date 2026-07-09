@@ -34,6 +34,14 @@ _PROFILE_PATH = os.path.join(_ROOT, "vault", "profile.md")
 STALE_DAYS = 30
 
 
+def _stale_days(conn) -> int:
+    from db import get_setting
+    try:
+        return int(get_setting(conn, "stale_backlog_days", STALE_DAYS))
+    except (TypeError, ValueError):
+        return STALE_DAYS
+
+
 # ── shared helpers ────────────────────────────────────────────────────────────
 def _load_profile() -> str:
     if os.path.exists(_PROFILE_PATH):
@@ -165,7 +173,8 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
     ypage = vault_store.read_journal(yest)
     yesterday_journal = [f"{e['time']} {e['text']}" for e in ypage["entries"]] if ypage else []
 
-    stale_count = len(_stale_rows(conn, day))
+    sd = _stale_days(conn)
+    stale_count = len(_stale_rows(conn, day, sd))
 
     # ── prompt-ready text block ──
     tlines = [f"- {t['title']} [{t['marker']}, {_meta_bits(t)}]" for t in tasks]
@@ -192,7 +201,7 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
         f"YESTERDAY'S JOURNAL ({yest}):",
         "\n".join("  " + j for j in yesterday_journal) or "  (nothing written)",
         "",
-        f"STALE BACKLOG: {stale_count} tasks untouched {STALE_DAYS}+ days.",
+        f"STALE BACKLOG: {stale_count} tasks untouched {sd}+ days.",
     ])
     return {"day": day, "is_sunday": now.weekday() == 6, "tasks": tasks,
             "goals": goals, "yesterday_journal": yesterday_journal,
@@ -261,7 +270,8 @@ def morning_brief(conn, day: str = None, now=None, claude_fn=None,
 
 
 # ── FEATURE 2: backlog intelligence ───────────────────────────────────────────
-def _stale_rows(conn, day: str, days: int = STALE_DAYS):
+def _stale_rows(conn, day: str, days: int = None):
+    days = _stale_days(conn) if days is None else days
     cutoff = (_d(day) - timedelta(days=days)).isoformat()
     return conn.execute(
         "SELECT id FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
@@ -288,12 +298,13 @@ def is_backlog_triage_request(text: str) -> bool:
 
 def build_backlog_context(conn, day: str = None) -> dict:
     """Pure snapshot for backlog triage: ALL open tasks with metadata (age, untouched
-    days, postponed count, due) sorted stalest-first, plus 14-day completion stats
-    per category (so the model sees what he actually finishes vs. what rots)."""
+    days, postponed count, due, goal-link status) sorted stalest-first, active goals
+    (id/title/progress), plus 14-day completion stats per category (so the model sees
+    what he actually finishes vs. what rots, and which open tasks could feed a goal)."""
     day = day or today_iso()
     rows = conn.execute(
         "SELECT id, title, category, priority, created, updated, due_date, "
-        "reschedule_count FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
+        "reschedule_count, goal_id FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
         "AND deleted_at IS NULL AND done=0 ORDER BY updated").fetchall()
     tasks = []
     for r in rows:
@@ -302,8 +313,24 @@ def build_backlog_context(conn, day: str = None) -> dict:
             "priority": r["priority"], "due_date": r["due_date"],
             "age_days": _age(day, r["created"]),
             "untouched_days": _age(day, r["updated"]),
-            "reschedule_count": r["reschedule_count"] or 0})
+            "reschedule_count": r["reschedule_count"] or 0,
+            "goal_id": r["goal_id"]})
     tasks.sort(key=lambda t: t["untouched_days"], reverse=True)
+
+    goals = []
+    for g in conn.execute(
+            "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall():
+        p = goal_progress(conn, g)
+        shape = p.get("shape")
+        if shape in ("measure", "both"):
+            unit = (" " + p["unit"]) if p.get("unit") else ""
+            prog = f"{int(p.get('current', 0))}/{int(p.get('target', 0))}{unit}"
+        elif shape == "rollup":
+            prog = f"{p.get('done', 0)}/{p.get('total', 0)} tasks"
+        else:
+            prog = "achieved" if p.get("achieved") else "in progress"
+        goals.append({"id": g["id"], "title": g["title"],
+                      "timeframe": g["timeframe"] or g["period"], "prog": prog})
 
     cutoff = (_d(day) - timedelta(days=14)).isoformat()
     stats = {}
@@ -313,15 +340,22 @@ def build_backlog_context(conn, day: str = None) -> dict:
             (cutoff,)).fetchall():
         stats[r["category"] or "uncategorised"] = r["c"]
 
-    tlines = [f"- #{t['id']} {t['title']} [{_meta_bits(t)}]" for t in tasks]
+    def _tline(t):
+        link = f", → goal #{t['goal_id']}" if t["goal_id"] else ", unlinked"
+        return f"- #{t['id']} {t['title']} [{_meta_bits(t)}{link}]"
+    tlines = [_tline(t) for t in tasks]
+    glines = [f"- #{gd['id']} {gd['title']} ({gd['timeframe']}): {gd['prog']}" for gd in goals]
     stat_str = ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "(none completed)"
     text = "\n".join([
-        f"OPEN BACKLOG — {len(tasks)} tasks, stalest first:",
+        f"OPEN BACKLOG — {len(tasks)} tasks, stalest first (goal-link status shown):",
         "\n".join(tlines) or "(empty)",
+        "",
+        "ACTIVE GOALS (reference ONLY by these #ids):",
+        "\n".join(glines) or "(none)",
         "",
         f"COMPLETED LAST 14 DAYS BY CATEGORY: {stat_str}",
     ])
-    return {"day": day, "tasks": tasks, "stats": stats, "text": text}
+    return {"day": day, "tasks": tasks, "goals": goals, "stats": stats, "text": text}
 
 
 def backlog_prompt(ctx: dict) -> str:
@@ -339,8 +373,17 @@ def backlog_prompt(ctx: dict) -> str:
         "category that never gets done, chronic postponing, etc.).\n"
         "3. ONE clarifying question about the single VAGUEST stale task, so he can "
         "sharpen or kill it.\n"
-        "Plain text for Telegram: no markdown tables, no headers. Keep every line "
-        "short. Write ONLY the triage.\n\n"
+        "4. SUGGESTED LINKS (optional): scan ALL open tasks marked 'unlinked' — not just "
+        "the stale ones — for any that plausibly advance one of the ACTIVE GOALS above. "
+        "If you find genuinely plausible matches, add a section headed exactly "
+        "'Suggested links:' and list AT MOST 3, each on its own line in this exact shape:\n"
+        "   task #62 \"set up GIRO\" → goal #2 \"retire by 50\" — reply \"link task 62 to goal 2\"\n"
+        "Use the real #ids and titles from the context. Only suggest links you're "
+        "confident about — zero is fine; if nothing is a clear fit, OMIT the section "
+        "entirely. NEVER invent an id, and NEVER claim you've linked anything — you are "
+        "only proposing; Kelvin confirms by replying.\n"
+        "Plain text for Telegram: no markdown tables, no headers beyond 'Suggested "
+        "links:'. Keep every line short. Write ONLY the triage.\n\n"
         "=== LIVE CONTEXT ===\n"
         f"{ctx['text']}\n\n"
         "=== TRIAGE ===\n")

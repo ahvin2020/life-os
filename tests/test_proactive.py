@@ -139,6 +139,44 @@ def test_backlog_context_staleness_stats_and_reschedule(client):
     assert "COMPLETED LAST 14 DAYS BY CATEGORY: content 2" in ctx["text"]
 
 
+def test_backlog_context_includes_goals_and_link_status(client):
+    """Context lists active goals with #ids and marks each open task linked/unlinked so
+    the prompt can propose goal links only for the UNLINKED ones."""
+    conn = _db()
+    day = "2026-07-09"
+    with conn:
+        gid = conn.execute(
+            "INSERT INTO goals (title, period, period_start, kind, timeframe, created) "
+            "VALUES ('Retire by 50','month','2026-07-01','rollup','year',?)", (now_iso(),)).lastrowid
+        linked = create_task(conn, "Already linked", col="backlog")
+        conn.execute("UPDATE tasks SET goal_id=? WHERE id=?", (gid, linked))
+        create_task(conn, "Set up GIRO", col="backlog")           # unlinked
+    ctx = proactive.build_backlog_context(conn, day)
+    conn.close()
+    assert any(g["id"] == gid and g["title"] == "Retire by 50" for g in ctx["goals"])
+    assert f"#{gid} Retire by 50" in ctx["text"]
+    assert "ACTIVE GOALS" in ctx["text"]
+    assert f"→ goal #{gid}" in ctx["text"]                        # the linked task shows its goal
+    assert "Set up GIRO" in ctx["text"] and ", unlinked]" in ctx["text"]
+    unlinked = [t for t in ctx["tasks"] if t["title"] == "Set up GIRO"][0]
+    assert unlinked["goal_id"] is None
+
+
+def test_backlog_prompt_has_suggestion_instruction_fallback_does_not(client):
+    conn = _db()
+    with conn:
+        create_task(conn, "Something", col="backlog")
+    ctx = proactive.build_backlog_context(conn, "2026-07-09")
+    conn.close()
+    prompt = proactive.backlog_prompt(ctx)
+    assert "Suggested links:" in prompt
+    assert 'reply "link task' in prompt.lower() or "link task 62 to goal 2" in prompt
+    assert "only proposing" in prompt.lower() or "NEVER claim you've linked" in prompt
+    # the deterministic fallback stays dumb — no link suggestions leak into it
+    fb = proactive.fallback_backlog(ctx)
+    assert "goal" not in fb.lower() and "link" not in fb.lower()
+
+
 def test_backlog_triage_mocked_and_fallback(client):
     conn = _db()
     with conn:

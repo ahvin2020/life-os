@@ -230,6 +230,83 @@ def test_multi_compound_message(client):
     assert out["applied"] == ["complete_task", "create_task"]
 
 
+# ── link_goal (goal-link SUGGESTIONS confirmed by Kelvin) ─────────────────────
+def _new_goal(conn, title="Retire by 50"):
+    with conn:
+        return conn.execute(
+            "INSERT INTO goals (title, period, period_start, kind, timeframe, created) "
+            "VALUES (?, 'month','2026-07-01','rollup','year',?)", (title, now_iso())).lastrowid
+
+
+def test_link_goal_applies_and_carries_undo(client):
+    conn = _db()
+    tid = _open_task(conn, "Set up GIRO")
+    gid = _new_goal(conn)
+    out = router.route(conn, "link task to goal", claude_fn=_fn(
+        {"action": "link_goal", "task_id": tid, "goal_id": gid}))
+    linked = conn.execute("SELECT goal_id FROM tasks WHERE id=?", (tid,)).fetchone()["goal_id"]
+    conn.close()
+    assert linked == gid and out["reply"].startswith("🔗 Linked")
+    assert out["keyboard"]["inline_keyboard"][0][0]["callback_data"] == f"u|link|{tid}|"
+
+
+def test_link_goal_null_unlinks(client):
+    conn = _db()
+    gid = _new_goal(conn)
+    tid = _open_task(conn, "Wrongly linked")
+    with conn:
+        conn.execute("UPDATE tasks SET goal_id=? WHERE id=?", (gid, tid))
+    out = router.route(conn, "unlink that", claude_fn=_fn(
+        {"action": "link_goal", "task_id": tid, "goal_id": None}))
+    linked = conn.execute("SELECT goal_id FROM tasks WHERE id=?", (tid,)).fetchone()["goal_id"]
+    conn.close()
+    assert linked is None and "Unlinked" in out["reply"]
+    # undo restores the PRIOR goal_id
+    assert out["keyboard"]["inline_keyboard"][0][0]["callback_data"] == f"u|link|{tid}|{gid}"
+
+
+def test_link_goal_validates_ids(client):
+    conn = _db()
+    tid = _open_task(conn, "Real task")
+    gid = _new_goal(conn)
+    # unknown goal id → clarify, no mutation
+    out = router.route(conn, "link it", claude_fn=_fn(
+        {"action": "link_goal", "task_id": tid, "goal_id": 999}))
+    assert out["reply"].startswith("❓")
+    assert conn.execute("SELECT goal_id FROM tasks WHERE id=?", (tid,)).fetchone()["goal_id"] is None
+    # unknown task id → clarify
+    out2 = router.route(conn, "link it", claude_fn=_fn(
+        {"action": "link_goal", "task_id": 888, "goal_id": gid}))
+    conn.close()
+    assert out2["reply"].startswith("❓")
+
+
+def test_link_goal_undo_inverse_restores_prior(client):
+    conn = _db()
+    g1 = _new_goal(conn, "Goal one")
+    g2 = _new_goal(conn, "Goal two")
+    tid = _open_task(conn, "Movable")
+    with conn:
+        conn.execute("UPDATE tasks SET goal_id=? WHERE id=?", (g1, tid))
+    # relink g1 → g2, capturing g1 as the undo target
+    out = router.route(conn, "relink", claude_fn=_fn(
+        {"action": "link_goal", "task_id": tid, "goal_id": g2}))
+    assert out["keyboard"]["inline_keyboard"][0][0]["callback_data"] == f"u|link|{tid}|{g1}"
+    router.handle_callback(conn, f"u|link|{tid}|{g1}")
+    restored = conn.execute("SELECT goal_id FROM tasks WHERE id=?", (tid,)).fetchone()["goal_id"]
+    conn.close()
+    assert restored == g1                                        # prior value restored
+    # and an empty prev restores to unlinked (NULL)
+    conn2 = _db()
+    tid2 = _open_task(conn2, "Other")
+    with conn2:
+        conn2.execute("UPDATE tasks SET goal_id=? WHERE id=?", (g1, tid2))
+    router.handle_callback(conn2, f"u|link|{tid2}|")
+    v = conn2.execute("SELECT goal_id FROM tasks WHERE id=?", (tid2,)).fetchone()["goal_id"]
+    conn2.close()
+    assert v is None
+
+
 # ── photo / image support ─────────────────────────────────────────────────────
 def test_router_receives_image_path_and_caption(client):
     """A photo turn puts the absolute image path + a Read-tool instruction + the
