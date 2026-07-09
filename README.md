@@ -30,7 +30,7 @@ pay-per-use APIs.
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest
-python3 server.py            # → http://localhost:5060
+python3 server.py            # → http://localhost:5070
 pytest                       # run the test suite
 ```
 The SQLite schema is created on first run under `data/app.db`.

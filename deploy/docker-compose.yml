@@ -27,7 +27,7 @@ services:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
     ports:
-      - "5060:5060"
+      - "5070:5070"
     restart: unless-stopped
 
   # PHASE 2 — starts only when explicitly enabled:  docker compose --profile capture up -d

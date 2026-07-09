@@ -5,7 +5,7 @@ Mirrors youtube-assistant/executors/invoicing/server.py: argparse --port/--db,
 point web_core._DB_PATH at the chosen DB, init/migrate the schema, register each
 routes_*.bp blueprint, run.
 
-Run: python3 server.py [--port 5060] [--db data/app.db]
+Run: python3 server.py [--port 5070] [--db data/app.db]
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ for _bpmod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_g
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=5060)
+    parser.add_argument("--port", type=int, default=5070)
     parser.add_argument("--db", default=DB_PATH)
     args = parser.parse_args()
 

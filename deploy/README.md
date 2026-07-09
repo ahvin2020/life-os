@@ -29,8 +29,8 @@ container restart is the whole deploy step.
 cd /volume1/homes/kelvin/Drive/Documents/life-os/deploy
 sudo docker compose up -d --build app
 ```
-Open `http://<nas-tailscale-name>:5060` from your phone (on Tailscale) or
-`http://localhost:5060` on the NAS LAN. The schema is created automatically at
+Open `http://<nas-tailscale-name>:5070` from your phone (on Tailscale) or
+`http://localhost:5070` on the NAS LAN. The schema is created automatically at
 `/volume1/docker/life-os/data/app.db` on first start.
 
 Dev loop thereafter: edit on the Mac → wait for Drive to sync → `sudo docker compose restart app`.

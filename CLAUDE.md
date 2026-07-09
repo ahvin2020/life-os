@@ -17,13 +17,13 @@
 ### What this is
 - Kelvin's personal **life-os**: tasks / notes / journal / goals. **Single user, no login** (Tailscale is the perimeter), **phone-first**.
 - Runs on his **Synology DS423+ via Docker** (Container Manager). The **Mac copy is dev-only**, synced to the NAS by **Synology Drive — the sync IS the deploy channel**; a container restart on the NAS picks up code changes.
-- Stack: Flask + SQLite + Jinja + vanilla JS, **no build step**, port **5060**.
+- Stack: Flask + SQLite + Jinja + vanilla JS, **no build step**, port **5070**.
 
 ### Run / test
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest
-python3 server.py                 # http://localhost:5060  (--port / --db to override)
+python3 server.py                 # http://localhost:5070  (--port / --db to override)
 pytest                            # throwaway DB+vault via LIFEOS_DB_PATH / LIFEOS_VAULT_DIR
 ```
 
