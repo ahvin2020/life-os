@@ -46,6 +46,8 @@ pytest                            # throwaway DB+vault via LIFEOS_DB_PATH / LIFE
 - **Amber = needs-attention-now only**; green/red = done/overdue only.
 - **Undo toasts, never confirm dialogs.** Phone-first: bottom nav + amber quick-add FAB; touch targets ≥ 20px.
 - Subtask ring: SVG circumference **100** so `stroke-dasharray = percent`.
+- **Base 16px, main column centered** (`.main { margin-inline:auto }`, max-width kept; sidebar fixed left) — user-amended 2026-07-09.
+- **Motion is additive, never floaty**: CSS props `--dur-fast/--dur/--dur-slow` (120/180/260ms) + one signature ease `--ease: cubic-bezier(.2,.8,.2,1)`; page-load rise, press-scale ~.97, card-hover lift, 0→value ring/bar fills, toast/modal/kanban-drag transitions. Everything sits under the `prefers-reduced-motion` kill-switch (disables all transition+animation). No blink/bounce/parallax/confetti.
 
 ### Conventions that bite
 - **TZ Asia/Singapore** for ALL "today" logic (never UTC).

@@ -126,6 +126,31 @@
   });
   document.querySelectorAll("[data-ring-init]").forEach(function (el) { updateRing(el.getAttribute("data-ring-init")); });
 
+  // ---- animate progress indicators 0 → value on load -------------------------
+  // The day-score ring and goal bars render at their target inline value; nudge
+  // them to 0 for one frame so the CSS transition sweeps up to the real figure.
+  // (Subtask rings already grow from 0 via updateRing above.) No-op under
+  // prefers-reduced-motion because the transition is disabled by the kill-switch.
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    // day-score ring(s): fills carrying an inline stroke-dasharray target
+    var rings = [].filter.call(document.querySelectorAll(".ring .fill"), function (f) {
+      return f.style && f.style.strokeDasharray;
+    });
+    var bars = [].slice.call(document.querySelectorAll(".bar i"));
+    var ringTargets = rings.map(function (f) { return f.style.strokeDasharray; });
+    var barTargets = bars.map(function (i) { return i.style.width; });
+    rings.forEach(function (f) { f.style.strokeDasharray = "0 100"; });
+    bars.forEach(function (i) { i.style.width = "0%"; });
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        rings.forEach(function (f, k) { f.style.strokeDasharray = ringTargets[k]; });
+        bars.forEach(function (i, k) { i.style.width = barTargets[k]; });
+      });
+    });
+  })();
+
   // ---- simple task rows: complete with undo -----------------------------------
   document.querySelectorAll(".task input.tcheck").forEach(function (c) {
     c.addEventListener("change", function () {
