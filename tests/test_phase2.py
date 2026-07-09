@@ -23,9 +23,24 @@ def _db():
 class FakeTelegram:
     def __init__(self):
         self.sent = []
+        self.actions = []
+        self.answered = []
+        self.edited = []
 
-    def send_message(self, chat_id, text):
-        self.sent.append((chat_id, text))
+    def send_message(self, chat_id, text, reply_markup=None):
+        self.sent.append((chat_id, text, reply_markup))
+        return {"ok": True}
+
+    def send_chat_action(self, chat_id, action="typing"):
+        self.actions.append((chat_id, action))
+        return {"ok": True}
+
+    def answer_callback_query(self, callback_id, text=None):
+        self.answered.append((callback_id, text))
+        return {"ok": True}
+
+    def edit_reply_markup(self, chat_id, message_id):
+        self.edited.append((chat_id, message_id))
         return {"ok": True}
 
 
@@ -102,22 +117,40 @@ def test_triage_three_way_note_and_journal(client):
     assert "unsorted" not in retagged["tags"] and "idea" in retagged["tags"]
 
 
-# ── ack → classify → outcome reply sequence ───────────────────────────────────
-def test_ack_then_outcome_reply_sequence(client, monkeypatch):
+# ── v2: the daemon routes text through the agentic router ─────────────────────
+def test_daemon_routes_text_through_router(client, monkeypatch):
+    """An instruction goes through router.route (ONE claude call); the daemon shows
+    a typing indicator and relays the router's reply + inline keyboard verbatim."""
+    import router
     conn = _db()
     tg = FakeTelegram()
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+        "reply": "✓ Done: Publish CPF Life video",
+        "keyboard": {"inline_keyboard": [[{"text": "↩ Undo", "callback_data": "u|comp|7"}]]},
+        "fell_back": False, "applied": ["complete_task"]})
     upd = {"update_id": 1, "message": {"from": {"id": 12345678},
-           "chat": {"id": 12345678}, "text": "reply to the sponsor email tomorrow"}}
+           "chat": {"id": 12345678}, "text": "mark the cpf video done"}}
     due = cd._process_update(conn, tg, "12345678", upd, None)
-    # first reply is the instant ack; triage is scheduled
-    assert tg.sent[-1][1] == "📥 saved — filing…"
-    assert due is not None
-
-    # when triage applies something, the daemon sends the outcome as a follow-up
-    monkeypatch.setattr(rt, "run", lambda c: ["'reply to the sponsor email…' → Tasks · business · due 2026-07-10"])
-    cd.run_triage_now(conn, tg, 12345678)
     conn.close()
-    assert tg.sent[-1][1].startswith("✓ ") and "Tasks" in tg.sent[-1][1]
+    assert ("typing" in [a for _, a in tg.actions])            # typing shown, no ack text
+    assert tg.sent[-1][1] == "✓ Done: Publish CPF Life video"  # router reply relayed
+    assert tg.sent[-1][2]["inline_keyboard"][0][0]["text"] == "↩ Undo"  # keyboard passed
+    assert due is None                                          # no fallback → no sweep scheduled
+
+
+def test_daemon_fallback_schedules_sweep(client, monkeypatch):
+    """When the router falls back (claude down), the daemon schedules a sweep."""
+    import router
+    conn = _db()
+    tg = FakeTelegram()
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+        "reply": router.FALLBACK_REPLY, "keyboard": None, "fell_back": True,
+        "applied": ["fallback_note"]})
+    upd = {"update_id": 2, "message": {"from": {"id": 12345678},
+           "chat": {"id": 12345678}, "text": "some ambiguous rambling"}}
+    due = cd._process_update(conn, tg, "12345678", upd, None)
+    conn.close()
+    assert due is not None                                      # sweep scheduled
 
 
 # ── query mode: intent detection + handlers ───────────────────────────────────
@@ -201,19 +234,21 @@ def test_freeform_answer_mocked_and_timeout(client):
     conn.close()
 
 
-def test_freeform_qa_reply_sequence(client, monkeypatch):
-    import queries
+def test_open_question_goes_to_router_answer(client, monkeypatch):
+    """An open question with no deterministic handler goes to the router, whose
+    `answer` action replies inline — the SINGLE claude entry point (no separate Q&A)."""
+    import router
     conn = _db()
     tg = FakeTelegram()
-    monkeypatch.setattr(queries, "answer_freeform", lambda c, q: "Your week looked productive — 3 videos done.")
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+        "reply": "Your week looked productive — 3 videos done.",
+        "keyboard": None, "fell_back": False, "applied": ["answer"]})
     upd = {"update_id": 21, "message": {"from": {"id": 12345678},
            "chat": {"id": 12345678}, "text": "how was my week?"}}
     cd._process_update(conn, tg, "12345678", upd, None)
     conn.close()
-    # ack first, then the free-form answer; nothing captured
-    assert tg.sent[0][1] == "🤔 thinking…"
     assert "productive" in tg.sent[-1][1]
-    assert not vault_store.list_notes()
+    assert not vault_store.list_notes()                         # a question files nothing
 
 
 def test_query_message_files_nothing(client):

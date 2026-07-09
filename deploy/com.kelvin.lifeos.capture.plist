@@ -22,11 +22,15 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- ffmpeg lives in /opt/homebrew/bin; make sure it's on PATH for voice notes. -->
+  <!-- PATH MUST include ~/.local/bin (where `claude` lives) and the nvm node bin,
+       or the agentic router's `claude -p` dies with FileNotFoundError under launchd
+       and every message falls back to #unsorted (the exact bug that stranded a
+       capture for >1h). ffmpeg is in /opt/homebrew/bin for voice notes.
+       Backstop: router.py/claude_cli.py also resolve `claude` by absolute path. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/Users/kelvintan/.local/bin:/Users/kelvintan/.nvm/versions/node/v20.20.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>StandardOutPath</key>

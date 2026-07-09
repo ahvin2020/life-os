@@ -39,10 +39,11 @@ from datetime import datetime, timedelta, timezone
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _LOG_PATH = os.path.join(_ROOT, "data", "capture_daemon.log")
 
-# Debounce window: a burst of ambiguous captures collapses into one triage run.
-# Kept tight so the ack → classify → outcome round-trip feels snappy for Kelvin
-# (unprefixed text/voice is the norm; triage is the PRIMARY router, not a fallback).
-TRIAGE_DEBOUNCE_S = 75
+# Routing is now INLINE (router.py calls `claude -p` per message), so the old
+# debounced triage is gone. run_triage.py survives only as the --sweep safety net
+# for #unsorted leftovers: a sweep is scheduled shortly after a fallback capture,
+# and once daily. This short delay lets a transient claude hiccup settle first.
+SWEEP_DELAY_S = 45
 # Heartbeat/staleness is read by web_core.health_status; keep these in sync.
 POLL_TIMEOUT_S = 50
 
@@ -92,8 +93,25 @@ class Telegram:
     def get_updates(self, offset, timeout=POLL_TIMEOUT_S):
         return self._call("getUpdates", offset=offset, timeout=timeout).get("result", [])
 
-    def send_message(self, chat_id, text):
-        return self._call("sendMessage", chat_id=chat_id, text=text)
+    def send_message(self, chat_id, text, reply_markup=None):
+        import json as _json
+        params = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            params["reply_markup"] = _json.dumps(reply_markup)
+        return self._call("sendMessage", **params)
+
+    def send_chat_action(self, chat_id, action="typing"):
+        return self._call("sendChatAction", chat_id=chat_id, action=action)
+
+    def answer_callback_query(self, callback_id, text=None):
+        params = {"callback_query_id": callback_id}
+        if text:
+            params["text"] = text
+        return self._call("answerCallbackQuery", **params)
+
+    def edit_reply_markup(self, chat_id, message_id):
+        """Drop the inline keyboard from a message (after its Undo is spent)."""
+        return self._call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id)
 
     def get_me(self):
         return self._call("getMe")
@@ -185,15 +203,6 @@ def format_reply(result: dict) -> str:
     if kind == "journal":
         return "✓ → today's Journal"
     return "✓ filed"
-
-
-def filing_reply(result: dict) -> str:
-    """What to reply the instant an item is captured. Ambiguous items (the norm —
-    plain text / voice) get an ack while triage classifies; prefixed shortcuts get
-    their destination straight away."""
-    if _is_ambiguous(result):
-        return "📥 saved — filing…"
-    return format_reply(result)
 
 
 # ── outbound: morning digest ──────────────────────────────────────────────────
@@ -324,7 +333,7 @@ def main() -> int:
     tg = Telegram(token)
 
     offset = int(_get_setting(conn, "telegram_offset", "0") or "0")
-    triage_due_at = None       # epoch seconds; set when an ambiguous item arrives
+    sweep_due_at = None        # epoch seconds; set after a fallback capture
     _log(f"starting long-poll loop (offset={offset})")
 
     while True:
@@ -333,18 +342,26 @@ def main() -> int:
             for upd in updates:
                 offset = upd["update_id"] + 1
                 _set_setting(conn, "telegram_offset", offset)
-                triage_due_at = _process_update(conn, tg, allowed, upd, triage_due_at)
+                if "callback_query" in upd:
+                    _process_callback(conn, tg, allowed, upd)
+                else:
+                    sweep_due_at = _process_update(conn, tg, allowed, upd, sweep_due_at)
 
             _stamp_heartbeat(conn)
 
-            # Fire the debounced triage run once the quiet window has elapsed.
-            if triage_due_at is not None and time.time() >= triage_due_at:
-                triage_due_at = None
-                chat = allowed or None
+            # Sweep the #unsorted inbox: shortly after a fallback capture, and once
+            # daily as a floor. run_triage.py is the ONLY thing that reads it now.
+            if sweep_due_at is not None and time.time() >= sweep_due_at:
+                sweep_due_at = None
                 try:
-                    run_triage_now(conn, tg, chat)
+                    run_triage_now(conn, tg, allowed or None)
                 except Exception as e:
-                    _log(f"triage run failed: {e}")
+                    _log(f"sweep failed: {e}")
+            elif allowed:
+                try:
+                    maybe_daily_sweep(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"daily sweep failed: {e}")
 
             # Outbound: morning digest (checked each poll cycle ~every {POLL_TIMEOUT_S}s).
             if allowed:
@@ -359,66 +376,132 @@ def main() -> int:
     return 0
 
 
-def _process_update(conn, tg, allowed, upd, triage_due_at):
-    """Handle one Telegram update. Returns the (possibly updated) triage timer."""
+def maybe_daily_sweep(conn, tg, chat_id) -> bool:
+    """Run the #unsorted sweep at most once per day (a floor under the on-fallback
+    sweep, so leftovers never rot). Returns True if it ran."""
+    from db import today_iso
+    today = today_iso()
+    if _get_setting(conn, "sweep_last_day") == today:
+        return False
+    _set_setting(conn, "sweep_last_day", today)
+    if capture_has_unsorted():
+        run_triage_now(conn, tg, chat_id)
+    return True
+
+
+def capture_has_unsorted() -> bool:
+    from capture import list_unsorted_notes
+    return bool(list_unsorted_notes())
+
+
+def _process_callback(conn, tg, allowed, upd):
+    """Handle an inline-keyboard tap (Undo). Applies the inverse op, acknowledges the
+    tap, and strips the spent button from the original message."""
+    cq = upd.get("callback_query") or {}
+    uid = str((cq.get("from") or {}).get("id", ""))
+    if allowed and uid != allowed:
+        return
+    data = cq.get("data") or ""
+    msg = cq.get("message") or {}
+    chat_id = (msg.get("chat") or {}).get("id")
+    message_id = msg.get("message_id")
+    try:
+        import router
+        result = router.handle_callback(conn, data)
+    except Exception as e:
+        _log(f"callback {data!r} failed: {e}")
+        result = "Couldn't undo that."
+    try:
+        tg.answer_callback_query(cq.get("id"), result)
+        if chat_id and message_id:
+            tg.edit_reply_markup(chat_id, message_id)
+    except Exception as e:
+        _log(f"callback ack failed: {e}")
+
+
+def _process_update(conn, tg, allowed, upd, sweep_due_at):
+    """Handle one Telegram update. Returns the (possibly updated) sweep timer —
+    a fallback capture schedules a sweep so #unsorted leftovers never rot."""
     msg = upd.get("message") or upd.get("edited_message") or {}
     uid = str((msg.get("from") or {}).get("id", ""))
     chat_id = (msg.get("chat") or {}).get("id")
     if allowed and uid != allowed:
         _log(f"ignoring message from unauthorised user {uid}")
-        return triage_due_at
+        return sweep_due_at
 
     try:
         if "text" in msg and msg["text"].lstrip().startswith("/"):
             tg.send_message(chat_id, _command_reply(msg["text"]))
-        elif "text" in msg and _is_query(msg["text"]):
-            # A question about his data — answer, file nothing. Deterministic handlers
-            # first (instant/free); anything list-shaped but unmatched falls back to a
-            # read-only free-form Claude answer.
-            from queries import answer_query, answer_freeform
-            ans = answer_query(conn, msg["text"])
-            if ans is not None:
-                tg.send_message(chat_id, ans)
-            else:
-                tg.send_message(chat_id, "🤔 thinking…")
-                _log(f"free-form Q&A: {msg['text'][:80]}")
-                reply = answer_freeform(conn, msg["text"])
-                tg.send_message(chat_id, reply or "couldn't get an answer — try again or rephrase")
         elif "text" in msg:
-            from capture import route_capture
-            result = route_capture(conn, msg["text"], source="telegram")
-            tg.send_message(chat_id, filing_reply(result))
-            if _is_ambiguous(result):
-                triage_due_at = time.time() + TRIAGE_DEBOUNCE_S
+            if _handle_text(conn, tg, chat_id, msg["text"]):
+                sweep_due_at = time.time() + SWEEP_DELAY_S
         elif "voice" in msg or "audio" in msg:
-            result = _handle_voice(conn, tg, msg, chat_id)
-            if result and _is_ambiguous(result):
-                triage_due_at = time.time() + TRIAGE_DEBOUNCE_S
+            if _handle_voice(conn, tg, msg, chat_id):
+                sweep_due_at = time.time() + SWEEP_DELAY_S
         else:
-            tg.send_message(chat_id, "I can file text, links and voice notes for now.")
+            tg.send_message(chat_id, "I can handle text, links and voice notes for now.")
     except Exception as e:
         _log(f"handling update {upd.get('update_id')} failed: {e}")
         if chat_id:
             try:
-                tg.send_message(chat_id, "⚠️ Sorry — that one failed to file. It's logged.")
+                tg.send_message(chat_id, "⚠️ Sorry — that one failed. It's logged and safe.")
             except Exception:
                 pass
-    return triage_due_at
+    return sweep_due_at
+
+
+def _handle_text(conn, tg, chat_id, text) -> bool:
+    """Route one text message. Fast paths (prefix/URL, instant deterministic query)
+    skip Claude; everything else goes through the agentic router. Returns True if a
+    router fallback fired (so the caller schedules a sweep)."""
+    low = text.strip().lower()
+
+    # Fast path 1: prefix shortcuts + bare URL → deterministic capture, no Claude.
+    if low.startswith(("t:", "n:", "i:", "j:")) or _looks_like_url(text):
+        from capture import route_capture
+        result = route_capture(conn, text, source="telegram")
+        tg.send_message(chat_id, format_reply(result))
+        return False
+
+    # Fast path 2: unambiguous list questions → instant deterministic answer, no Claude.
+    from queries import is_query, answer_query
+    if is_query(text):
+        ans = answer_query(conn, text)
+        if ans is not None:
+            tg.send_message(chat_id, ans)
+            return False
+
+    # The agentic router — the ONE Claude entry point. Acts on instructions,
+    # answers open questions, files captures, all in a single call.
+    import router
+    try:
+        tg.send_chat_action(chat_id, "typing")
+    except Exception:
+        pass
+    out = router.route(conn, text, source="telegram")
+    tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+    if out.get("fell_back"):
+        _log(f"router fell back to #unsorted: {text[:80]}")
+    return bool(out.get("fell_back"))
+
+
+def _looks_like_url(text: str) -> bool:
+    from capture import _looks_like_url as _u
+    return _u(text)
 
 
 _HELP_TEXT = (
-    "👋 I'm your Life OS capture bot.\n\n"
-    "Send me anything to capture it — a plain text thought or a voice note — and "
-    "I'll file it. I reply 📥 saved, then sort it into a task, note, or journal "
-    "entry within a minute or two.\n\n"
-    "Or ask me anything about your tasks, notes, journal and goals, e.g.:\n"
-    "• what are my todos\n"
-    "• any overdue?\n"
-    "• goals\n"
-    "• how was my week?\n"
-    "• find <term>\n\n"
-    "Power-user shortcuts (optional): start with t: (task), n: (note), i: (idea), "
-    "j: (journal), or paste a link.")
+    "👋 I'm your Life OS assistant.\n\n"
+    "Send me anything — tasks, thoughts, journal entries, instructions "
+    "('mark X done', 'push Y to next week') or questions. I read your open tasks, "
+    "goals and journal, work out what you mean, and act on it.\n\n"
+    "Try:\n"
+    "• reply to the sponsor email tomorrow\n"
+    "• mark the CPF video done\n"
+    "• push the invoice to Friday\n"
+    "• how many videos have I done this week?\n\n"
+    "Undo lives on a button under anything I change. Power-user shortcuts still "
+    "work: t: (task), n: (note), i: (idea), j: (journal), or paste a link.")
 
 
 def _command_reply(text: str) -> str:
@@ -426,20 +509,14 @@ def _command_reply(text: str) -> str:
     return _HELP_TEXT
 
 
-def _is_query(text: str) -> bool:
-    from queries import is_query
-    return is_query(text)
-
-
-def _is_ambiguous(result: dict) -> bool:
-    return result.get("kind") == "note" and "unsorted" in (result.get("tags") or [])
-
-
-def _handle_voice(conn, tg, msg, chat_id):
+def _handle_voice(conn, tg, msg, chat_id) -> bool:
+    """Transcribe a voice note locally, preserve the original audio, then route the
+    TEXT through the agentic router exactly like a typed message. Returns True if the
+    router fell back (so the caller schedules a sweep)."""
     voice = msg.get("voice") or msg.get("audio") or {}
     file_id = voice.get("file_id")
     if not file_id:
-        return None
+        return False
     tmpdir = tempfile.mkdtemp(prefix="lifeos-voice-")
     oga = os.path.join(tmpdir, "in.oga")
     wav = os.path.join(tmpdir, "in.wav")
@@ -451,14 +528,37 @@ def _handle_voice(conn, tg, msg, chat_id):
     except Exception as e:
         _log(f"voice transcription failed: {e}")
         tg.send_message(chat_id, "⚠️ Could not transcribe that voice note.")
-        return None
+        return False
     if not text:
         tg.send_message(chat_id, "🔇 Heard silence — nothing to file.")
-        return None
-    result = route_voice(conn, text, oga)
+        return False
+    _preserve_audio(oga)                              # audio is never lost
     snippet = text if len(text) <= 80 else text[:77] + "…"
-    tg.send_message(chat_id, f"🎙 \"{snippet}\"\n{filing_reply(result)}")
-    return result
+    tg.send_message(chat_id, f"🎙 \"{snippet}\"")
+    import router
+    try:
+        tg.send_chat_action(chat_id, "typing")
+    except Exception:
+        pass
+    out = router.route(conn, text, source="voice")
+    tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+    return bool(out.get("fell_back"))
+
+
+def _preserve_audio(oga_path: str) -> None:
+    """Keep the original recording in vault/.audio/ so a voice note is never lost,
+    even when the router acts on it (task/journal) rather than filing a note."""
+    try:
+        if not (oga_path and os.path.exists(oga_path)):
+            return
+        import shutil
+        import vault_store
+        from db import now_sg
+        dest = os.path.join(vault_store.audio_dir(),
+                            "voice-" + now_sg().strftime("%Y%m%d-%H%M%S") + ".oga")
+        shutil.copyfile(oga_path, dest)
+    except OSError as e:
+        _log(f"could not store audio: {e}")
 
 
 if __name__ == "__main__":

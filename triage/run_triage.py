@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -96,11 +95,12 @@ def build_prompt(profile_text: str, notes: list) -> str:
 
 
 def call_claude(prompt: str, timeout: int = 180) -> str:
-    """Run the local, authed Claude CLI headlessly and return its stdout. Shared by
-    triage and the daemon's free-form Q&A (which passes a tighter timeout)."""
-    proc = subprocess.run(
-        ["claude", "-p"], input=prompt, capture_output=True, text=True, timeout=timeout)
-    return proc.stdout
+    """Run the local, authed Claude CLI headlessly and return its stdout. Resolves the
+    binary via claude_cli (absolute path) so it works under launchd's minimal PATH —
+    the bug that left #unsorted notes stuck until a manual sweep. Shared by triage and
+    the read-only Q&A (which passes a tighter timeout)."""
+    from claude_cli import call_claude as _call
+    return _call(prompt, timeout=timeout)
 
 
 def parse_decisions(raw: str) -> list:
@@ -215,8 +215,8 @@ def main() -> int:
 
 
 def _has_claude() -> bool:
-    from shutil import which
-    return which("claude") is not None
+    from claude_cli import has_claude
+    return has_claude()
 
 
 if __name__ == "__main__":
