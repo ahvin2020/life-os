@@ -191,11 +191,15 @@
         // columns now scroll internally (viewport-height board) — keep drag usable by
         // auto-scrolling the stack under the cursor while dragging near its edges.
         scroll: true, scrollSensitivity: 90, scrollSpeed: 12, bubbleScroll: true,
-        onEnd: function () {
-          var targetStack = stack;
-          var targetCol = targetStack.closest(".col").dataset.col;
-          var ids = [].map.call(targetStack.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
-          postJSON("/tasks/reorder", { col: targetCol, ids: ids });
+        onEnd: function (evt) {
+          // cross-column drop: evt.to is where the card landed; the source column's
+          // order shifted too, so persist both (once when they're the same list).
+          var stacks = evt.to === evt.from ? [evt.to] : [evt.to, evt.from];
+          stacks.forEach(function (s) {
+            var c = s.closest(".col").dataset.col;
+            var ids = [].map.call(s.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
+            postJSON("/tasks/reorder", { col: c, ids: ids });
+          });
         }
       });
     });
