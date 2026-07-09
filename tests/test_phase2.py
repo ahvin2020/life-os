@@ -26,6 +26,8 @@ class FakeTelegram:
         self.actions = []
         self.answered = []
         self.edited = []
+        self.file_requests = []
+        self.downloaded = []
 
     def send_message(self, chat_id, text, reply_markup=None):
         self.sent.append((chat_id, text, reply_markup))
@@ -42,6 +44,17 @@ class FakeTelegram:
     def edit_reply_markup(self, chat_id, message_id):
         self.edited.append((chat_id, message_id))
         return {"ok": True}
+
+    # ── file download (photos) — records the file_id asked for, writes fake bytes ──
+    def get_file_path(self, file_id):
+        self.file_requests.append(file_id)
+        return f"photos/{file_id}.jpg"
+
+    def download_file(self, file_path, dest):
+        with open(dest, "wb") as f:
+            f.write(b"\xff\xd8\xff\xe0fake-jpeg-bytes")
+        self.downloaded.append((file_path, dest))
+        return dest
 
 
 # ── voice transcription routing ───────────────────────────────────────────────
@@ -62,6 +75,29 @@ def test_voice_spoken_task_prefix_makes_task(client):
     result = cd.route_voice(conn, "task buy milk on the way home", None)
     conn.close()
     assert result["kind"] == "task"
+
+
+def test_transcribe_passes_language_and_condition(monkeypatch):
+    """Regression: auto-detect on short accented clips transcribed English as Malay and
+    drifted into repetition loops. transcribe_wav must pin language + disable
+    condition_on_previous_text, and default to the medium model."""
+    import sys
+    import types
+    calls = {}
+
+    def _fake_transcribe(wav, path_or_hf_repo=None, language=None,
+                         condition_on_previous_text=None):
+        calls.update(wav=wav, model=path_or_hf_repo, language=language,
+                     cond=condition_on_previous_text)
+        return {"text": "  What should I do today?  "}
+
+    monkeypatch.setitem(sys.modules, "mlx_whisper",
+                        types.SimpleNamespace(transcribe=_fake_transcribe))
+    out = cd.transcribe_wav("/tmp/x.wav")
+    assert out == "What should I do today?"                     # stripped
+    assert calls["language"] == "en"                            # explicit, not auto-detect
+    assert calls["cond"] is False                               # repetition-loop guard
+    assert "medium" in calls["model"]                           # upgraded from base
 
 
 # ── triage application (mock claude output) ───────────────────────────────────
@@ -151,6 +187,74 @@ def test_daemon_fallback_schedules_sweep(client, monkeypatch):
     due = cd._process_update(conn, tg, "12345678", upd, None)
     conn.close()
     assert due is not None                                      # sweep scheduled
+
+
+# ── photo capture (download highest-res → vault/.media → same router) ──────────
+def test_photo_download_saves_highres_and_routes(client, monkeypatch):
+    """A photo message: download the LARGEST size to vault/.media/, show typing, and
+    route the caption + image path through the SAME router (one claude call)."""
+    import glob
+    import router
+    conn = _db()
+    tg = FakeTelegram()
+    seen = {}
+
+    def fake_route(c, message, source="telegram", image_path=None):
+        seen["message"], seen["image_path"], seen["source"] = message, image_path, source
+        return {"reply": "🧾 $51.16 each — want two collect tasks?", "keyboard": None,
+                "fell_back": False, "applied": ["answer"]}
+
+    monkeypatch.setattr(router, "route", fake_route)
+    upd = {"update_id": 20, "message": {
+        "from": {"id": 12345678}, "chat": {"id": 12345678},
+        "caption": "split this between me, WL and Jim — I paid",
+        "photo": [
+            {"file_id": "thumb", "file_unique_id": "uABC", "width": 90, "height": 120},
+            {"file_id": "biggest", "file_unique_id": "uABC", "width": 1280, "height": 1707}]}}
+    due = cd._process_update(conn, tg, "12345678", upd, None)
+    conn.close()
+
+    import vault_store
+    saved = glob.glob(os.path.join(vault_store.media_dir(), "*-uABC.jpg"))
+    assert tg.file_requests == ["biggest"]                      # highest-res size requested
+    assert saved and os.path.exists(saved[0])                   # written into vault/.media/
+    assert "typing" in [a for _, a in tg.actions]               # typing shown
+    assert seen["image_path"] == saved[0]                       # router got the saved path
+    assert "split this between me" in seen["message"]           # caption is the instruction
+    assert tg.sent[-1][1].startswith("🧾")                      # router reply relayed
+    assert due is None                                          # no fallback → no sweep
+
+
+def test_image_document_also_routes_as_photo(client, monkeypatch):
+    """An image sent 'as file' (document, image/* mime) is treated like a photo."""
+    import router
+    conn = _db()
+    tg = FakeTelegram()
+    seen = {}
+    monkeypatch.setattr(router, "route", lambda c, m, source="telegram", image_path=None:
+                        seen.update(image_path=image_path) or {
+                            "reply": "ok", "keyboard": None, "fell_back": False, "applied": []})
+    upd = {"update_id": 21, "message": {
+        "from": {"id": 12345678}, "chat": {"id": 12345678},
+        "document": {"file_id": "docimg", "file_unique_id": "uDOC",
+                     "mime_type": "image/png", "file_name": "receipt.png"}}}
+    cd._process_update(conn, tg, "12345678", upd, None)
+    conn.close()
+    assert tg.file_requests == ["docimg"]
+    assert seen["image_path"] and seen["image_path"].endswith("-uDOC.jpg")
+
+
+def test_non_image_document_not_treated_as_photo(client):
+    conn = _db()
+    tg = FakeTelegram()
+    upd = {"update_id": 22, "message": {
+        "from": {"id": 12345678}, "chat": {"id": 12345678},
+        "document": {"file_id": "pdf1", "file_unique_id": "uPDF",
+                     "mime_type": "application/pdf", "file_name": "invoice.pdf"}}}
+    cd._process_update(conn, tg, "12345678", upd, None)
+    conn.close()
+    assert tg.file_requests == []                               # not downloaded
+    assert "text, links, photos and voice" in tg.sent[-1][1]    # generic fallback reply
 
 
 # ── query mode: intent detection + handlers ───────────────────────────────────

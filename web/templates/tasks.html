@@ -24,7 +24,6 @@
   </div>
   {% endfor %}
 </div>
-<p class="hint">↻ recurring tasks respawn on completion · ◎ links a task to a goal · ring turns green + task auto-completes when every subtask is done<br>tap any card title to edit: title, due date, priority, category, goal, subtasks, delete · drag to reorder — order IS the priority</p>
 {% endblock %}
 {% block scripts %}
 <script>window.LIFEOS_GOALS = [{% for g in goals %}{"id":{{ g.id }},"title":{{ g.title|tojson }}}{{ "," if not loop.last }}{% endfor %}];</script>

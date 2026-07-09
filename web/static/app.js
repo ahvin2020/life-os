@@ -167,14 +167,15 @@
     });
   });
 
-  // ---- ☀ plan toggle ----------------------------------------------------------
-  document.querySelectorAll(".sunbtn").forEach(function (b) {
+  // ---- "Do today" plan pill ---------------------------------------------------
+  document.querySelectorAll(".planbtn").forEach(function (b) {
     b.addEventListener("click", function (e) {
       e.stopPropagation();
       var id = b.dataset.taskId;
       post("/tasks/" + id + "/plan").then(function (res) {
         var on = res.data && res.data.planned;
         b.classList.toggle("on", !!on);
+        b.textContent = on ? "☀ On today ✓" : "☀ Do today";
         toast(on ? "Planned for today ☀" : "Removed from today");
       });
     });
@@ -240,7 +241,7 @@
     var elTitle = document.getElementById("ed-title"), elTags = document.getElementById("ed-tags"),
         elBody = document.getElementById("ed-body"), elSaved = document.getElementById("ed-saved"),
         elPin = document.getElementById("ed-pin");
-    var current = null, saveTimer = null, pinned = false;
+    var current = null, saveTimer = null, pinned = false, creating = false;
     function open(slug) {
       fetch("/notes/" + slug).then(function (r) { return r.json(); }).then(function (j) {
         if (j.status !== "ok") return;
@@ -253,14 +254,39 @@
         ov.classList.add("on"); elBody.focus();
       });
     }
+    // Open a blank editor without persisting anything — the note file is only
+    // created on the first save that carries a title or body (lazy creation, so
+    // opening then closing an empty editor leaves no orphan "Untitled" note).
+    function openBlank() {
+      clearTimeout(saveTimer); current = null; pinned = false; creating = false;
+      elTitle.value = ""; elTags.value = ""; elBody.value = "";
+      elPin.classList.remove("active"); elPin.textContent = "★ pin";
+      elSaved.textContent = "";
+      ov.classList.add("on"); elTitle.focus();
+    }
     window.openNote = open;
     function save() {
-      if (!current) return;
-      elSaved.textContent = "saving…";
-      post("/notes/" + current + "/save", {
-        title: elTitle.value, tags: elTags.value, body: elBody.value,
-        pinned: pinned ? "1" : "0"
-      }).then(function () { elSaved.textContent = "saved ✓"; });
+      if (current) {
+        elSaved.textContent = "saving…";
+        post("/notes/" + current + "/save", {
+          title: elTitle.value, tags: elTags.value, body: elBody.value,
+          pinned: pinned ? "1" : "0"
+        }).then(function () { elSaved.textContent = "saved ✓"; });
+        return;
+      }
+      // no note yet: only create once there is real content (guard against a
+      // debounce + blur double-fire creating two notes before the POST resolves)
+      if (creating) return;
+      if (!elTitle.value.trim() && !elBody.value.trim()) return;
+      creating = true; elSaved.textContent = "saving…";
+      post("/notes/new", {
+        title: elTitle.value, tags: elTags.value, body: elBody.value
+      }).then(function (res) {
+        creating = false;
+        if (res.data && res.data.slug) {
+          current = res.data.slug; elSaved.textContent = "saved ✓";
+        } else { elSaved.textContent = ""; }
+      });
     }
     function debounced() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 700); }
     [elTitle, elTags, elBody].forEach(function (el) {
@@ -273,13 +299,21 @@
     });
     document.getElementById("ed-delete").addEventListener("click", function () {
       var slug = current;
+      ov.classList.remove("on");
+      if (!slug) { current = null; return; }   // blank unsaved note — nothing to delete
       post("/notes/" + slug + "/delete").then(function () {
-        ov.classList.remove("on");
+        // Remove the card in place (quick fade via the motion system) instead of
+        // reloading the whole page; only undo does a minimal reload to restore it.
+        var card = document.querySelector('.note[data-slug="' + slug + '"]');
+        if (card) {
+          card.classList.add("removing");
+          setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 220);
+        }
         toast("Note deleted", function () { post("/notes/" + slug + "/restore").then(reloadSoon); });
-        reloadSoon();
       });
+      current = null;
     });
-    function close() { if (current) save(); ov.classList.remove("on"); current = null; }
+    function close() { save(); ov.classList.remove("on"); current = null; }
     document.getElementById("ed-close").addEventListener("click", close);
     ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
@@ -288,11 +322,7 @@
       n.addEventListener("click", function () { open(n.dataset.slug); });
     });
     var newBtn = document.getElementById("note-new");
-    if (newBtn) newBtn.addEventListener("click", function () {
-      post("/notes/new", { title: "Untitled", body: "", tags: "" }).then(function (res) {
-        if (res.data && res.data.slug) open(res.data.slug);
-      });
-    });
+    if (newBtn) newBtn.addEventListener("click", openBlank);
   })();
 
   // ---- task editor modal ------------------------------------------------------
@@ -322,7 +352,7 @@
       f.goal.value = el.dataset.goalId || "";
       planned = el.dataset.planned === "1";
       f.plan.classList.toggle("on", planned);
-      f.plan.textContent = planned ? "☀ planned for today" : "☀ plan for today";
+      f.plan.textContent = planned ? "☀ On today ✓" : "☀ Do today";
       f.saved.textContent = "";
       renderSubs(el.dataset.subs);
       ov.classList.add("on"); f.title.focus();
@@ -352,7 +382,7 @@
       post("/tasks/" + current + "/plan").then(function (res) {
         planned = res.data && res.data.planned;
         f.plan.classList.toggle("on", !!planned);
-        f.plan.textContent = planned ? "☀ planned for today" : "☀ plan for today";
+        f.plan.textContent = planned ? "☀ On today ✓" : "☀ Do today";
       });
     });
     document.getElementById("te-save").addEventListener("click", function () {
@@ -409,6 +439,22 @@
       });
     });
   });
+  // Delete a captured item (soft-delete + undo). Dispatch by kind, remove the row
+  // in place with a fade — no full reload; only undo restores via a minimal reload.
+  document.querySelectorAll(".cap .cap-del").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var cap = btn.closest(".cap");
+      var kind = cap.dataset.kind, ref = cap.dataset.ref;
+      var del = kind === "task" ? "/tasks/" + ref + "/delete" : "/notes/" + ref + "/delete";
+      var restore = kind === "task" ? "/tasks/" + ref + "/restore" : "/notes/" + ref + "/restore";
+      post(del).then(function (res) {
+        if (!res.ok) { toast("Could not delete"); return; }
+        cap.classList.add("removing");
+        setTimeout(function () { if (cap.parentNode) cap.parentNode.removeChild(cap); }, 220);
+        toast("Deleted", function () { post(restore).then(reloadSoon); });
+      });
+    });
+  });
 
   // ---- goals: manual number inline edit ---------------------------------------
   document.querySelectorAll(".gnum.edit").forEach(function (el) {
@@ -421,8 +467,53 @@
       post("/goals/" + id + "/update", { current: n }).then(reloadSoon);
     });
   });
+  // ---- goals: mark a milestone achieved (toggle) ------------------------------
+  document.querySelectorAll(".gachieve").forEach(function (el) {
+    el.addEventListener("click", function () {
+      post("/goals/" + el.dataset.goalId + "/achieve", {}).then(function (res) {
+        if (!res.ok) { toast("Could not update"); return; }
+        reloadSoon();
+      });
+    });
+  });
+
+  // ---- goals: new-goal form (open/close, timeframe chips, measure reveal) ------
+  var goalForm = document.getElementById("goalform");
   var goalNew = document.getElementById("goal-new");
-  if (goalNew) goalNew.addEventListener("click", function () { document.getElementById("goalform").classList.toggle("hide"); });
+  function closeGoalForm() { if (goalForm) goalForm.classList.add("hide"); }
+  if (goalNew && goalForm) {
+    goalNew.addEventListener("click", function () {
+      goalForm.classList.toggle("hide");
+      if (!goalForm.classList.contains("hide")) {
+        var t = goalForm.querySelector('input[name="title"]');
+        if (t) t.focus();
+      }
+    });
+    var gcancel = document.getElementById("gcancel");
+    if (gcancel) gcancel.addEventListener("click", closeGoalForm);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !goalForm.classList.contains("hide")) closeGoalForm();
+    });
+    // timeframe segmented chips → hidden input; "By date" reveals the date field
+    var tfInput = document.getElementById("gtf-input");
+    var dateField = document.getElementById("gdatefield");
+    goalForm.querySelectorAll("#gtimeframe .qt").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        goalForm.querySelectorAll("#gtimeframe .qt").forEach(function (c) { c.classList.remove("active"); });
+        chip.classList.add("active");
+        var tf = chip.dataset.tf;
+        if (tfInput) tfInput.value = tf;
+        if (dateField) dateField.classList.toggle("hide", tf !== "by_date");
+      });
+    });
+    // collapsed "add a measurable target" reveal
+    var mToggle = document.getElementById("gmeasure-toggle");
+    var mBox = document.getElementById("gmeasure");
+    if (mToggle && mBox) mToggle.addEventListener("click", function () {
+      mBox.classList.toggle("hide");
+      mToggle.classList.toggle("hide");
+    });
+  }
 
   // ---- journal: add entry -----------------------------------------------------
   var jAdd = document.getElementById("j-add");
@@ -430,5 +521,76 @@
     var box = document.getElementById("j-text"); var t = box.value.trim();
     if (!t) { box.focus(); return; }
     post("/journal/entry", { text: t, day: box.dataset.day || "" }).then(function () { toast("Entry added"); reloadSoon(); });
+  });
+
+  // ---- ⋯ reveals row actions on touch (desktop reveals on hover via CSS) -------
+  document.querySelectorAll(".cap .cap-more").forEach(function (btn) {
+    btn.addEventListener("click", function () { btn.closest(".cap").classList.toggle("acts"); });
+  });
+  document.querySelectorAll(".jentry .jmore").forEach(function (btn) {
+    btn.addEventListener("click", function () { btn.closest(".jentry").classList.toggle("acts"); });
+  });
+
+  // ---- textareas grow with their content (never a scrollbar inside a box) ------
+  function autogrow(el) {
+    el.style.height = "auto";
+    el.style.height = Math.max(el.scrollHeight + 2, 70) + "px";
+  }
+  document.querySelectorAll("textarea").forEach(function (t) {
+    t.addEventListener("input", function () { autogrow(t); });
+  });
+
+  // ---- journal: per-entry edit / delete (byte-preserving, with undo) -----------
+  // Undo restores the whole day's page from the prev_raw snapshot the API returns.
+  document.querySelectorAll(".jentry .jdel").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var entry = btn.closest(".jentry");
+      var day = entry.dataset.day, time = entry.dataset.time, idx = entry.dataset.idx;
+      post("/journal/" + day + "/entry/" + time + "/delete", { idx: idx }).then(function (res) {
+        if (!res.ok) { toast("Could not delete"); return; }
+        var prev = res.data.prev_raw;
+        entry.classList.add("removing");
+        setTimeout(function () { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 220);
+        toast("Entry deleted", function () {
+          post("/journal/" + day + "/save", { raw: prev }).then(reloadSoon);
+        });
+      });
+    });
+  });
+  document.querySelectorAll(".jentry .jedit").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var entry = btn.closest(".jentry");
+      if (entry.querySelector(".jedit-area")) return;          // already editing
+      var day = entry.dataset.day, time = entry.dataset.time, idx = entry.dataset.idx;
+      var p = entry.querySelector(".jtext");
+      var area = document.createElement("textarea");
+      area.className = "jedit-area";
+      area.value = p.textContent;
+      var row = document.createElement("div");
+      row.className = "erow";
+      var cancel = document.createElement("button");
+      cancel.type = "button"; cancel.className = "mini"; cancel.textContent = "Cancel";
+      var save = document.createElement("button");
+      save.type = "button"; save.className = "qgo"; save.textContent = "Save";
+      row.appendChild(cancel); row.appendChild(save);
+      p.style.display = "none";
+      p.after(area, row);
+      autogrow(area); area.focus();
+      area.addEventListener("input", function () { autogrow(area); });
+      function teardown() { area.remove(); row.remove(); p.style.display = ""; }
+      cancel.addEventListener("click", teardown);
+      save.addEventListener("click", function () {
+        post("/journal/" + day + "/entry/" + time + "/save", { idx: idx, text: area.value })
+          .then(function (res) {
+            if (!res.ok) { toast("Could not save"); return; }
+            var prev = res.data.prev_raw;
+            p.textContent = area.value.trim();
+            teardown();
+            toast("Entry updated", function () {
+              post("/journal/" + day + "/save", { raw: prev }).then(reloadSoon);
+            });
+          });
+      });
+    });
   });
 })();

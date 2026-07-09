@@ -27,6 +27,11 @@ TABLES = [
         )
     """),
     # Goals must exist before tasks (tasks.goal_id references it).
+    # A goal is a TITLE; everything else is optional. `timeframe` supersedes the
+    # legacy `period`/`kind` pair (kept for non-destructive migration; `kind` is
+    # DEPRECATED — behaviour now derives from which measure/end_date/task fields
+    # exist, see routes_goals.goal_progress). No hard CHECK on `timeframe` so legacy
+    # NULLs and future values are tolerated — it's validated in Python.
     ("goals", """
         CREATE TABLE IF NOT EXISTS goals (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +41,10 @@ TABLES = [
             kind         TEXT NOT NULL CHECK(kind IN ('rollup','number')),
             target_num   REAL,
             current_num  REAL DEFAULT 0,
+            timeframe    TEXT DEFAULT 'week',
+            end_date     TEXT,
+            unit         TEXT,
+            achieved_at  TEXT,
             archived_at  TEXT,
             created      TEXT NOT NULL
         )
@@ -98,6 +107,18 @@ def migrate(conn) -> list:
         if "deleted_at" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
             applied.append("v2: tasks.deleted_at")
+
+    # v3: a goal is just a TITLE — flexible timeframe + optional measure/milestone.
+    # Add the new columns (idempotent) and backfill timeframe from the legacy period.
+    if 0 < disk < 3:
+        gcols = [r[1] for r in conn.execute("PRAGMA table_info(goals)").fetchall()]
+        for col, ddl in (("timeframe", "TEXT"), ("end_date", "TEXT"),
+                         ("unit", "TEXT"), ("achieved_at", "TEXT")):
+            if col not in gcols:
+                conn.execute(f"ALTER TABLE goals ADD COLUMN {col} {ddl}")
+                applied.append(f"v3: goals.{col}")
+        conn.execute("UPDATE goals SET timeframe=period WHERE timeframe IS NULL")
+        applied.append("v3: goals.timeframe backfilled from period")
     return applied
 
 

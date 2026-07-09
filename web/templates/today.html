@@ -38,9 +38,8 @@
     {% if tasks %}
       {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
     {% else %}
-      <div class="empty">Nothing planned for today. Add a task above, or open a task and tap ☀ to plan it for today.</div>
+      <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>
     {% endif %}
-    <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">a task is here because it's: due today · overdue · or ☀ you planned it — nothing auto-appears</div></div>
   </div>
 
   <div class="rcol">
@@ -54,8 +53,18 @@
       {% if goals %}
         {% for g in goals %}
         <div class="ghead"><span class="t" style="font-weight:500">{{ g.title }}</span>
-          <span class="gnum">{% if g.kind == 'number' %}{{ g.progress.current|int }}/{{ g.progress.target|int }}{% else %}{{ g.progress.done }}/{{ g.progress.total }}{% endif %}</span></div>
+          <span class="gnum">
+            {%- if g.progress.shape in ('measure', 'both') -%}
+              {{ g.progress.current|int }}/{{ g.progress.target|int }}{% if g.progress.unit %} {{ g.progress.unit }}{% endif %}
+            {%- elif g.progress.shape == 'rollup' -%}
+              {{ g.progress.done }}/{{ g.progress.total }}
+            {%- else -%}
+              {{ '✓' if g.progress.achieved else '—' }}
+            {%- endif -%}
+          </span></div>
+        {% if g.progress.shape != 'milestone' %}
         <div class="bar {{ 'full' if g.progress.pct >= 100 else '' }}"><i style="width:{{ g.progress.pct if g.progress.pct <= 100 else 100 }}%"></i></div>
+        {% endif %}
         {% endfor %}
       {% else %}
         <div class="empty" style="font-size:12px">No goals yet — <a href="/goals">add one</a>.</div>
@@ -74,7 +83,9 @@
               {% if c.kind != 'journal' %}<button class="chg" data-to="journal" type="button">→ Journal</button>{% endif %}
             </div>
           </div>
-          <button class="chg chg-toggle" type="button" title="Refile this">Change</button></div>
+          <button class="chg cap-more" type="button" aria-label="Actions">⋯</button>
+          <button class="chg chg-toggle" type="button" title="Refile this">Change</button>
+          <button class="chg cap-del" type="button" title="Delete this">Delete</button></div>
         {% endfor %}
       {% else %}
         <div class="empty" style="font-size:12px">Nothing captured today yet.</div>

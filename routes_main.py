@@ -24,6 +24,8 @@ def captured_today(conn, today: str) -> list:
     newest first, each showing where it was filed."""
     feed = []
     for n in vault_store.list_notes():
+        if "imported" in n["tags"]:
+            continue   # backfilled imports aren't "captured today" even if timestamped today
         if (n["created"] or "")[:10] == today:
             tag_str = " ".join("#" + t for t in n["tags"]) if n["tags"] else ""
             feed.append({"source": "NOTE", "kind": "note", "ref": n["slug"],

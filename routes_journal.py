@@ -51,11 +51,23 @@ def today_so_far(conn, today: str) -> dict:
     }
 
 
+def _annotate_occurrences(page):
+    """Give each entry an `idx` — its occurrence among same-HH:MM entries — so the
+    per-entry edit/delete API can disambiguate duplicate timestamps."""
+    if not page:
+        return page
+    seen = {}
+    for e in page["entries"]:
+        e["idx"] = seen.get(e["time"], 0)
+        seen[e["time"]] = e["idx"] + 1
+    return page
+
+
 @bp.route("/journal")
 def journal_page():
     today = today_iso()
     conn = db()
-    page = vault_store.read_journal(today)
+    page = _annotate_occurrences(vault_store.read_journal(today))
     days = [d for d in vault_store.list_journal_days() if d["day"] != today]
     tsf = today_so_far(conn, today)
     conn.close()
@@ -97,6 +109,39 @@ def journal_save(day):
     raw = request.form.get("raw", "")
     vault_store.save_journal_raw(day, raw)
     return jsonify({"status": "ok", "day": day})
+
+
+def _entry_index() -> int:
+    """Occurrence index within duplicate HH:MM headings (0-based). Safe on garbage."""
+    try:
+        return max(0, int(request.form.get("idx") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+@bp.route("/journal/<day>/entry/<ts>/save", methods=["POST"])
+def journal_entry_save(day, ts):
+    """Rewrite ONE '## HH:MM' entry (today OR a past day), preserving every other
+    section byte-for-byte. Returns prev_raw so the client can offer an Undo (restore
+    via /journal/<day>/save)."""
+    prev = vault_store.read_journal(day)
+    prev_raw = prev["raw"] if prev else ""
+    page = vault_store.edit_journal_entry(day, ts, _entry_index(),
+                                          request.form.get("text", ""))
+    if page is None:
+        return jsonify({"status": "error", "message": "entry not found"}), 404
+    return jsonify({"status": "ok", "day": day, "raw": page["raw"], "prev_raw": prev_raw})
+
+
+@bp.route("/journal/<day>/entry/<ts>/delete", methods=["POST"])
+def journal_entry_delete(day, ts):
+    """Remove ONE '## HH:MM' entry, preserving all others. Returns prev_raw for Undo."""
+    prev = vault_store.read_journal(day)
+    prev_raw = prev["raw"] if prev else ""
+    page = vault_store.delete_journal_entry(day, ts, _entry_index())
+    if page is None:
+        return jsonify({"status": "error", "message": "entry not found"}), 404
+    return jsonify({"status": "ok", "day": day, "raw": page["raw"], "prev_raw": prev_raw})
 
 
 def _ajax():

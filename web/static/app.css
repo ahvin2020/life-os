@@ -8,7 +8,9 @@
   --bg: #0F1013;
   --surface: #16181D;
   --surface2: #1D2026;
+  --surface3: #23272E;   /* elevation step — dark UI raises by LIGHTENING, never shadow */
   --border: #262A31;
+  --border2: #343A44;    /* brighter border for elevated/hovered surfaces */
   --text: #E8E6E1;
   --muted: #8F94A0;
   --accent: #E2A84B;
@@ -36,6 +38,32 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 input, select, textarea { font: inherit; }
 input[type="search"] { font: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- global form controls (system dark, never raw browser defaults) ----
+   Base look for EVERY text-like input/select/textarea; the amber focus ring mirrors
+   the .qcap treatment. Placed high so purpose-built controls (.qcap, .editor, .search)
+   with equal-or-greater specificity that come later still win. Checkboxes/radios are
+   excluded (they keep accent-color styling). */
+input[type="text"], input[type="search"], input[type="number"], input[type="date"],
+input[type="time"], input[type="url"], input[type="email"], input[type="password"],
+input[type="tel"], input:not([type]), select, textarea {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 8px 10px; min-height: 38px; color-scheme: dark;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input[type="text"]:focus, input[type="search"]:focus, input[type="number"]:focus,
+input[type="date"]:focus, input[type="time"]:focus, input[type="url"]:focus,
+input[type="email"]:focus, input[type="password"]:focus, input[type="tel"]:focus,
+input:not([type]):focus, select:focus, textarea:focus {
+  outline: none; border-color: rgba(226,168,75,.7); box-shadow: 0 0 0 3px var(--accent-dim);
+}
+/* selects: kill the native (often white) dropdown chrome, draw our own chevron. */
+select {
+  appearance: none; -webkit-appearance: none; padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' fill='none' stroke='%238F94A0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
 a, a:visited, a:active { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .read { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; min-width: 0; }
@@ -119,8 +147,13 @@ a:hover { text-decoration: underline; }
 .pri.h, .pri.high { background: var(--bad); } .pri.m, .pri.med { background: var(--accent); } .pri.l, .pri.low { background: var(--muted); opacity: .5; }
 .rec { font-size: 11.5px; color: var(--muted); }
 .subcount { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.sunbtn { font-size: 12.5px; color: var(--muted); flex: 0 0 auto; padding: 0 2px; transition: color var(--dur) var(--ease), transform var(--dur-fast) var(--ease); }
-.sunbtn.on { color: var(--good); }
+/* "Do today" plan pill — compact labelled control; amber when on (needs-attention) */
+.planbtn { font-family: var(--mono); font-size: 12px; line-height: 1.3; padding: 6px 11px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); flex: 0 0 auto; white-space: nowrap; transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.planbtn:hover { color: var(--text); border-color: var(--muted); }
+.planbtn.on { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+/* checkbox hit-area wrapper — visible box stays small, tap area grows on phones.
+   Must NOT inherit the `.task label` title styles (flex:1 + strikethrough bg). */
+.task label.tcheck-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; cursor: pointer; background-image: none; overflow: visible; }
 
 /* parent task w/ subtasks */
 .ptask { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -139,9 +172,27 @@ a:hover { text-decoration: underline; }
 .cap { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--border); }
 .cap:first-of-type { border-top: 0; }
 .src { flex: 0 0 auto; font-family: var(--mono); font-size: 11px; letter-spacing: .05em; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; margin-top: 2px; }
-.cap .txt { flex: 1; min-width: 0; }
+.cap .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cap .chg { flex-shrink: 0; }
 .cap .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
 .filed { color: var(--good); }
+/* row actions earn their pixels: hidden until hover on desktop, behind ⋯ on mobile
+   (ux-standards). focus-within keeps them keyboard-reachable. */
+.cap-more, .jmore { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .cap .chg-toggle, .cap .cap-del, .task .planbtn, .ptask .head .planbtn,
+  .krow .planbtn, .jentry .jact { opacity: 0; transition: opacity var(--dur) var(--ease); }
+  .cap .chg-toggle, .cap .cap-del, .goal .gdel { opacity: 0; }
+  .cap:hover .chg-toggle, .cap:focus-within .chg-toggle,
+  .cap:hover .cap-del, .cap:focus-within .cap-del,
+  .task:hover .planbtn, .task:focus-within .planbtn,
+  .ptask:hover .planbtn, .ptask:focus-within .planbtn,
+  .kcard:hover .planbtn, .kcard:focus-within .planbtn,
+  .goal:hover .gdel, .goal:focus-within .gdel,
+  .jentry:hover .jact, .jentry:focus-within .jact { opacity: 1; }
+  /* an ON pill is STATUS, not just an affordance — always visible */
+  .planbtn.on { opacity: 1; }
+}
 .mini { font-size: 12.5px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); color: var(--muted); flex: 0 0 auto; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .mini:hover { color: var(--text); border-color: var(--muted); }
 
@@ -154,11 +205,12 @@ a:hover { text-decoration: underline; }
 .col { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
 .col h3 { margin: 0 2px 2px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; display: flex; }
 .col h3 .count { margin-left: auto; }
-.kcard { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: grab; display: flex; flex-direction: column; gap: 6px; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
-.kcard:hover { border-color: var(--muted); transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+/* elevation on hover/drag = lighter surface + brighter border (no shadows in dark UI) */
+.kcard { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: grab; display: flex; flex-direction: column; gap: 6px; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.kcard:hover { border-color: var(--border2); transform: translateY(-2px); background: var(--surface3); }
 .kcard.sortable-ghost { opacity: .35; }
-.kcard.sortable-chosen { transform: rotate(1.4deg) scale(1.02); box-shadow: 0 10px 26px rgba(0,0,0,.5); border-color: var(--accent); cursor: grabbing; }
-.kcard .t { font-weight: 500; }
+.kcard.sortable-chosen { transform: rotate(1.4deg) scale(1.02); background: var(--surface3); border-color: var(--accent); cursor: grabbing; }
+.kcard .t { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .kcard .khead { display: flex; align-items: center; gap: 9px; }
 .kcard .khead .t { flex: 1; cursor: pointer; }
 .krow { display: flex; align-items: center; gap: 8px; }
@@ -175,9 +227,9 @@ a:hover { text-decoration: underline; }
 .tagbtn.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
 .nsec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 18px 2px 10px; }
 .ngrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.note { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; cursor: pointer; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
-.note:hover { transform: translateY(-2px); border-color: var(--muted); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
-.note .nt { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.note { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; cursor: pointer; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.note:hover { transform: translateY(-2px); border-color: var(--border2); background: var(--surface2); }
+.note .nt { font-weight: 600; display: flex; gap: 8px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
 .note .nt .star { color: var(--accent); font-size: 12.5px; }
 .note .snip { font-size: 13px; color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .note .nfoot { display: flex; gap: 6px; align-items: center; margin-top: auto; flex-wrap: wrap; }
@@ -209,6 +261,19 @@ a:hover { text-decoration: underline; }
 .goal .gt .s.d { color: var(--good); }
 .goal .gt.done { text-decoration: line-through; opacity: .6; }
 .goal .gsrc { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* milestone "mark achieved" toggle — a pill like .qt, green once done */
+.goal .gachieve { font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); flex: 0 0 auto; transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.goal .gachieve:hover { color: var(--text); border-color: var(--muted); }
+.goal .gachieve.done { color: var(--good); background: var(--good-dim); border-color: transparent; }
+
+/* ---------- goal form (labels above, comfortable spacing) ---------- */
+.gform { gap: 14px; }
+.gfield { display: flex; flex-direction: column; gap: 6px; }
+.gfield .glabel { font-size: 12px; color: var(--muted); }
+.gfield > input, .gfield > select { width: 100%; }
+.gchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gmeasure { display: flex; gap: 10px; flex-wrap: wrap; }
+.gmeasure .gfield { flex: 1 1 120px; }
 
 /* ---------- quick capture + today grid ---------- */
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(226,168,75,.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
@@ -243,11 +308,17 @@ a:hover { text-decoration: underline; }
 .flash { border-left: 2px solid var(--border); padding-left: 10px; margin-bottom: 10px; }
 .flash .fdate { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 2px; }
 .flash p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
-.jentry .due { margin-bottom: 2px; }
+.jentry .due { margin-bottom: 2px; display: flex; align-items: center; gap: 8px; }
 .jentry p { margin: 0 0 12px; white-space: pre-wrap; }
+/* per-entry actions — same quiet chip language as the captured feed's .chg */
+.jentry .jacts { display: inline-flex; gap: 6px; margin-left: auto; }
+.jentry .jact, .jentry .jmore { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.jentry .jact:hover, .jentry .jmore:hover { color: var(--accent); border-color: var(--accent); }
+.jentry .jact.jdel:hover { color: var(--bad); border-color: var(--bad); }
+.jentry textarea.jedit-area { width: 100%; min-height: 60px; resize: vertical; margin-bottom: 8px; }
 
 /* ---------- toast ---------- */
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(80px); background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: 14px; z-index: 20; box-shadow: 0 6px 24px rgba(0,0,0,.5); transition: transform var(--dur-slow) var(--ease), opacity var(--dur) var(--ease); opacity: 0; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(80px); background: var(--surface3); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: 14px; z-index: 20; transition: transform var(--dur-slow) var(--ease), opacity var(--dur) var(--ease); opacity: 0; }
 .toast.on { transform: translateX(-50%) translateY(0); opacity: 1; animation: toast-in var(--dur-slow) var(--ease); }
 .toast button { color: var(--accent); font-weight: 600; }
 
@@ -283,11 +354,33 @@ a:hover { text-decoration: underline; }
   .bottomnav a:hover { text-decoration: none; }
   .bottomnav a .ico { font-size: 18px; }
   .bottomnav a.active { color: var(--accent); }
-  .fab { display: grid; position: fixed; right: 16px; bottom: calc(66px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 99px; background: var(--accent); color: #1A1204; font-size: 26px; font-weight: 600; place-items: center; z-index: 6; box-shadow: 0 4px 16px rgba(0,0,0,.45); transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
-  .fab:active { transform: scale(.94); box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+  .fab { display: grid; position: fixed; right: 16px; bottom: calc(66px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 99px; background: var(--accent); color: #1A1204; font-size: 26px; font-weight: 600; place-items: center; z-index: 6; transition: transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease); }
+  .fab:active { transform: scale(.94); filter: brightness(.92); }
   .qtypes { display: none; }
   .task input, .sub input { width: 20px; height: 20px; }
   .task, .sub { padding-top: 8px; padding-bottom: 8px; }
+  /* ≥44px effective hit areas on phones (CLAUDE.md UX). Visible controls stay
+     compact; the tap zone is grown with a transparent ::after overlay, or a
+     padded wrapper for the checkbox (inputs can't take ::after). */
+  .planbtn, .cap .chg { position: relative; }
+  .planbtn::after, .cap .chg::after {
+    content: ""; position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%; height: 100%; min-width: 44px; min-height: 44px;
+  }
+  .tcheck-hit { min-width: 44px; min-height: 44px; margin: -10px 0 -10px -12px; }
+  /* comfortable ≥44px form targets on phones */
+  .gform input, .gform select, .gform textarea { min-height: 44px; }
+  .gform .qt, .gform .gachieve, .goal .gachieve { min-height: 40px; padding-top: 9px; padding-bottom: 9px; }
+  /* row actions behind ⋯ on phones; "Do today" lives in the task editor there —
+     but an ON pill is status and stays visible */
+  .cap-more, .jmore { display: inline-block; }
+  .cap .chg-toggle, .cap .cap-del { display: none; }
+  .cap.acts .chg-toggle, .cap.acts .cap-del { display: inline-block; }
+  .jentry .jact { display: none; }
+  .jentry.acts .jact { display: inline-block; }
+  .task .planbtn, .ptask .head .planbtn, .krow .planbtn { display: none; }
+  .task .planbtn.on, .ptask .head .planbtn.on, .krow .planbtn.on { display: inline-block; }
 }
 @media (max-width: 460px) { .ngrid { grid-template-columns: 1fr; } }
 
@@ -312,7 +405,10 @@ a:hover { text-decoration: underline; }
 button { transition: transform var(--dur-fast) var(--ease); }
 button:active { transform: scale(.97); }
 .fab:active, .qgo:active { transform: scale(.96); }
-.sunbtn:active { transform: scale(.9); }
+.planbtn:active { transform: scale(.97); }
+/* in-place delete: quick fade-out before the row is removed from the DOM (notes
+   gallery card + captured-today feed row) instead of a full-page reload */
+.removing { opacity: 0; transform: translateY(4px); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); pointer-events: none; }
 
 /* prefers-reduced-motion kill-switch — disables every transition AND animation */
 @media (prefers-reduced-motion: reduce) {

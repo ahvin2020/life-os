@@ -26,7 +26,7 @@ DB_PATH = os.environ.get("LIFEOS_DB_PATH") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "app.db"
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def connect(db_path: str = DB_PATH) -> sqlite3.Connection:

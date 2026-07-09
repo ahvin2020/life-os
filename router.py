@@ -35,6 +35,16 @@ _RAW_LOG = os.path.join(_ROOT, "data", "capture_raw.log")
 _PROFILE_PATH = os.path.join(_ROOT, "vault", "profile.md")
 
 CLAUDE_TIMEOUT = 60
+# Reading an image adds a Read-tool round-trip, so photos get a longer budget.
+CLAUDE_IMAGE_TIMEOUT = 120
+
+# Rolling conversational memory: the last few (Kelvin, bot) exchanges are persisted
+# in the settings table and replayed into the router context on EVERY message so
+# follow-ups like "yes" / "the second one" / "change it to friday" resolve. Bounded
+# by pair-count AND per-side chars so the context can never balloon.
+_MEM_KEY = "router_exchanges"
+_MEM_MAX_PAIRS = 3
+_MEM_ENTRY_CAP = 400
 
 FALLBACK_REPLY = "📥 Saved to your inbox — couldn't reach my brain just now, so I'll sort it on the next sweep."
 
@@ -55,6 +65,48 @@ def log_raw(message: str, source: str = "telegram") -> None:
             f.write(f"{now_iso()}\t{source}\t{(message or '').strip()}\n")
     except OSError:
         pass
+
+
+# ── rolling exchange memory (settings-persisted, survives daemon restarts) ────-
+def load_exchanges(conn) -> list:
+    """The last (Kelvin, bot) pairs, oldest first. [] if none/unparseable."""
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (_MEM_KEY,)).fetchone()
+    if not row or not row["value"]:
+        return []
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def record_exchange(conn, user_msg: str, bot_reply: str) -> None:
+    """Append one (user, bot) pair, keep only the last _MEM_MAX_PAIRS, persist to the
+    settings table. Each side capped at _MEM_ENTRY_CAP chars. Best-effort — a memory
+    write must never break the reply."""
+    try:
+        pairs = load_exchanges(conn)
+        pairs.append({"u": (user_msg or "").strip()[:_MEM_ENTRY_CAP],
+                      "b": (bot_reply or "").strip()[:_MEM_ENTRY_CAP]})
+        pairs = pairs[-_MEM_MAX_PAIRS:]
+        with conn:
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (_MEM_KEY, json.dumps(pairs, ensure_ascii=False)))
+    except Exception:
+        pass
+
+
+def _memory_user_repr(message: str, image_path: str | None) -> str:
+    """How this inbound turn is stored/logged: photos are tagged so the memory reads
+    coherently ('[photo] split this between…')."""
+    msg = (message or "").strip()
+    if image_path and msg:
+        return f"[photo] {msg}"
+    if image_path:
+        return "[photo]"
+    return msg
 
 
 # ── live context ──────────────────────────────────────────────────────────────
@@ -91,11 +143,16 @@ def build_context(conn) -> dict:
     for g in goal_rows:
         goal_ids.add(g["id"])
         p = goal_progress(conn, g)
-        if g["kind"] == "number":
-            prog = f"{int(p.get('current', 0))}/{int(p.get('target', 0))}"
-        else:
+        shape = p.get("shape")
+        if shape in ("measure", "both"):
+            unit = (" " + p["unit"]) if p.get("unit") else ""
+            prog = f"{int(p.get('current', 0))}/{int(p.get('target', 0))}{unit}"
+        elif shape == "rollup":
             prog = f"{p.get('done', 0)}/{p.get('total', 0)} tasks"
-        goal_lines.append(f"- #{g['id']} {g['title']} ({g['period']}, {g['kind']}) {prog}")
+        else:                                    # milestone
+            prog = "✓ achieved" if p.get("achieved") else "in progress"
+        tf = g["timeframe"] or g["period"]
+        goal_lines.append(f"- #{g['id']} {g['title']} ({tf}, {shape}) {prog}")
 
     # Completed-today: shown WITH ids so "reopen X" / references resolve, and added to
     # the valid-id set so uncomplete/move/etc. can target a just-finished task.
@@ -130,6 +187,14 @@ def build_context(conn) -> dict:
     if jentries:
         lines += ["", "TODAY'S JOURNAL:"] + [f"  {e['time']} {e['text'][:160]}" for e in jentries]
 
+    exchanges = load_exchanges(conn)
+    if exchanges:
+        lines += ["", "RECENT CONVERSATION (oldest first — use it to resolve follow-ups "
+                  "like 'yes', 'the second one', 'change it to friday'):"]
+        for ex in exchanges:
+            lines.append(f"  Kelvin: {ex.get('u', '')}")
+            lines.append(f"  You: {ex.get('b', '')}")
+
     return {
         "text": "\n".join(lines),
         "profile": profile,
@@ -157,8 +222,9 @@ set_due        {"action":"set_due","id":int,"date":ISO-date}    # "push X to Fri
 rename_task    {"action":"rename_task","id":int,"title":str}
 move_task      {"action":"move_task","id":int,"col":"backlog|week|done"}
 delete_task    {"action":"delete_task","id":int}                # "drop X", "remove X"
-create_goal    {"action":"create_goal","title":str,"period":"week|month","kind":"rollup|number","target":number|null}
+create_goal    {"action":"create_goal","title":str,"timeframe":"week|month|quarter|year|by_date|ongoing","target":number|null,"unit":str|null}
 update_goal_number {"action":"update_goal_number","id":int,"value":number}   # "newsletter is at 450"
+mark_goal_achieved {"action":"mark_goal_achieved","id":int}                  # "I hit my <goal>", "mark <goal> achieved"
 answer         {"action":"answer","text":str}                   # a QUESTION about his data — answer from the context below
 clarify        {"action":"clarify","question":str}              # genuinely ambiguous — ask one short question
 multi          {"action":"multi","actions":[ ...two or more of the above... ]}   # compound message
@@ -177,7 +243,21 @@ Rules:
 """
 
 
-def build_prompt(message: str, ctx: dict) -> str:
+def build_prompt(message: str, ctx: dict, image_path: str | None = None) -> str:
+    image_block = ""
+    msg = (message or "").strip()
+    if image_path:
+        image_block = (
+            "=== IMAGE ===\n"
+            f"An image from Kelvin is attached at: {image_path} — view it with your "
+            "Read tool BEFORE deciding. After viewing it, output ONLY the JSON action "
+            "(no prose). If it's a receipt/bill and he asks to split it, compute the "
+            "per-person amount and put the itemised split + an offer to create "
+            "collect-money tasks in an `answer`.\n\n")
+        if not msg:
+            msg = ("(no caption) — extract whatever is useful from this image and decide "
+                   "the right action: a note with the extracted content, task(s), a "
+                   "journal entry, or just answer.")
     return (
         "=== vault/profile.md (who Kelvin is — classification context) ===\n"
         f"{ctx['profile']}\n\n"
@@ -185,7 +265,8 @@ def build_prompt(message: str, ctx: dict) -> str:
         f"{_CONTRACT}\n\n"
         "=== LIVE CONTEXT ===\n"
         f"{ctx['text']}\n\n"
-        f"=== MESSAGE ===\n{(message or '').strip()}\n\n=== JSON ===\n")
+        f"{image_block}"
+        f"=== MESSAGE ===\n{msg}\n\n=== JSON ===\n")
 
 
 # ── parsing ──────────────────────────────────────────────────────────────────-
@@ -344,6 +425,16 @@ def apply_action(conn, act, ctx) -> tuple:
         tgt = f"/{int(row['target_num'])}" if row["target_num"] else ""
         return (f"🎯 {row['title']}: {int(val)}{tgt}", None)
 
+    # --- mark a milestone goal achieved (valid GOAL id) ---
+    if kind == "mark_goal_achieved":
+        gid = _as_int(act.get("id"))
+        if gid is None or gid not in ctx["goal_ids"]:
+            return ("❓ I couldn't find that goal — which one?", None)
+        with conn:
+            conn.execute("UPDATE goals SET achieved_at=? WHERE id=?", (now_iso(), gid))
+        row = conn.execute("SELECT title FROM goals WHERE id=?", (gid,)).fetchone()
+        return (f"🎯 Achieved: {row['title']} ✓", None)
+
     # --- creates (no id validation needed) ---
     if kind == "create_task":
         title = (act.get("title") or "").strip()
@@ -376,7 +467,8 @@ def apply_action(conn, act, ctx) -> tuple:
         tags = [str(t).lstrip("#") for t in (act.get("tags") or []) if str(t).strip()]
         if not title:
             title = (body.strip().splitlines()[0] if body.strip() else "Note")[:60]
-        note = vault_store.create_note(title=title, body=body, tags=tags)
+        note = vault_store.create_note(title=title, body=body, tags=tags,
+                                       media=ctx.get("media_pointer"))
         tag_str = " ".join("#" + t for t in tags)
         return (f"📝 Note: {note['title']}" + (f" · {tag_str}" if tag_str else ""), None)
 
@@ -388,24 +480,30 @@ def apply_action(conn, act, ctx) -> tuple:
         return ("📝 → today's Journal", None)
 
     if kind == "create_goal":
-        from routes_goals import current_period_start
+        from routes_goals import current_period_start, TIMEFRAMES
         title = (act.get("title") or "").strip()
         if not title:
             return ("❓ What's the goal?", None)
-        period = act.get("period") if act.get("period") in _PERIODS else "week"
-        gkind = act.get("kind") if act.get("kind") in _GOAL_KINDS else "rollup"
-        target = None
-        if gkind == "number":
-            try:
-                target = float(act.get("target"))
-            except (TypeError, ValueError):
-                target = None
+        # Prefer the new `timeframe`; fall back to mapping a legacy `period`.
+        timeframe = act.get("timeframe")
+        if timeframe not in TIMEFRAMES:
+            timeframe = act.get("period") if act.get("period") in _PERIODS else "week"
+        try:
+            target = float(act.get("target"))
+        except (TypeError, ValueError):
+            target = None
+        unit = act.get("unit")
+        unit = unit.strip() or None if isinstance(unit, str) else None
+        end_date = (act.get("end_date") or "").strip() or None if timeframe == "by_date" else None
+        period = "week" if timeframe == "week" else "month"   # legacy CHECK-compatible
+        gkind = "number" if (target is not None or unit) else "rollup"
         with conn:
             conn.execute(
                 "INSERT INTO goals (title, period, period_start, kind, target_num, "
-                "current_num, created) VALUES (?,?,?,?,?,0,?)",
-                (title, period, current_period_start(period), gkind, target, now_iso()))
-        return (f"🎯 Goal ({period}): {title}", None)
+                "current_num, timeframe, end_date, unit, created) VALUES (?,?,?,?,?,0,?,?,?,?)",
+                (title, period, current_period_start(timeframe), gkind, target,
+                 timeframe, end_date, unit, now_iso()))
+        return (f"🎯 Goal ({timeframe}): {title}", None)
 
     if kind == "answer":
         return ((act.get("text") or "").strip() or "🤔 I'm not sure.", None)
@@ -433,20 +531,31 @@ def apply_result(conn, obj, ctx) -> dict:
 
 
 # ── the one entry point ──────────────────────────────────────────────────────-
-def route(conn, message, source: str = "telegram", claude_fn=None) -> dict:
-    """Route ONE message through Claude and act on it. Returns
-    {reply, keyboard, fell_back, applied}. On claude failure/invalid JSON (after one
-    retry) falls back to an #unsorted note and flags fell_back=True."""
-    log_raw(message, source)                                  # safety rail #1
+def route(conn, message, source: str = "telegram", claude_fn=None,
+          image_path: str | None = None) -> dict:
+    """Route ONE message (optionally with an attached image) through Claude and act on
+    it. Returns {reply, keyboard, fell_back, applied}. On claude failure/invalid JSON
+    (after one retry) falls back to an #unsorted note and flags fell_back=True. Every
+    turn — text or photo — is appended to the rolling exchange memory so follow-ups
+    resolve."""
+    mem_repr = _memory_user_repr(message, image_path)
+    log_raw(mem_repr, source)                                 # safety rail #1
     ctx = build_context(conn)
-    prompt = build_prompt(message, ctx)
-    runner = claude_fn or (lambda p: call_claude(p, CLAUDE_TIMEOUT))
+    if image_path:
+        ctx["media_pointer"] = "vault/.media/" + os.path.basename(image_path)
+    prompt = build_prompt(message, ctx, image_path)
+    timeout = CLAUDE_IMAGE_TIMEOUT if image_path else CLAUDE_TIMEOUT
+    runner = claude_fn or (lambda p: call_claude(p, timeout))
     obj = _decide(runner, prompt)
     if obj is None:                                           # safety rail #2
-        capture.route_capture(conn, message, source=source)   # save as #unsorted note
-        return {"reply": FALLBACK_REPLY, "keyboard": None, "fell_back": True,
-                "applied": ["fallback_note"]}
-    return apply_result(conn, obj, ctx)
+        # Preserve the input as an #unsorted note (caption, or a photo marker).
+        capture.route_capture(conn, message or "[photo]", source=source)
+        result = {"reply": FALLBACK_REPLY, "keyboard": None, "fell_back": True,
+                  "applied": ["fallback_note"]}
+    else:
+        result = apply_result(conn, obj, ctx)
+    record_exchange(conn, mem_repr, result.get("reply", ""))
+    return result
 
 
 # ── inline-keyboard Undo (inverse operations) ────────────────────────────────-

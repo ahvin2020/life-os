@@ -9,9 +9,15 @@
       <div class="chead"><h2>Today · {{ today_pretty }}</h2></div>
       {% if page and page.entries %}
         {% for e in page.entries %}
-        <div class="jentry">
-          <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}</div>
-          <p>{{ e.text }}</p>
+        <div class="jentry" data-day="{{ today }}" data-time="{{ e.time }}" data-idx="{{ e.idx }}">
+          <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}
+            <span class="jacts">
+              <button class="jmore" type="button" aria-label="Entry actions">⋯</button>
+              <button class="jact jedit" type="button">Edit</button>
+              <button class="jact jdel" type="button">Delete</button>
+            </span>
+          </div>
+          <p class="jtext">{{ e.text }}</p>
         </div>
         {% endfor %}
       {% elif page and page.raw.strip() %}
@@ -20,7 +26,7 @@
         <div class="empty">No entry yet. Write how the day went — what you did, ate, felt.</div>
       {% endif %}
       <div class="erow" style="margin-top:8px">
-        <textarea id="j-text" data-day="{{ today }}" placeholder="Add a timestamped entry…" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;padding:10px;min-height:70px;resize:vertical"></textarea>
+        <textarea id="j-text" data-day="{{ today }}" placeholder="Add a timestamped entry…" style="flex:1;min-height:70px;resize:vertical"></textarea>
       </div>
       <div class="erow"><span class="spacer" style="flex:1"></span><button class="qgo" id="j-add" type="button">＋ Add entry</button></div>
     </div>
@@ -56,5 +62,4 @@
     </div>
   </div>
 </div>
-<p class="hint">tap a previous day to open &amp; edit its page · plain markdown (vault/journal/{{ today }}.md), one file per day — greppable &amp; Obsidian-compatible</p>
 {% endblock %}

@@ -86,18 +86,17 @@
 <div class="overlay" id="noteoverlay">
   <div class="editor" role="dialog" aria-label="Edit note">
     <div class="ehead">
-      <input id="ed-title" placeholder="Note title">
+      <input id="ed-title" placeholder="Note title" aria-label="Note title">
       <button class="mini" id="ed-pin" type="button">★ pin</button>
       <button class="mini" id="ed-close" type="button">✕</button>
     </div>
     <div class="erow">
-      <input class="txt" id="ed-tags" style="flex:1" placeholder="tags, comma separated (idea, link)">
+      <label class="fld" style="flex:1">tags<input class="txt" id="ed-tags" placeholder="idea, link"></label>
       <span class="saved" id="ed-saved"></span>
     </div>
-    <textarea id="ed-body" placeholder="Write markdown…"></textarea>
+    <textarea id="ed-body" placeholder="Write markdown…" aria-label="Note body"></textarea>
     <div class="erow">
       <button class="mini danger" id="ed-delete" type="button">delete</button>
-      <span class="saved" style="color:var(--muted)">autosaves as you type — a plain markdown file in vault/notes/</span>
     </div>
   </div>
 </div>
@@ -106,7 +105,7 @@
 <div class="overlay" id="taskoverlay">
   <div class="editor" role="dialog" aria-label="Edit task">
     <div class="ehead">
-      <input id="te-title" placeholder="Task title">
+      <input id="te-title" placeholder="Task title" aria-label="Task title">
       <button class="mini" id="te-close" type="button">✕</button>
     </div>
     <div class="erow">
@@ -125,7 +124,7 @@
       <label class="fld">recurrence<input class="txt" id="te-recur" placeholder="daily / weekly:sun / monthly:1"></label>
       <label class="fld">goal<select id="te-goal"><option value="">—</option></select></label>
     </div>
-    <div class="erow"><button class="mini" id="te-plan" type="button">☀ plan for today</button><span class="saved" id="te-saved"></span></div>
+    <div class="erow"><button class="mini" id="te-plan" type="button">☀ Do today</button><span class="saved" id="te-saved"></span></div>
     <div id="te-subs" class="subs" style="margin-left:0"></div>
     <div class="erow"><input class="txt" id="te-subnew" style="flex:1" placeholder="add subtask…"><button class="mini" id="te-subadd" type="button">＋</button></div>
     <div class="erow"><button class="mini danger" id="te-delete" type="button">delete</button><button class="qgo" id="te-save" type="button" style="margin-left:auto">Save</button></div>

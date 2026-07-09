@@ -133,13 +133,22 @@ class Telegram:
 
 
 # ── voice transcription (mlx-whisper, local) ──────────────────────────────────
-_WHISPER_MODEL = "mlx-community/whisper-base-mlx"
+# `medium` + an explicit language, matching the proven youtube-assistant pipeline.
+# Auto-detect on short, accented clips mis-fired (English → Malay) and drifted into
+# repetition loops ("first first first…"); pinning language + condition_on_previous_text
+# fixes both. Both the model and language are settings-overridable (see _handle_voice).
+_WHISPER_MODEL = "mlx-community/whisper-medium-mlx"
+_VOICE_LANGUAGE = "en"
 
 
-def transcribe_wav(wav_path: str) -> str:
-    """Transcribe a wav with mlx-whisper (base). Weights auto-download once."""
+def transcribe_wav(wav_path: str, language: str = _VOICE_LANGUAGE, model: str | None = None) -> str:
+    """Transcribe a wav with mlx-whisper. `language` is passed explicitly (no auto-detect
+    misfire) and condition_on_previous_text=False suppresses repetition-loop
+    hallucinations. Weights auto-download once."""
     import mlx_whisper
-    out = mlx_whisper.transcribe(wav_path, path_or_hf_repo=_WHISPER_MODEL)
+    out = mlx_whisper.transcribe(
+        wav_path, path_or_hf_repo=model or _WHISPER_MODEL,
+        language=language, condition_on_previous_text=False)
     return (out.get("text") or "").strip()
 
 
@@ -261,10 +270,15 @@ def build_digest(conn, day=None, now=None) -> str:
         lines.append("🎯 Goals:")
         for g in goals:
             p = goal_progress(conn, g)
-            if g["kind"] == "number":
-                lines.append(f"  • {g['title']}: {int(p.get('current', 0))}/{int(p.get('target', 0))}")
-            else:
-                lines.append(f"  • {g['title']}: {p.get('done', 0)}/{p.get('total', 0)}")
+            shape = p.get("shape")
+            if shape in ("measure", "both"):
+                unit = (" " + p["unit"]) if p.get("unit") else ""
+                prog = f"{int(p.get('current', 0))}/{int(p.get('target', 0))}{unit}"
+            elif shape == "rollup":
+                prog = f"{p.get('done', 0)}/{p.get('total', 0)}"
+            else:                                   # milestone
+                prog = "✓ achieved" if p.get("achieved") else "(in progress)"
+            lines.append(f"  • {g['title']}: {prog}")
 
     # Journal nudge if yesterday had no entry.
     import vault_store
@@ -435,11 +449,14 @@ def _process_update(conn, tg, allowed, upd, sweep_due_at):
         elif "text" in msg:
             if _handle_text(conn, tg, chat_id, msg["text"]):
                 sweep_due_at = time.time() + SWEEP_DELAY_S
+        elif "photo" in msg or _is_image_document(msg):
+            if _handle_photo(conn, tg, msg, chat_id):
+                sweep_due_at = time.time() + SWEEP_DELAY_S
         elif "voice" in msg or "audio" in msg:
             if _handle_voice(conn, tg, msg, chat_id):
                 sweep_due_at = time.time() + SWEEP_DELAY_S
         else:
-            tg.send_message(chat_id, "I can handle text, links and voice notes for now.")
+            tg.send_message(chat_id, "I can handle text, links, photos and voice notes for now.")
     except Exception as e:
         _log(f"handling update {upd.get('update_id')} failed: {e}")
         if chat_id:
@@ -490,18 +507,68 @@ def _looks_like_url(text: str) -> bool:
     return _u(text)
 
 
+def _is_image_document(msg) -> bool:
+    """True for a document whose MIME type is an image (photos sent 'as file')."""
+    doc = msg.get("document") or {}
+    return str(doc.get("mime_type") or "").startswith("image/")
+
+
+def _handle_photo(conn, tg, msg, chat_id) -> bool:
+    """Download the highest-resolution copy of an inbound image to vault/.media/, then
+    route it (with any caption) through the SAME agentic router as text and voice. The
+    Claude CLI views the file with its Read tool. Returns True if the router fell back
+    (so the caller schedules a sweep)."""
+    import vault_store
+    from db import now_sg
+
+    photo = msg.get("photo")
+    if photo:                                # Telegram sends sizes ascending → last = largest
+        biggest = photo[-1]
+    else:
+        biggest = msg.get("document") or {}
+    file_id = biggest.get("file_id")
+    if not file_id:
+        return False
+    uniq = biggest.get("file_unique_id") or "img"
+    stamp = now_sg().strftime("%Y%m%d-%H%M%S")
+    dest = os.path.join(vault_store.media_dir(), f"{stamp}-{uniq}.jpg")
+
+    try:
+        tg.send_chat_action(chat_id, "typing")
+    except Exception:
+        pass
+    try:
+        fpath = tg.get_file_path(file_id)
+        tg.download_file(fpath, dest)
+    except Exception as e:
+        _log(f"photo download failed: {e}")
+        tg.send_message(chat_id, "⚠️ Couldn't download that image — try again?")
+        return False
+
+    caption = (msg.get("caption") or "").strip()
+    import router
+    out = router.route(conn, caption, source="telegram", image_path=dest)
+    tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+    if out.get("fell_back"):
+        _log(f"router fell back on photo: {caption[:80]}")
+    return bool(out.get("fell_back"))
+
+
 _HELP_TEXT = (
     "👋 I'm your Life OS assistant.\n\n"
     "Send me anything — tasks, thoughts, journal entries, instructions "
-    "('mark X done', 'push Y to next week') or questions. I read your open tasks, "
-    "goals and journal, work out what you mean, and act on it.\n\n"
+    "('mark X done', 'push Y to next week'), questions, voice notes, or a PHOTO. "
+    "I read your open tasks, goals and journal, work out what you mean, and act on it.\n\n"
     "Try:\n"
     "• reply to the sponsor email tomorrow\n"
     "• mark the CPF video done\n"
     "• push the invoice to Friday\n"
-    "• how many videos have I done this week?\n\n"
-    "Undo lives on a button under anything I change. Power-user shortcuts still "
-    "work: t: (task), n: (note), i: (idea), j: (journal), or paste a link.")
+    "• how many videos have I done this week?\n"
+    "• 📷 photo of a bill + \"split this between me, WL and Jim — I paid\"\n\n"
+    "I remember the last few messages, so follow-ups work: reply 'yes' to an offer, "
+    "or 'change it to Friday'. Undo lives on a button under anything I change. "
+    "Power-user shortcuts still work: t: (task), n: (note), i: (idea), j: (journal), "
+    "or paste a link.")
 
 
 def _command_reply(text: str) -> str:
@@ -524,7 +591,9 @@ def _handle_voice(conn, tg, msg, chat_id) -> bool:
         fpath = tg.get_file_path(file_id)
         tg.download_file(fpath, oga)
         oga_to_wav(oga, wav)
-        text = transcribe_wav(wav)
+        lang = _get_setting(conn, "voice_language", _VOICE_LANGUAGE) or _VOICE_LANGUAGE
+        model = _get_setting(conn, "whisper_model", _WHISPER_MODEL) or _WHISPER_MODEL
+        text = transcribe_wav(wav, language=lang, model=model)
     except Exception as e:
         _log(f"voice transcription failed: {e}")
         tg.send_message(chat_id, "⚠️ Could not transcribe that voice note.")

@@ -28,6 +28,14 @@ def _open_task(conn, title, **kw):
         return create_task(conn, title, col=kw.pop("col", "week"), **kw)
 
 
+def _capture_fn(box, obj):
+    """A fake claude_fn that records the prompt it was handed, then returns obj."""
+    def fn(prompt):
+        box.append(prompt)
+        return json.dumps(obj)
+    return fn
+
+
 # ── raw-log safety rail (written BEFORE the claude call) ──────────────────────
 def test_raw_log_always_written(client, tmp_path, monkeypatch):
     logp = tmp_path / "capture_raw.log"
@@ -220,6 +228,107 @@ def test_multi_compound_message(client):
     assert done == 1 and inv is not None
     assert "✓ Done" in out["reply"] and "Send invoice" in out["reply"]
     assert out["applied"] == ["complete_task", "create_task"]
+
+
+# ── photo / image support ─────────────────────────────────────────────────────
+def test_router_receives_image_path_and_caption(client):
+    """A photo turn puts the absolute image path + a Read-tool instruction + the
+    caption into the ONE prompt handed to Claude."""
+    conn = _db()
+    box = []
+    img = "/some/vault/.media/20260709-120000-uABC.jpg"
+    out = router.route(conn, "split this between me, WL and Jim — I paid",
+                       image_path=img,
+                       claude_fn=_capture_fn(box, {"action": "answer", "text": "$51.16 each"}))
+    conn.close()
+    prompt = box[0]
+    assert img in prompt                                        # absolute path passed through
+    assert "Read tool" in prompt                                # told to view it first
+    assert "split this between me, WL and Jim" in prompt        # caption is the instruction
+    assert out["reply"] == "$51.16 each"
+
+
+def test_photo_no_caption_gets_extract_instruction(client):
+    conn = _db()
+    box = []
+    router.route(conn, "", image_path="/v/.media/x.jpg",
+                 claude_fn=_capture_fn(box, {"action": "answer", "text": "ok"}))
+    conn.close()
+    assert "extract whatever is useful from this image" in box[0]
+
+
+def test_media_pointer_on_created_note(client):
+    """A note created from a photo carries a media: frontmatter pointer to vault/.media."""
+    conn = _db()
+    img = "/anything/vault/.media/20260709-120000-uZ.jpg"
+    router.route(conn, "", image_path=img, claude_fn=_fn({
+        "action": "create_note", "title": "Harbour Grill receipt",
+        "tags": ["receipt"], "body": "Total $153.47"}))
+    conn.close()
+    note = [n for n in vault_store.list_notes() if n["title"] == "Harbour Grill receipt"][0]
+    assert note["media"] == "vault/.media/20260709-120000-uZ.jpg"
+    assert vault_store.read_note(note["slug"])["media"] == note["media"]   # round-trips
+
+
+def test_note_without_image_has_no_media_pointer(client):
+    conn = _db()
+    router.route(conn, "plain note", claude_fn=_fn({
+        "action": "create_note", "title": "Plain", "tags": [], "body": "text"}))
+    conn.close()
+    note = [n for n in vault_store.list_notes() if n["title"] == "Plain"][0]
+    assert note["media"] == ""
+
+
+# ── rolling exchange memory (follow-ups: "yes" / "the second one") ────────────-
+def test_followup_exchange_memory_yes_resolves(client):
+    """The prior (Kelvin, bot) turn is replayed into the next prompt so a bare 'yes'
+    after an offer has the offer to resolve against."""
+    conn = _db()
+    # Turn 1: the bot answers the split and offers to create collect-money tasks.
+    router.route(conn, "split the bill 3 ways", claude_fn=_fn({
+        "action": "answer",
+        "text": "$51.16 each. Want me to create two collect-money tasks?"}))
+    # Turn 2: "yes" — the prior offer must be in the context handed to Claude.
+    box = []
+    out = router.route(conn, "yes", claude_fn=_capture_fn(box, {
+        "action": "multi", "actions": [
+            {"action": "create_task", "title": "Collect $51.16 from WL"},
+            {"action": "create_task", "title": "Collect $51.16 from Jim"}]}))
+    conn.close()
+    prompt = box[0]
+    assert "RECENT CONVERSATION" in prompt
+    assert "split the bill 3 ways" in prompt                    # prior user message
+    assert "create two collect-money tasks" in prompt           # prior bot reply
+    assert out["applied"] == ["create_task", "create_task"]     # the "yes" acted
+
+
+def test_exchange_memory_cap_and_persistence(client):
+    """Memory keeps only the last _MEM_MAX_PAIRS turns and survives a fresh connection
+    (persisted in the settings table)."""
+    conn = _db()
+    for i in range(5):
+        router.route(conn, f"message number {i}",
+                     claude_fn=_fn({"action": "answer", "text": f"reply {i}"}))
+    conn.close()
+
+    conn2 = _db()                                               # FRESH connection
+    row = conn2.execute("SELECT value FROM settings WHERE key=?",
+                        (router._MEM_KEY,)).fetchone()
+    pairs = router.load_exchanges(conn2)
+    conn2.close()
+    assert row is not None                                      # persisted, not in-memory
+    assert len(pairs) == router._MEM_MAX_PAIRS == 3             # capped to last 3
+    assert pairs[-1]["u"] == "message number 4"                 # newest kept
+    assert pairs[0]["u"] == "message number 2"                  # oldest dropped
+
+
+def test_exchange_memory_entry_capped(client):
+    conn = _db()
+    router.route(conn, "x" * 5000, claude_fn=_fn({"action": "answer", "text": "y" * 5000}))
+    pairs = router.load_exchanges(conn)
+    conn.close()
+    assert len(pairs[-1]["u"]) <= router._MEM_ENTRY_CAP
+    assert len(pairs[-1]["b"]) <= router._MEM_ENTRY_CAP
 
 
 # ── invalid id → clarify (never mutate the wrong row) ─────────────────────────

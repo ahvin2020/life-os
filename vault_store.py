@@ -50,6 +50,12 @@ def audio_dir() -> str:
     return d
 
 
+def media_dir() -> str:
+    d = os.path.join(VAULT_DIR, ".media")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 # ── slug + frontmatter ────────────────────────────────────────────────────────
 def slugify(title: str) -> str:
     s = re.sub(r"[^\w\s-]", "", (title or "").lower()).strip()
@@ -68,7 +74,7 @@ def _unique_slug(base: str) -> str:
     return slug
 
 
-def _emit_frontmatter(title, tags, created, pinned, audio=None) -> str:
+def _emit_frontmatter(title, tags, created, pinned, audio=None, media=None) -> str:
     tags_str = "[" + ", ".join(tags) + "]"
     out = (
         "---\n"
@@ -79,12 +85,14 @@ def _emit_frontmatter(title, tags, created, pinned, audio=None) -> str:
     )
     if audio:
         out += f"audio: {audio}\n"   # pointer to the original voice recording
+    if media:
+        out += f"media: {media}\n"   # pointer to the source image (photo capture)
     return out + "---\n"
 
 
 def _parse_frontmatter(text: str):
     """Return (meta_dict, body). Tolerates a missing frontmatter block."""
-    meta = {"title": "", "tags": [], "created": "", "pinned": False, "audio": ""}
+    meta = {"title": "", "tags": [], "created": "", "pinned": False, "audio": "", "media": ""}
     if text.startswith("---"):
         parts = text.split("\n")
         # find closing ---
@@ -105,7 +113,7 @@ def _parse_frontmatter(text: str):
                     meta["tags"] = [t.strip().lstrip("#") for t in val.split(",") if t.strip()]
                 elif key == "pinned":
                     meta["pinned"] = val.lower() in ("true", "1", "yes")
-                elif key in ("title", "created", "audio"):
+                elif key in ("title", "created", "audio", "media"):
                     meta[key] = val
             body = "\n".join(parts[end + 1:]).lstrip("\n")
             return meta, body
@@ -141,6 +149,7 @@ def _note_from_path(path: str) -> dict:
         "created": meta["created"],
         "pinned": meta["pinned"],
         "audio": meta.get("audio") or "",
+        "media": meta.get("media") or "",
         "body": body,
         "snippet": snippet,
         "domain": _domain_of(body),
@@ -169,26 +178,28 @@ def read_note(slug: str):
     return _note_from_path(path)
 
 
-def write_note(slug, title, tags, body, pinned, created=None, audio=None) -> dict:
+def write_note(slug, title, tags, body, pinned, created=None, audio=None, media=None) -> dict:
     path = os.path.join(notes_dir(), slug + ".md")
-    if created is None or audio is None:
+    if created is None or audio is None or media is None:
         existing = read_note(slug)
         if created is None:
             created = existing["created"] if existing else now_sg().isoformat(timespec="seconds")
         if audio is None:                       # preserve an existing audio pointer
             audio = existing["audio"] if existing else None
-    content = _emit_frontmatter(title, tags, created, pinned, audio) + (body or "")
+        if media is None:                       # preserve an existing media pointer
+            media = existing["media"] if existing else None
+    content = _emit_frontmatter(title, tags, created, pinned, audio, media) + (body or "")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return _note_from_path(path)
 
 
-def create_note(title, body="", tags=None, pinned=False, audio=None) -> dict:
+def create_note(title, body="", tags=None, pinned=False, audio=None, media=None) -> dict:
     tags = tags or []
     title = (title or "Untitled").strip()
     slug = _unique_slug(title)
     created = now_sg().isoformat(timespec="seconds")
-    return write_note(slug, title, tags, body, pinned, created, audio)
+    return write_note(slug, title, tags, body, pinned, created, audio, media)
 
 
 def delete_note(slug: str) -> bool:
@@ -282,6 +293,65 @@ def save_journal_raw(day: str, raw: str) -> dict:
     with open(path, "w", encoding="utf-8") as f:
         f.write(raw)
     return read_journal(day)
+
+
+def _entry_spans(raw: str):
+    """Line-level spans of every '## HH:MM' section, so we can rewrite ONE entry while
+    leaving every other byte untouched. Returns (lines[keepends], spans) where each
+    span = {time, head (header line idx), end (exclusive line idx of the section)}."""
+    lines = raw.splitlines(keepends=True)
+    heads = []
+    for i, line in enumerate(lines):
+        if _ENTRY_RE.match(line.rstrip("\n")):
+            heads.append((i, _ENTRY_RE.match(line.rstrip("\n")).group(1)))
+    spans = []
+    for j, (i, t) in enumerate(heads):
+        end = heads[j + 1][0] if j + 1 < len(heads) else len(lines)
+        spans.append({"time": t, "head": i, "end": end})
+    return lines, spans
+
+
+def _locate_entry(spans, time: str, occurrence: int):
+    """The span for the `occurrence`-th (0-based) section whose header time == `time`.
+    Disambiguates duplicate HH:MM headings within a day. None if out of range."""
+    matches = [s for s in spans if s["time"] == time]
+    if 0 <= occurrence < len(matches):
+        return matches[occurrence]
+    return None
+
+
+def edit_journal_entry(day: str, time: str, occurrence: int, new_text: str):
+    """Rewrite the body of ONE '## HH:MM' entry in place, preserving its header and
+    every other section byte-for-byte. Returns the refreshed page, or None if the
+    day/entry doesn't exist."""
+    page = read_journal(day)
+    if not page:
+        return None
+    lines, spans = _entry_spans(page["raw"])
+    span = _locate_entry(spans, time, occurrence)
+    if span is None:
+        return None
+    header = lines[span["head"]]
+    if not header.endswith("\n"):
+        header += "\n"
+    body = (new_text or "").strip()
+    new_block = [header] + ([body + "\n"] if body else [])
+    new_lines = lines[:span["head"]] + new_block + lines[span["end"]:]
+    return save_journal_raw(day, "".join(new_lines))
+
+
+def delete_journal_entry(day: str, time: str, occurrence: int):
+    """Remove ONE '## HH:MM' section (header + body) entirely, preserving all others
+    byte-for-byte. Returns the refreshed page, or None if not found."""
+    page = read_journal(day)
+    if not page:
+        return None
+    lines, spans = _entry_spans(page["raw"])
+    span = _locate_entry(spans, time, occurrence)
+    if span is None:
+        return None
+    new_lines = lines[:span["head"]] + lines[span["end"]:]
+    return save_journal_raw(day, "".join(new_lines))
 
 
 def list_journal_days() -> list:
