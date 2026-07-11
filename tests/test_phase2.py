@@ -6,14 +6,14 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import capture_daemon as cd
-import proactive
+from ai import proactive
 import triage.run_triage as rt
-import vault_store
-import web_core
-from capture import create_task, route_capture
-from tasks_core import today_tasks, purge_deleted
-from goals_core import goal_progress, archive_expired_goals, current_period_start
-from db import connect, today_iso, now_iso
+from domain import vault_store
+from core import web_core
+from domain.capture import create_task, route_capture
+from domain.tasks_core import today_tasks, purge_deleted
+from domain.goals_core import goal_progress, archive_expired_goals, current_period_start
+from core.db import connect, today_iso, now_iso
 
 
 def _db():
@@ -158,7 +158,7 @@ def test_triage_three_way_note_and_journal(client):
 def test_daemon_routes_text_through_router(client, monkeypatch):
     """An instruction goes through router.route (ONE claude call); the daemon shows
     a typing indicator and relays the router's reply + inline keyboard verbatim."""
-    import router
+    from ai import router
     conn = _db()
     tg = FakeTelegram()
     monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
@@ -177,7 +177,7 @@ def test_daemon_routes_text_through_router(client, monkeypatch):
 
 def test_daemon_fallback_schedules_sweep(client, monkeypatch):
     """When the router falls back (claude down), the daemon schedules a sweep."""
-    import router
+    from ai import router
     conn = _db()
     tg = FakeTelegram()
     monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
@@ -195,7 +195,7 @@ def test_photo_download_saves_highres_and_routes(client, monkeypatch):
     """A photo message: download the LARGEST size to vault/.media/, show typing, and
     route the caption + image path through the SAME router (one claude call)."""
     import glob
-    import router
+    from ai import router
     conn = _db()
     tg = FakeTelegram()
     seen = {}
@@ -215,7 +215,7 @@ def test_photo_download_saves_highres_and_routes(client, monkeypatch):
     due = cd._process_update(conn, tg, "12345678", upd, None)
     conn.close()
 
-    import vault_store
+    from domain import vault_store
     saved = glob.glob(os.path.join(vault_store.media_dir(), "*-uABC.jpg"))
     assert tg.file_requests == ["biggest"]                      # highest-res size requested
     assert saved and os.path.exists(saved[0])                   # written into vault/.media/
@@ -228,7 +228,7 @@ def test_photo_download_saves_highres_and_routes(client, monkeypatch):
 
 def test_image_document_also_routes_as_photo(client, monkeypatch):
     """An image sent 'as file' (document, image/* mime) is treated like a photo."""
-    import router
+    from ai import router
     conn = _db()
     tg = FakeTelegram()
     seen = {}
@@ -260,7 +260,7 @@ def test_non_image_document_not_treated_as_photo(client):
 
 # ── query mode: intent detection + handlers ───────────────────────────────────
 def test_query_intent_detection():
-    import queries
+    from domain import queries
     # clear queries
     assert queries.is_query("what are my todos")
     assert queries.is_query("what's on today")
@@ -288,7 +288,7 @@ def test_query_handlers_output(client):
         conn.execute(
             "INSERT INTO goals (title, period, period_start, kind, target_num, current_num, created) "
             "VALUES ('2 videos','month','2026-07-01','rollup',NULL,0,?)", (now_iso(),))
-    import queries
+    from domain import queries
     todos = queries.answer_query(conn, "what are my todos")
     assert "Ship the newsletter" in todos and "❗" in todos      # high-priority marker
     overdue = queries.answer_query(conn, "any overdue?")
@@ -307,7 +307,7 @@ def test_query_handlers_output(client):
 def test_open_question_goes_to_router_answer(client, monkeypatch):
     """An open question with no deterministic handler goes to the router, whose
     `answer` action replies inline — the SINGLE claude entry point (no separate Q&A)."""
-    import router
+    from ai import router
     conn = _db()
     tg = FakeTelegram()
     monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {

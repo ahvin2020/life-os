@@ -8,10 +8,10 @@ and the raw-log safety rail. The model is always mocked (claude_fn) — no real 
 import json
 import os
 
-import router
-import vault_store
-from capture import create_task
-from db import connect, today_iso, now_iso
+from ai import router
+from domain import vault_store
+from domain.capture import create_task
+from core.db import connect, today_iso, now_iso
 
 
 def _db():
@@ -40,7 +40,7 @@ def _capture_fn(box, obj):
 def test_call_claude_disables_all_tools_by_default(monkeypatch):
     """The single choke point runs `claude -p --tools ""` — no Bash/Write/Edit/Read —
     so no injected instruction from either AI surface can act on the machine."""
-    import claude_cli
+    from ai import claude_cli
     seen = {}
 
     class _P:
@@ -58,7 +58,7 @@ def test_call_claude_disables_all_tools_by_default(monkeypatch):
 
 
 def test_call_claude_grants_named_tool_only_when_asked(monkeypatch):
-    import claude_cli
+    from ai import claude_cli
     seen = {}
 
     class _P:
@@ -180,7 +180,7 @@ def test_complete_task_carries_undo(client):
 def test_uncomplete_task(client):
     conn = _db()
     tid = _open_task(conn, "Weekly review")
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     with conn:
         complete_task(conn, tid, True)                          # now done + completed today
     out = router.route(conn, "actually reopen the weekly review",
@@ -539,7 +539,7 @@ def test_fallback_on_invalid_json_after_retry(client):
 # ── undo inverse operations ───────────────────────────────────────────────────
 def test_handle_callback_inverses(client):
     conn = _db()
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     tid = _open_task(conn, "Undo target")
 
     # complete → undo reopens
@@ -600,7 +600,7 @@ def test_recurring_complete_undo_removes_respawn(client):
 def test_daemon_process_callback(client):
     import capture_daemon as cd
     from tests.test_phase2 import FakeTelegram
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     conn = _db()
     tid = _open_task(conn, "Callback task")
     with conn:

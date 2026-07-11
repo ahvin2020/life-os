@@ -19,13 +19,13 @@ from flask import Blueprint, render_template, request, jsonify
 
 from datetime import timedelta
 
-from web_core import db, respond, health_status
-from db import (get_setting, set_setting, delete_setting, machine_tz_name,
+from core.web_core import db, respond, health_status
+from core.db import (get_setting, set_setting, delete_setting, machine_tz_name,
                 reload_tz, now_sg, get_tz)
 
 bp = Blueprint("settings", __name__)
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # A short, curated pick-list for the timezone <select> (phone-first: no 600-row
 # datalist). The effective value and the machine zone are always injected so the

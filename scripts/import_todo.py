@@ -30,7 +30,7 @@ from import_common import (  # noqa: E402
     DATA_DIR, LEDGER_PATH, _ORDER, _HEADINGS,
     apply_item, load_ledger, save_ledger, ledger_key,
 )
-from claude_cli import call_claude  # noqa: E402  (import_common put repo root on sys.path)
+from ai.claude_cli import call_claude  # noqa: E402  (import_common put repo root on sys.path)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TODO_PATH = "/Users/kelvintan/Desktop/todo.txt"
@@ -305,7 +305,7 @@ def build_preview(items: list[dict], results: list[dict], *, degraded: bool) -> 
 
 # ── 4. APPLY ───────────────────────────────────────────────────────────────────
 def apply_all(items: list[dict], results: list[dict], *, verbose: bool = True) -> dict:
-    from db import connect
+    from core.db import connect
     conn = connect()
     ledger = load_ledger()
     stats = {"created": 0, "already": 0, "skipped": 0}

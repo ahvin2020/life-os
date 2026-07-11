@@ -3,14 +3,14 @@
 
 Blueprint-free (like tasks_core): period math, progress derivation + formatting,
 and the archive/purge sweeps live here so a bot daemon can import them without
-Flask. `routes_goals.py` re-exports these for back-compat.
+Flask. `routes/goals.py` re-exports these for back-compat.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from db import now_iso, days_ago_iso, today_iso
+from core.db import now_iso, days_ago_iso, today_iso
 
 TIMEFRAMES = ("week", "month", "quarter", "year", "by_date", "ongoing")
 

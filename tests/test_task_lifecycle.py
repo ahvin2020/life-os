@@ -22,9 +22,9 @@ import os
 import re
 from datetime import date, timedelta
 
-import db_init  # noqa: F401  (ensures path set up by conftest import order)
-from capture import create_task
-from db import connect, today_iso
+from core import db_init  # noqa: F401  (ensures path set up by conftest import order)
+from domain.capture import create_task
+from core.db import connect, today_iso
 
 XHR = {"X-Requested-With": "XMLHttpRequest"}
 
@@ -149,14 +149,14 @@ def test_all_surfaces_agree_on_today(client):
     conn = _db()
     expected = _mixture(conn)
 
-    from tasks_core import today_tasks
+    from domain.tasks_core import today_tasks
     assert {t["title"] for t in today_tasks(conn)} == expected, "today_tasks drifted"
 
-    from proactive import _digest_tasks
+    from ai.proactive import _digest_tasks
     assert {r["title"] for r in _digest_tasks(conn, today_iso())} == expected, \
         "morning digest drifted"
 
-    from proactive import build_brief_context
+    from ai.proactive import build_brief_context
     assert {t["title"] for t in build_brief_context(conn, day=today_iso())["tasks"]} \
         == expected, "AI brief drifted"
     conn.close()
@@ -294,7 +294,7 @@ def test_parent_delete_and_restore_cascade_to_subtasks(client):
 
 # ── class 6: recurrence ───────────────────────────────────────────────────────
 def test_next_due_date_rules(client):
-    from tasks_core import next_due_date
+    from domain.tasks_core import next_due_date
     fri = "2026-07-10"                                   # a Friday
     assert next_due_date("daily", fri) == "2026-07-11"
     assert next_due_date("weekly:mon", fri) == "2026-07-13"
@@ -344,7 +344,7 @@ def test_done_archives_after_7_days_and_leaves_every_surface(client):
     assert "Old glory" not in home_lists
     conn = _db()
     row = conn.execute("SELECT archived_at FROM tasks WHERE id=?", (tid,)).fetchone()
-    from proactive import _digest_tasks
+    from ai.proactive import _digest_tasks
     assert "Old glory" not in {r["title"] for r in _digest_tasks(conn, today_iso())}
     conn.close()
     assert row is not None and row["archived_at"], "archived rows stay queryable"
@@ -388,7 +388,7 @@ def test_reorder_persists_exact_order(client):
 def test_captured_task_lands_at_the_top_of_week(client):
     """Bot/composer captures surface at the TOP of This week — "I just sent
     this" must be the first thing seen, not buried under the column."""
-    from capture import route_capture
+    from domain.capture import route_capture
     conn = _db()
     with conn:
         create_task(conn, "old week 1", col="week")

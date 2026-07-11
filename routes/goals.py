@@ -14,12 +14,12 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request, jsonify
 
-from web_core import db, respond, today_iso, is_ajax
-from db import now_iso
+from core.web_core import db, respond, today_iso, is_ajax
+from core.db import now_iso
 
 # Pure goal-domain helpers now live in goals_core (Blueprint-free so the bot
 # daemon / proactive AI can import them). Re-exported here for back-compat.
-from goals_core import (
+from domain.goals_core import (
     TIMEFRAMES, current_period_start, goal_progress, format_goal_progress,
     archive_expired_goals, purge_deleted_goals,
 )

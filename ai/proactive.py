@@ -22,16 +22,16 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
-import vault_store
-from claude_cli import call_claude
-from db import now_sg, today_iso
-from goals_core import current_period_start, goal_progress, format_goal_progress
+from domain import vault_store
+from ai.claude_cli import call_claude
+from core.db import now_sg, today_iso
+from domain.goals_core import current_period_start, goal_progress, format_goal_progress
 
 STALE_DAYS = 30
 
 
 def _stale_days(conn) -> int:
-    from db import get_setting
+    from core.db import get_setting
     try:
         return int(get_setting(conn, "stale_backlog_days", STALE_DAYS))
     except (TypeError, ValueError):
@@ -103,7 +103,7 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
     day = day or today_iso()
     now = now or now_sg()
 
-    from tasks_core import today_task_rows
+    from domain.tasks_core import today_task_rows
     rows = today_task_rows(conn, day)
     tasks = []
     for r in rows:
@@ -224,13 +224,13 @@ def brief_prompt(ctx: dict, backlog_summary: str | None = None) -> str:
 # ── deterministic morning digest (the brief's fallback body) ──────────────────
 def _digest_tasks(conn, today):
     """Open tasks that matter today: due today, overdue, or ☀ planned."""
-    from tasks_core import today_task_rows
+    from domain.tasks_core import today_task_rows
     return today_task_rows(conn, today)
 
 
 def _stale_backlog(conn, today, days=None):
     """Backlog tasks untouched for `days`+ (the Sunday do-or-delete nudge)."""
-    from db import get_setting
+    from core.db import get_setting
     if days is None:
         try:
             days = int(get_setting(conn, "stale_backlog_days", "30"))

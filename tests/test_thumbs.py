@@ -1,6 +1,6 @@
 """Thumbnail classification + negative-cache logic (offline, deterministic)."""
 
-import thumbs
+from domain import thumbs
 
 
 def test_youtube_id_forms():

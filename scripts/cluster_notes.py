@@ -31,8 +31,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import vault_store
-from claude_cli import call_claude
+from domain import vault_store
+from ai.claude_cli import call_claude
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_PATH = os.path.join(_ROOT, "data", "cluster_cache.json")

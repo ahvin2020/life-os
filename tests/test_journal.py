@@ -4,8 +4,8 @@ the Undo restore path. Backend/vault_store + route level."""
 
 import os
 
-import vault_store
-from db import connect
+from domain import vault_store
+from core.db import connect
 
 DAY = "2026-07-09"
 RAW = (

@@ -21,7 +21,7 @@ import re
 import time
 import urllib.request
 
-import vault_store
+from domain import vault_store
 
 # The crawler UA is the whole trick: a browser UA gets Instagram's login-walled JS shell
 # with no og:image; facebookexternalhit gets the real Open Graph tags (verified 2026-07-10).

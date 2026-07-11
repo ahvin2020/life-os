@@ -19,9 +19,9 @@ import re
 from datetime import datetime
 from urllib.parse import urlparse
 
-from db import get_tz, now_sg
+from core.db import get_tz, now_sg
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Override the whole vault location for tests via LIFEOS_VAULT_DIR.
 VAULT_DIR = os.environ.get("LIFEOS_VAULT_DIR") or os.path.join(_ROOT, "vault")
 # profile.md is the distilled triage/routing context every `claude -p` surface injects.

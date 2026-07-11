@@ -12,11 +12,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import capture_daemon as cd
-import proactive
-import router
-import vault_store
-from capture import create_task
-from db import connect, now_iso, today_iso
+from ai import proactive
+from ai import router
+from domain import vault_store
+from domain.capture import create_task
+from core.db import connect, now_iso, today_iso
 
 TZ = ZoneInfo("Asia/Singapore")
 
@@ -362,7 +362,7 @@ def test_digest_does_not_weave_backlog(client, monkeypatch):
 
 def test_scheduled_backlog_triage_day_time_and_once(client, monkeypatch):
     """The independent triage fires on its day at/after its time, once per day."""
-    from db import delete_setting
+    from core.db import delete_setting
     monkeypatch.setattr(proactive, "backlog_triage", lambda c: "TRIAGE-MSG")
     conn = _db()
     tg = FakeTelegram()

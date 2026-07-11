@@ -1,6 +1,6 @@
 """Notes archive lifecycle + on-this-day resurfacing."""
 
-import vault_store
+from domain import vault_store
 
 
 def test_archive_roundtrip_and_preserves_fields():

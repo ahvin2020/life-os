@@ -4,10 +4,10 @@ week_since staleness clock (schema v5), and drag-to-Done completing properly."""
 import os
 from datetime import date, timedelta
 
-import db_init  # noqa: F401  (ensures path set up by conftest import order)
-from capture import create_task
-from tasks_core import complete_task, today_tasks, week_tasks
-from db import connect, today_iso, now_iso
+from core import db_init  # noqa: F401  (ensures path set up by conftest import order)
+from domain.capture import create_task
+from domain.tasks_core import complete_task, today_tasks, week_tasks
+from core.db import connect, today_iso, now_iso
 
 
 def _db():

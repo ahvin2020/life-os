@@ -1,22 +1,21 @@
 """Tasks: kanban board, subtasks with progress ring, recurrence, planning, drag order.
 
-Also the home of the pure task helpers (task_dict, subtask_progress, complete_task,
-archive_old_done, today_tasks, next_due_date) that routes_main imports — keeping the
-Today view and the Tasks board reading the same logic.
+The pure task helpers (task_dict, subtask_progress, complete_task, archive_old_done,
+today_tasks, next_due_date) live in domain/tasks_core; routes/main imports them there —
+keeping the Today view and the Tasks board reading the same logic.
 """
 
 from __future__ import annotations
 
 from flask import Blueprint, render_template, request, jsonify
 
-from web_core import db, respond, today_iso
-from db import now_iso
-from capture import create_task
+from core.web_core import db, respond, today_iso
+from core.db import now_iso
+from domain.capture import create_task
 
-# Pure task-domain helpers now live in tasks_core (Blueprint-free so the bot
-# daemon / proactive AI can import them). Re-exported here for back-compat:
-# existing `from routes_tasks import today_tasks` call sites still resolve.
-from tasks_core import (
+# Pure task-domain helpers live in domain/tasks_core (Blueprint-free so the bot
+# daemon / proactive AI can import them). Re-exported here for back-compat.
+from domain.tasks_core import (
     _WEEKDAYS, _row_to_task, _WEEK_SINCE_SQL, set_task_col, _progress,
     subtask_progress, task_dict, next_due_date, _respawn_recurring, complete_task,
     _reconcile_parent, _setting_days, archive_old_done, purge_deleted, today_tasks,

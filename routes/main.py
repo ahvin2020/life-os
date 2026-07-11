@@ -8,14 +8,14 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, jsonify
 
-from web_core import db, today_iso
-from db import now_sg
-from capture import (route_capture, convert_note_to_task, convert_task_to_note,
+from core.web_core import db, today_iso
+from core.db import now_sg
+from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal,
                      imported_task_ids)
-from tasks_core import today_tasks, week_tasks, day_score, archive_old_done
-from goals_core import goal_progress
-import vault_store
+from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done
+from domain.goals_core import goal_progress
+from domain import vault_store
 
 bp = Blueprint("main", __name__)
 

@@ -30,14 +30,14 @@ def client():
     if os.path.isdir(os.environ["LIFEOS_VAULT_DIR"]):
         shutil.rmtree(os.environ["LIFEOS_VAULT_DIR"])
 
-    import db_init
-    import web_core
+    from core import db_init
+    from core import web_core
     web_core._DB_PATH = os.environ["LIFEOS_DB_PATH"]
     db_init.init_db(os.environ["LIFEOS_DB_PATH"])
 
     # register blueprints once
-    import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings
-    for mod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings):
+    from routes import main, tasks, notes, journal, goals, settings
+    for mod in (main, tasks, notes, journal, goals, settings):
         if mod.bp.name not in web_core.app.blueprints:
             web_core.app.register_blueprint(mod.bp)
 

@@ -7,11 +7,11 @@ Each test reproduces a distinct backend defect and fails on the pre-fix code.
 import os
 from datetime import date, timedelta
 
-import db_init  # noqa: F401  (path set up by conftest import order)
-from capture import create_task
-from tasks_core import complete_task
-from routes_journal import today_so_far
-from db import connect, today_iso, now_iso
+from core import db_init  # noqa: F401  (path set up by conftest import order)
+from domain.capture import create_task
+from domain.tasks_core import complete_task
+from routes.journal import today_so_far
+from core.db import connect, today_iso, now_iso
 
 _WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -117,7 +117,7 @@ def test_voice_handler_cleans_tmpdir(client, monkeypatch):
     monkeypatch.setattr(cd, "transcribe_wav", lambda *a, **k: "buy milk tomorrow")
     monkeypatch.setattr(cd, "_preserve_audio", lambda p: None)
 
-    import router
+    from ai import router
     monkeypatch.setattr(router, "route",
                         lambda *a, **k: {"reply": "ok", "keyboard": None, "fell_back": False})
 

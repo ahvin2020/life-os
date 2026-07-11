@@ -51,7 +51,7 @@ nightly `sqlite3 .backup` into the synced tree.
 `capture_daemon.py` long-polls Telegram and accepts messages only from one allowed
 user id. **Just send it anything** — plain text, a voice note, or a photo:
 - **It acts, not just files.** Every unprefixed message goes to one `claude -p` router
-  (`router.py`) that reads your live tasks/goals and *does* things: "mark the CPF video
+  (`ai/router.py`) that reads your live tasks/goals and *does* things: "mark the CPF video
   done", "push the invoice to Friday", "add a subtask to the reel", "log that I skipped
   the gym". Ids are validated against context; deletes are soft with an inline **Undo**
   button; it remembers the last few turns so "yes" / "the second one" resolve.
@@ -65,7 +65,7 @@ user id. **Just send it anything** — plain text, a voice note, or a photo:
   `triage/run_triage.py` survives only as a `--sweep` safety net for any `#unsorted`
   leftovers.
 
-## Proactive AI (`proactive.py`)
+## Proactive AI (`ai/proactive.py`)
 Scheduled surfaces, each a reasoned `claude -p` call with a deterministic fallback so a
 send is never dropped:
 - **Morning brief** at `settings.digest_hour` (07:00 default) — names the single most

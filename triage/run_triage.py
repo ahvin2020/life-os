@@ -99,22 +99,22 @@ def call_claude(prompt: str, timeout: int = 180) -> str:
     binary via claude_cli (absolute path) so it works under launchd's minimal PATH —
     the bug that left #unsorted notes stuck until a manual sweep. Shared by triage and
     the read-only Q&A (which passes a tighter timeout)."""
-    from claude_cli import call_claude as _call
+    from ai.claude_cli import call_claude as _call
     return _call(prompt, timeout=timeout)
 
 
 def parse_decisions(raw: str) -> list:
     """Extract the JSON array of decisions from Claude's output (tolerates fences/prose)."""
-    from claude_cli import extract_json
+    from ai.claude_cli import extract_json
     return extract_json(raw, "array") or []
 
 
 def apply_decisions(conn, decisions: list) -> list:
     """Apply triage decisions via the shared capture helpers. Returns human strings
     describing what actually changed (for the Telegram reply)."""
-    import capture
-    import vault_store
-    from db import today_iso
+    from domain import capture
+    from domain import vault_store
+    from core.db import today_iso
 
     applied = []
     for d in decisions:
@@ -150,8 +150,8 @@ def apply_decisions(conn, decisions: list) -> list:
 def run(conn=None, claude_fn=None) -> list:
     """Gather #unsorted notes → prompt → claude → apply. Returns applied-change strings.
     `claude_fn` lets tests inject a fake model. Idempotent; safe to call repeatedly."""
-    import capture
-    from db import connect, now_iso
+    from domain import capture
+    from core.db import connect, now_iso
 
     ensure_profile()
     own_conn = conn is None
@@ -201,7 +201,7 @@ def main() -> int:
 
 
 def _has_claude() -> bool:
-    from claude_cli import has_claude
+    from ai.claude_cli import has_claude
     return has_claude()
 
 

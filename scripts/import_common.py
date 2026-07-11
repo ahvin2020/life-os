@@ -36,9 +36,9 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from db import now_iso, today_iso  # noqa: E402
-import vault_store  # noqa: E402
-from capture import create_task  # noqa: E402
+from core.db import now_iso, today_iso  # noqa: E402
+from domain import vault_store  # noqa: E402
+from domain.capture import create_task  # noqa: E402
 
 DATA_DIR = os.path.join(_REPO_ROOT, "data")
 LEDGER_PATH = os.path.join(DATA_DIR, "import_ledger.json")
@@ -119,7 +119,7 @@ def apply_item(conn, raw: str, result: dict, ledger: dict, *, role: str = "") ->
         body = result.get("body") if result.get("body") is not None else raw
         # Going-forward URL dedupe: a re-shared #link URL touches the existing note
         # instead of minting a twin (normalised, so utm/igsh tails don't fool it).
-        from capture import find_link_note_by_url, first_url
+        from domain.capture import find_link_note_by_url, first_url
         url = first_url(body)
         if "link" in tags and url:
             dup = find_link_note_by_url(url)

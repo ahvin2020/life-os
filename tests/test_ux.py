@@ -5,9 +5,9 @@ lazy New-task flow's server support."""
 import os
 from datetime import date, timedelta
 
-import db_init  # noqa: F401  (ensures path set up by conftest import order)
-from capture import create_task
-from db import connect, today_iso, now_iso
+from core import db_init  # noqa: F401  (ensures path set up by conftest import order)
+from domain.capture import create_task
+from core.db import connect, today_iso, now_iso
 
 
 def _db():
@@ -20,7 +20,7 @@ def _days_ago_iso(n):
 
 # ── sticky-today drift: the 07:00 surfaces must agree with the Today page ─────
 def test_digest_includes_rolled_over_planned_task(client):
-    from proactive import _digest_tasks, build_digest
+    from ai.proactive import _digest_tasks, build_digest
     conn = _db()
     with conn:
         tid = create_task(conn, "Rolled-over plan", col="week")
@@ -33,7 +33,7 @@ def test_digest_includes_rolled_over_planned_task(client):
 
 
 def test_brief_context_includes_rolled_over_planned_task(client):
-    from proactive import build_brief_context
+    from ai.proactive import build_brief_context
     conn = _db()
     with conn:
         tid = create_task(conn, "Sticky brief task", col="backlog")
@@ -45,7 +45,7 @@ def test_brief_context_includes_rolled_over_planned_task(client):
 
 
 def test_bot_task_line_badges_rolled_over_plan(client):
-    from queries import _task_line
+    from domain.queries import _task_line
     today = today_iso()
     line = _task_line({"title": "X", "planned_on": _days_ago_iso(1)}, today)
     assert "☀" in line
@@ -74,7 +74,7 @@ def test_editor_col_done_runs_completion(client):
 
 
 def test_editor_col_out_of_done_uncompletes(client):
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     conn = _db()
     with conn:
         tid = create_task(conn, "Editor reopen", col="week")
@@ -154,7 +154,7 @@ def test_task_new_accepts_planned_on(client):
 
 # ── ☀ on a done task = reopen + plan (no struck-through zombie on Today) ──────
 def test_plan_on_done_task_reopens_it(client):
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     conn = _db()
     with conn:
         tid = create_task(conn, "Do it again", col="week")
@@ -174,7 +174,7 @@ def test_plan_on_done_task_reopens_it(client):
 
 # ── router plan undo restores a prior rolled-over plan ────────────────────────
 def test_router_plan_undo_restores_previous_plan(client):
-    from router import handle_callback
+    from ai.router import handle_callback
     prev = _days_ago_iso(2)
     conn = _db()
     with conn:
@@ -191,7 +191,7 @@ def test_router_plan_undo_restores_previous_plan(client):
 
 # ── signal-to-noise pass (2026-07-10): quiet Today panel + compact due labels ──
 def test_due_label_is_relative_and_compact(client):
-    from web_core import _due_label
+    from core.web_core import _due_label
     def day(n):                                   # n days from today
         return (date.fromisoformat(today_iso()) + timedelta(days=n)).isoformat()
     assert _due_label(day(0)) == "today"
@@ -245,7 +245,7 @@ def test_done_board_card_has_no_lit_pill_and_no_empty_meta_row(client):
     """A done card's plan/due are history: the pill must read as the reopen action
     ("Do today", hover-revealed), never a lit amber badge, and the meta row must
     collapse (ghost) instead of leaving a blank band under the struck title."""
-    from tasks_core import complete_task
+    from domain.tasks_core import complete_task
     conn = _db()
     with conn:
         tid = create_task(conn, "Wrapped up", col="week",

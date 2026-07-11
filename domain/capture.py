@@ -18,8 +18,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, quote
 
 import requests
 
-from db import now_iso, today_iso
-import vault_store
+from core.db import now_iso, today_iso
+from domain import vault_store
 
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _IDEA_DOMAINS = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
@@ -31,7 +31,7 @@ _STRIP_PARAMS = {
     "igsh", "igshid", "fbclid", "gclid", "si", "feature", "ref", "ref_src",
 }
 
-_LEDGER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+_LEDGER_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", "import_ledger.json")
 
 
@@ -367,7 +367,7 @@ def _enrich_prompt(url: str, meta: dict, words: str, profile: str) -> str:
 
 
 def _parse_enrichment(raw: str) -> dict | None:
-    from claude_cli import extract_json
+    from ai.claude_cli import extract_json
     data = extract_json(raw, "object")
     if data is None:
         return None
@@ -380,7 +380,7 @@ def _parse_enrichment(raw: str) -> dict | None:
 
 
 def _default_claude(prompt: str) -> str:
-    from claude_cli import call_claude
+    from ai.claude_cli import call_claude
     return call_claude(prompt, timeout=45)
 
 

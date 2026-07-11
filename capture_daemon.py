@@ -86,24 +86,24 @@ def _safety_log_raw(msg) -> None:
 
 # ── settings helpers (offset persistence, heartbeats, digest bookkeeping) ─────
 # Promoted to db.py so web + daemon share one accessor; names kept for call sites.
-from db import get_setting as _get_setting, set_setting as _set_setting
+from core.db import get_setting as _get_setting, set_setting as _set_setting
 
 
 def _stamp_heartbeat(conn):
-    from db import now_iso
+    from core.db import now_iso
     _set_setting(conn, "capture_last_ran", now_iso())
 
 
 # ── Telegram API ──────────────────────────────────────────────────────────────
 # The Telegram HTTP client lives in telegram_api.py now.
-from telegram_api import Telegram
+from ai.telegram_api import Telegram
 
 # ── voice transcription (mlx-whisper, local) ──────────────────────────────────
 # The pure transcode/transcribe primitives live in voice.py. `route_voice` and
 # `_handle_voice` (which log + touch the vault + route) stay here. The constants
 # are re-imported so `_handle_voice`'s settings-defaults and tests that monkeypatch
 # `capture_daemon.oga_to_wav` / `.transcribe_wav` keep resolving here.
-from voice import transcribe_wav, oga_to_wav, _WHISPER_MODEL, _VOICE_LANGUAGE
+from ai.voice import transcribe_wav, oga_to_wav, _WHISPER_MODEL, _VOICE_LANGUAGE
 
 
 _SPOKEN_TASK = ("task ", "todo ", "to-do ", "to do ")
@@ -115,8 +115,8 @@ def route_voice(conn, text: str, oga_path: str | None):
     """File a transcribed voice note. A leading spoken keyword maps to task/journal;
     otherwise it lands as an #unsorted note (triage will refine). The original .oga
     is kept in vault/.audio/<slug>.oga and pointed at from the note frontmatter."""
-    from capture import route_capture, _strip_prefix
-    import vault_store
+    from domain.capture import route_capture, _strip_prefix
+    from domain import vault_store
 
     low = text.lower().lstrip()
     if low.startswith(_SPOKEN_TASK):
@@ -171,8 +171,8 @@ def maybe_send_digest(conn, tg, chat_id, now=None) -> bool:
     """Send the AI morning brief once per day at/after digest_hour (default 7). On
     Sundays a fresh backlog triage is woven into the brief. Returns True if sent.
     proactive.build_digest remains the deterministic fallback inside proactive."""
-    from db import today_iso, now_sg
-    import proactive
+    from core.db import today_iso, now_sg
+    from ai import proactive
     if _get_setting(conn, "brief_enabled", "1") == "0":
         return False
     now = now or now_sg()
@@ -206,8 +206,8 @@ def _parse_hhmm(val, default_h, default_m):
 def maybe_send_reflection(conn, tg, chat_id, now=None) -> bool:
     """Send the evening journal reflection once per day at/after reflection_hour
     (default 21:30). Returns True if sent."""
-    from db import today_iso, now_sg
-    import proactive
+    from core.db import today_iso, now_sg
+    from ai import proactive
     if _get_setting(conn, "reflection_enabled", "1") == "0":
         return False
     now = now or now_sg()
@@ -231,8 +231,8 @@ def maybe_send_backlog_triage(conn, tg, chat_id, now=None) -> bool:
     """Send the Do/Defer/Delete backlog triage once on its scheduled day at/after its
     time (settings triage_day + triage_time; default Sunday 09:00). Independent of the
     morning brief. On-demand triage ("triage my backlog") still works separately."""
-    from db import today_iso, now_sg
-    import proactive
+    from core.db import today_iso, now_sg
+    from ai import proactive
     if _get_setting(conn, "triage_enabled", "1") == "0":
         return False
     now = now or now_sg()
@@ -278,7 +278,7 @@ def main() -> int:
         return 0
     allowed = str(os.environ.get("TELEGRAM_ALLOWED_USER_ID") or "")
 
-    from db import connect
+    from core.db import connect
     conn = connect()
     tg = Telegram(token)
 
@@ -342,7 +342,7 @@ def main() -> int:
 def maybe_daily_sweep(conn, tg, chat_id) -> bool:
     """Run the #unsorted sweep at most once per day (a floor under the on-fallback
     sweep, so leftovers never rot). Returns True if it ran."""
-    from db import today_iso
+    from core.db import today_iso
     today = today_iso()
     if _get_setting(conn, "sweep_last_day") == today:
         return False
@@ -353,7 +353,7 @@ def maybe_daily_sweep(conn, tg, chat_id) -> bool:
 
 
 def capture_has_unsorted() -> bool:
-    from capture import list_unsorted_notes
+    from domain.capture import list_unsorted_notes
     return bool(list_unsorted_notes())
 
 
@@ -369,7 +369,7 @@ def _process_callback(conn, tg, allowed, upd):
     chat_id = (msg.get("chat") or {}).get("id")
     message_id = msg.get("message_id")
     try:
-        import router
+        from ai import router
         result = router.handle_callback(conn, data)
     except Exception as e:
         _log(f"callback {data!r} failed: {e}")
@@ -426,7 +426,7 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
     # Fast path 1: prefix shortcuts → deterministic capture, no Claude. (Prefix wins over
     # URL detection, so `n: <url>` files a plain note exactly as before.)
     if low.startswith(("t:", "n:", "i:", "j:")):
-        from capture import route_capture
+        from domain.capture import route_capture
         result = route_capture(conn, text, source="telegram")
         tg.send_message(chat_id, format_reply(result))
         return False
@@ -437,7 +437,7 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
         return False
 
     # Fast path 2: unambiguous list questions → instant deterministic answer, no Claude.
-    from queries import is_query, answer_query
+    from domain.queries import is_query, answer_query
     if is_query(text):
         ans = answer_query(conn, text)
         if ans is not None:
@@ -446,7 +446,7 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
 
     # Fast path 3: an explicit backlog-triage request → run backlog intelligence and
     # reply, skipping the router (its only job would be to decide to run this anyway).
-    import proactive
+    from ai import proactive
     if proactive.is_backlog_triage_request(text):
         try:
             tg.send_chat_action(chat_id, "typing")
@@ -457,7 +457,7 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
 
     # The agentic router — the ONE Claude entry point. Acts on instructions,
     # answers open questions, files captures, all in a single call.
-    import router
+    from ai import router
     try:
         tg.send_chat_action(chat_id, "typing")
     except Exception:
@@ -470,7 +470,7 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
 
 
 def _looks_like_url(text: str) -> bool:
-    from capture import _looks_like_url as _u
+    from domain.capture import _looks_like_url as _u
     return _u(text)
 
 
@@ -478,7 +478,7 @@ def format_link_reply(note: dict, summary: str = "") -> str:
     """Rich link confirmation: enriched title, one-line why-it-matters, tags (minus the
     bare 'link' plumbing tag), and the URL LAST on its own line so Telegram renders a
     preview."""
-    import capture
+    from domain import capture
     title = (note.get("title") or "").strip() or "link"
     lines = [f"📎 {title}"]
     if summary:
@@ -498,7 +498,7 @@ def _handle_link(conn, tg, chat_id, text) -> None:
     degrades to a plain 'Saved: <title>' — the ack is never left dangling. The save
     itself runs on this (main) thread; only the slow claude enrichment is offloaded, and
     it touches vault files + Telegram only (no DB), matching capture.schedule_enrichment."""
-    import capture
+    from domain import capture
 
     sent = tg.send_message(chat_id, "📎 Saved — reading it…")
     message_id = ((sent or {}).get("result") or {}).get("message_id")
@@ -543,8 +543,8 @@ def _handle_photo(conn, tg, msg, chat_id) -> bool:
     route it (with any caption) through the SAME agentic router as text and voice. The
     Claude CLI views the file with its Read tool. Returns True if the router fell back
     (so the caller schedules a sweep)."""
-    import vault_store
-    from db import now_sg
+    from domain import vault_store
+    from core.db import now_sg
 
     photo = msg.get("photo")
     if photo:                                # Telegram sends sizes ascending → last = largest
@@ -571,7 +571,7 @@ def _handle_photo(conn, tg, msg, chat_id) -> bool:
         return False
 
     caption = (msg.get("caption") or "").strip()
-    import router
+    from ai import router
     out = router.route(conn, caption, source="telegram", image_path=dest)
     tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
     if out.get("fell_back"):
@@ -630,7 +630,7 @@ def _handle_voice(conn, tg, msg, chat_id) -> bool:
         audio_ptr = _preserve_audio(oga)             # audio is never lost
         snippet = text if len(text) <= 80 else text[:77] + "…"
         tg.send_message(chat_id, f"🎙 \"{snippet}\"")
-        import router
+        from ai import router
         try:
             tg.send_chat_action(chat_id, "typing")
         except Exception:
@@ -651,8 +651,8 @@ def _preserve_audio(oga_path: str) -> str | None:
         if not (oga_path and os.path.exists(oga_path)):
             return None
         import shutil
-        import vault_store
-        from db import now_sg
+        from domain import vault_store
+        from core.db import now_sg
         name = "voice-" + now_sg().strftime("%Y%m%d-%H%M%S") + ".oga"
         shutil.copyfile(oga_path, os.path.join(vault_store.audio_dir(), name))
         return "vault/.audio/" + name

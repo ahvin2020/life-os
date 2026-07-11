@@ -3,13 +3,13 @@ real markdown vault (verification checklist item 1)."""
 
 import os
 
-import db_init  # noqa: F401  (ensures path set up by conftest import order)
-import web_core
-import vault_store
-from capture import create_task, route_capture
-from tasks_core import (next_due_date, complete_task, today_tasks, week_tasks,
+from core import db_init  # noqa: F401  (ensures path set up by conftest import order)
+from core import web_core
+from domain import vault_store
+from domain.capture import create_task, route_capture
+from domain.tasks_core import (next_due_date, complete_task, today_tasks, week_tasks,
                           archive_old_done)
-from db import connect, today_iso, now_iso
+from core.db import connect, today_iso, now_iso
 
 
 def _db():
@@ -239,7 +239,7 @@ def test_capture_journal_via_router(client):
 
 # ── goals rollup math ─────────────────────────────────────────────────────────
 def test_goal_rollup_and_number(client):
-    from goals_core import goal_progress, current_period_start
+    from domain.goals_core import goal_progress, current_period_start
     conn = _db()
     with conn:
         cur = conn.execute(

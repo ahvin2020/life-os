@@ -17,7 +17,7 @@ import argparse
 import sqlite3
 import sys
 
-from db import connect, DB_PATH, SCHEMA_VERSION, today_iso
+from core.db import connect, DB_PATH, SCHEMA_VERSION, today_iso
 
 TABLES = [
     ("meta", """

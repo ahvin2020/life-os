@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import backup_db  # noqa: E402
-from db import connect  # noqa: E402
-from web_core import health_status  # noqa: E402
+from core.db import connect  # noqa: E402
+from core.web_core import health_status  # noqa: E402
 
 
 def _touch(directory, name):
@@ -97,7 +97,7 @@ def test_run_backup_writes_prunes_mirrors_and_heartbeats(client, tmp_path, monke
 
 
 def test_run_backup_honors_backup_keep_and_location_settings(client, tmp_path, monkeypatch):
-    from db import set_setting, connect
+    from core.db import set_setting, connect
     db_path = os.environ["LIFEOS_DB_PATH"]
     local = tmp_path / "backups"; local.mkdir()
     dest = tmp_path / "my-offsite"                                 # user-chosen location (created by backup)

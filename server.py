@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 
-from web_core import app, DB_PATH
-import db_init
-import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings
+from core.web_core import app, DB_PATH
+from core import db_init
+from routes import main, tasks, notes, journal, goals, settings
 
-for _bpmod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings):
+for _bpmod in (main, tasks, notes, journal, goals, settings):
     app.register_blueprint(_bpmod.bp)
 
 
@@ -27,14 +27,14 @@ def main():
     args = parser.parse_args()
 
     # db() in web_core reads module-level _DB_PATH — set it there so --db is honoured.
-    import web_core as _wc
+    from core import web_core as _wc
     _wc._DB_PATH = args.db
     db_init.init_db(args.db)
 
     # Warm note thumbnails in the background so the first Notes browse is instant instead
     # of fetching og:images on demand. Daemon thread — never blocks startup or shutdown.
     import threading
-    import thumbs
+    from domain import thumbs
     threading.Thread(target=lambda: thumbs.warm_recent(), daemon=True).start()
 
     # Self-reload on settled code changes — same mechanism as the capture daemon, so a

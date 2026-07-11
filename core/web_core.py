@@ -22,11 +22,17 @@ from flask import (
     flash, jsonify, session, abort,
 )
 
-from db import connect, now_iso, today_iso, now_sg, get_tz, DB_PATH
+from core.db import connect, now_iso, today_iso, now_sg, get_tz, DB_PATH
 
-app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
+# Repo root (this module lives in core/), so templates/static/data resolve there
+# rather than relative to the package dir.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+app = Flask(__name__,
+            template_folder=os.path.join(_ROOT, "web", "templates"),
+            static_folder=os.path.join(_ROOT, "web", "static"))
+
+_DATA_DIR = os.path.join(_ROOT, "data")
 
 
 def _load_or_create_secret_key() -> str:
@@ -286,7 +292,7 @@ def inject_health():
 @app.context_processor
 def inject_nav():
     """Sidebar/bottom-nav badge counts, available to every template."""
-    import vault_store
+    from domain import vault_store
     counts = {"tasks": 0, "notes": 0}
     try:
         conn = db()
@@ -308,7 +314,7 @@ def inject_asset_ver():
     """Cache-bust static assets by file mtime — the no-build-step app is synced
     to the NAS, so a stale app.css/app.js is otherwise served after every edit."""
     import os
-    static_dir = os.path.join(os.path.dirname(__file__), "web", "static")
+    static_dir = os.path.join(_ROOT, "web", "static")
 
     def asset_ver(filename):
         try:

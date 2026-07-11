@@ -10,10 +10,10 @@ against the compact numbered titles stored in memory). Claude is always mocked.
 import json
 import os
 
-import library
-import router
-import vault_store
-from db import connect
+from domain import library
+from ai import router
+from domain import vault_store
+from core.db import connect
 
 
 def _db():
@@ -229,7 +229,7 @@ def test_followup_save_second_idea_resolves(client):
 
 # ── queries.py does not swallow idea-pull messages ─────────────────────────────
 def test_queries_ignores_idea_pulls():
-    from queries import is_query
+    from domain.queries import is_query
     assert is_query("give me 5 ideas about cpf") is False
     assert is_query("find me some ideas for my next video") is False
     assert is_query("what have i saved about bank promos") is False

@@ -9,9 +9,9 @@ toggle route, and the router goal actions. Uses the throwaway DB via conftest.
 import os
 import sqlite3
 
-import router
-from capture import create_task
-from db import connect, now_iso, today_iso
+from ai import router
+from domain.capture import create_task
+from core.db import connect, now_iso, today_iso
 
 
 def _db():
@@ -22,7 +22,7 @@ def _mkgoal(conn, title, timeframe="week", period="week", period_start=None,
             kind="rollup", target=None, current=0, end_date=None, unit=None,
             achieved_at=None):
     """Insert a goal with the v3 columns and return its id."""
-    from goals_core import current_period_start
+    from domain.goals_core import current_period_start
     ps = period_start or current_period_start(timeframe)
     with conn:
         cur = conn.execute(
@@ -44,7 +44,7 @@ def test_v2_to_v3_migration_backfills_timeframe(tmp_path):
     """A legacy v2 goals row (period + kind, no new columns) migrates in place:
     the four new columns are added and timeframe is backfilled from period, with the
     measure fields preserved."""
-    import db_init
+    from core import db_init
     path = str(tmp_path / "legacy.db")
     raw = sqlite3.connect(path)
     raw.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -70,14 +70,14 @@ def test_v2_to_v3_migration_backfills_timeframe(tmp_path):
         assert c in cols, c
     assert row["timeframe"] == "week"                      # backfilled from period
     assert row["target_num"] == 500 and row["current_num"] == 438   # measure preserved
-    from db import SCHEMA_VERSION
+    from core.db import SCHEMA_VERSION
     assert ver == str(SCHEMA_VERSION)                      # stamped to the current version
 
 
 # ── progress derivation — one per shape ───────────────────────────────────────
 def test_shape_measure(client):
     conn = _db()
-    from goals_core import goal_progress
+    from domain.goals_core import goal_progress
     gid = _mkgoal(conn, "Subs", timeframe="month", target=500, current=460, unit="subs")
     g = conn.execute("SELECT * FROM goals WHERE id=?", (gid,)).fetchone()
     p = goal_progress(conn, g)
@@ -89,7 +89,7 @@ def test_shape_measure(client):
 
 def test_shape_rollup(client):
     conn = _db()
-    from goals_core import goal_progress
+    from domain.goals_core import goal_progress
     gid = _mkgoal(conn, "Videos", timeframe="month")
     t1 = create_task(conn, "A", col="week", goal_id=gid)
     create_task(conn, "B", col="week", goal_id=gid)
@@ -104,7 +104,7 @@ def test_shape_rollup(client):
 
 def test_shape_milestone_toggle_pct(client):
     conn = _db()
-    from goals_core import goal_progress
+    from domain.goals_core import goal_progress
     gid = _mkgoal(conn, "Launch community", timeframe="quarter")
     g = conn.execute("SELECT * FROM goals WHERE id=?", (gid,)).fetchone()
     p = goal_progress(conn, g)
@@ -119,7 +119,7 @@ def test_shape_milestone_toggle_pct(client):
 
 def test_shape_both(client):
     conn = _db()
-    from goals_core import goal_progress
+    from domain.goals_core import goal_progress
     gid = _mkgoal(conn, "Publish + measure", timeframe="month", target=2, current=1)
     t1 = create_task(conn, "A", col="week", goal_id=gid)
     create_task(conn, "B", col="week", goal_id=gid)
@@ -135,7 +135,7 @@ def test_shape_both(client):
 
 # ── archive rollover per timeframe ────────────────────────────────────────────
 def test_rollover_per_timeframe(client):
-    from goals_core import archive_expired_goals
+    from domain.goals_core import archive_expired_goals
     conn = _db()
     today = today_iso()
     # expired periods

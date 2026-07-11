@@ -8,9 +8,9 @@ capture + import dedupe, and the one-time same-URL merge cleanup. Uses the share
 import os
 import threading
 
-import capture
-import vault_store
-from db import connect
+from domain import capture
+from domain import vault_store
+from core.db import connect
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))

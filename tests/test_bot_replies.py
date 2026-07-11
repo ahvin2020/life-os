@@ -4,10 +4,10 @@ so these run offline and deterministically (the enrichment thread is made synchr
 
 import os
 
-import capture
+from domain import capture
 import capture_daemon as cd
-import vault_store
-from db import connect
+from domain import vault_store
+from core.db import connect
 
 
 def _db():

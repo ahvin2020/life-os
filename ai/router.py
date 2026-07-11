@@ -26,12 +26,12 @@ import re
 import sys
 from datetime import date
 
-import capture
-import vault_store
-from claude_cli import call_claude, extract_json
-from db import now_iso, today_iso, now_sg
+from domain import capture
+from domain import vault_store
+from ai.claude_cli import call_claude, extract_json
+from core.db import now_iso, today_iso, now_sg
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _RAW_LOG = os.path.join(_ROOT, "data", "capture_raw.log")
 
 CLAUDE_TIMEOUT = 60
@@ -115,7 +115,7 @@ def build_context(conn) -> dict:
     ids + progress), today's date/day, today's journal count, and a little recent
     history so the `answer` action has something to answer from. Returns a dict with
     a prompt-ready `text` plus the id sets used to validate the model's output."""
-    from goals_core import goal_progress, format_goal_progress
+    from domain.goals_core import goal_progress, format_goal_progress
     today = today_iso()
     now = now_sg()
 
@@ -177,7 +177,7 @@ def build_context(conn) -> dict:
     if jentries:
         lines += ["", "TODAY'S JOURNAL:"] + [f"  {e['time']} {e['text'][:160]}" for e in jentries]
 
-    import library
+    from domain import library
     shelves = library.shelf_summary()
     if shelves:
         lines += ["", "IDEA LIBRARY (imported saves, one topic each — pull with "
@@ -364,7 +364,7 @@ def apply_action(conn, act, ctx) -> tuple:
             return ("❓ I couldn't find that task — which one did you mean?", None)
         title = _title(conn, ctx, tid)
         if kind == "complete_task":
-            from tasks_core import complete_task
+            from domain.tasks_core import complete_task
             with conn:
                 res = complete_task(conn, tid, True)
             # Carry any respawned recurring copy in the undo payload so the Undo tap
@@ -373,7 +373,7 @@ def apply_action(conn, act, ctx) -> tuple:
             undo = f"u|comp|{tid}|{respawn}" if respawn else f"u|comp|{tid}"
             return (f"✓ Done: {title}", undo)
         if kind == "uncomplete_task":
-            from tasks_core import complete_task
+            from domain.tasks_core import complete_task
             with conn:
                 complete_task(conn, tid, False)
             return (f"↩ Reopened: {title}", None)
@@ -388,12 +388,12 @@ def apply_action(conn, act, ctx) -> tuple:
                              (today, now_iso(), tid))
                 # on-today ⊆ this-week: planning promotes a backlog task into 'week'
                 if row and row["parent_id"] is None and not row["done"] and row["col"] == "backlog":
-                    from tasks_core import set_task_col
+                    from domain.tasks_core import set_task_col
                     set_task_col(conn, tid, "week")
             token = f"u|plan|{tid}|{prev}" if prev else f"u|plan|{tid}"
             return (f"☀ Planned for today: {title}", token)
         if kind == "unplan":
-            from tasks_core import bump_reschedule, set_task_col
+            from domain.tasks_core import bump_reschedule, set_task_col
             row = conn.execute("SELECT planned_on, col, done, parent_id FROM tasks WHERE id=?",
                                (tid,)).fetchone()
             with conn:
@@ -412,7 +412,7 @@ def apply_action(conn, act, ctx) -> tuple:
                 conn.execute("UPDATE tasks SET due_date=?, updated=? WHERE id=?",
                              (d, now_iso(), tid))
                 if d and old_due and d > old_due:        # pushed strictly later → a postpone
-                    from tasks_core import bump_reschedule
+                    from domain.tasks_core import bump_reschedule
                     bump_reschedule(conn, tid)
             lbl = _due_label(d, today) if d else "no date"
             return (f"⏰ {title} — due {lbl}", None)
@@ -429,7 +429,7 @@ def apply_action(conn, act, ctx) -> tuple:
             if col not in _COLUMNS:
                 return ("❓ Move to backlog, week, or done?", None)
             prev = ctx["tasks"][tid]["col"]
-            from tasks_core import set_task_col
+            from domain.tasks_core import set_task_col
             with conn:
                 set_task_col(conn, tid, col)   # maintains the week_since clock
             return (f"→ Moved to {col}: {title}", f"u|move|{tid}|{prev}")
@@ -537,7 +537,7 @@ def apply_action(conn, act, ctx) -> tuple:
         return ("✦ Added to today's journal", None)
 
     if kind == "create_goal":
-        from goals_core import current_period_start, TIMEFRAMES
+        from domain.goals_core import current_period_start, TIMEFRAMES
         title = (act.get("title") or "").strip()
         if not title:
             return ("❓ What's the goal?", None)
@@ -563,7 +563,7 @@ def apply_action(conn, act, ctx) -> tuple:
         return (f"🎯 Goal ({timeframe}): {title}", None)
 
     if kind == "library_ideas":
-        import library
+        from domain import library
         reply, mem = library.pull_ideas(conn, act.get("topic"),
                                         act.get("count"), ctx.get("claude_fn"))
         if mem:                       # store a compact numbered title list (not the long
@@ -645,7 +645,7 @@ def handle_callback(conn, data: str) -> str:
     if tid is None:
         return "Nothing to undo."
     if op == "comp":
-        from tasks_core import complete_task
+        from domain.tasks_core import complete_task
         respawn = _as_int(parts[3]) if len(parts) >= 4 and parts[3] != "" else None
         with conn:
             complete_task(conn, tid, False)
@@ -668,7 +668,7 @@ def handle_callback(conn, data: str) -> str:
                          (prev, now_iso(), tid))
         return "↩ Undone — removed from today." if prev is None else "↩ Undone."
     if op == "move" and len(parts) >= 4 and parts[3] in _COLUMNS:
-        from tasks_core import set_task_col
+        from domain.tasks_core import set_task_col
         with conn:
             set_task_col(conn, tid, parts[3])   # maintains the week_since clock
         return f"↩ Undone — moved back to {parts[3]}."

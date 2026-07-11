@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import re
 
-from db import today_iso
-from tasks_core import today_tasks, day_score
-from goals_core import goal_progress
-import vault_store
+from core.db import today_iso
+from domain.tasks_core import today_tasks, day_score
+from domain.goals_core import goal_progress
+from domain import vault_store
 
 # Nouns that make a message about Kelvin's data.
 _QNOUNS = ("todo", "todos", "task", "tasks", "today", "overdue", "goal", "goals",

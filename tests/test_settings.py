@@ -12,10 +12,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import capture_daemon as cd
-import proactive
-from capture import create_task
-from db import connect, today_iso, now_iso, get_setting, set_setting, delete_setting
-from tasks_core import archive_old_done, purge_deleted
+from ai import proactive
+from domain.capture import create_task
+from core.db import connect, today_iso, now_iso, get_setting, set_setting, delete_setting
+from domain.tasks_core import archive_old_done, purge_deleted
 
 TZ = ZoneInfo("Asia/Singapore")
 

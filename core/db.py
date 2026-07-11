@@ -27,7 +27,7 @@ _TZ_CACHE = None                        # (name, ZoneInfo); cleared by reload_tz
 # Default is data/app.db next to this file. Set LIFEOS_DB_PATH to override (the
 # test suite points it at a throwaway file; the NAS points it at the data volume).
 DB_PATH = os.environ.get("LIFEOS_DB_PATH") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "data", "app.db"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app.db"
 )
 
 SCHEMA_VERSION = 6

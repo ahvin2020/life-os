@@ -26,7 +26,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from db import DB_PATH, now_iso, connect, get_setting  # noqa: E402
+from core.db import DB_PATH, now_iso, connect, get_setting  # noqa: E402
 
 KEEP = 7  # default retention (most recent N) — overridable via settings.backup_keep
 _PREFIX, _SUFFIX = "app-", ".db"

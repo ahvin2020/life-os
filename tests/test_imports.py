@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import import_common  # noqa: E402
 import import_todo  # noqa: E402
 import import_sheet  # noqa: E402
-from db import connect, today_iso  # noqa: E402
-import vault_store  # noqa: E402
+from core.db import connect, today_iso  # noqa: E402
+from domain import vault_store  # noqa: E402
 
 
 def _db():

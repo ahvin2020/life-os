@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template, request, jsonify, send_file, abort
 
-from web_core import db, respond, is_ajax
-import vault_store
-import thumbs
+from core.web_core import db, respond, is_ajax
+from domain import vault_store
+from domain import thumbs
 
 bp = Blueprint("notes", __name__)
 
@@ -34,7 +34,7 @@ def _note_spaces(tags) -> list:
 
 @bp.route("/notes")
 def notes_page():
-    import db
+    from core import db
     show_archived = request.args.get("archived") == "1"
     all_notes = vault_store.list_notes()
     for n in all_notes:                   # enrich for the card template
@@ -144,7 +144,7 @@ def notes_ask():
     macro as the grid, so Ask results look identical to browsing), each carrying Claude's
     one-line `why`. `fallback` flags the deterministic recency answer used when Claude
     is unavailable."""
-    import library
+    from domain import library
     q = (request.form.get("q") or "").strip()
     if not q:
         return jsonify({"status": "ok", "q": q, "html": "", "count": 0, "fallback": False})

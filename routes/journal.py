@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request, jsonify, send_file, abort
 
-from web_core import db, respond, today_iso, is_ajax
-import vault_store
+from core.web_core import db, respond, today_iso, is_ajax
+from domain import vault_store
 
 bp = Blueprint("journal", __name__)
 

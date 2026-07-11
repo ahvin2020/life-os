@@ -5,9 +5,9 @@ routes and the real markdown vault, in the style of test_app.py; uses the shared
 
 import os
 
-import vault_store
-from capture import create_task
-from db import connect, today_iso
+from domain import vault_store
+from domain.capture import create_task
+from core.db import connect, today_iso
 
 
 def _db():
@@ -92,15 +92,15 @@ def test_feed_excludes_imported_tasks(client, monkeypatch):
         keep = create_task(conn, "Real task today", col="week")
         skip = create_task(conn, "Imported task today", col="backlog")
     conn.close()
-    import routes_main
-    monkeypatch.setattr(routes_main, "imported_task_ids", lambda: {skip})
+    from routes import main
+    monkeypatch.setattr(main, "imported_task_ids", lambda: {skip})
     home = client.get("/").data.decode()
     assert "Real task today" in home
     assert "Imported task today" not in home
 
 
 def test_today_so_far_count_excludes_imported_notes(client):
-    from routes_journal import today_so_far
+    from routes.journal import today_so_far
     vault_store.create_note(title="Fresh capture", body="x", tags=["idea"])
     vault_store.create_note(title="Backfilled", body="y", tags=["imported"])
     conn = _db()
@@ -110,7 +110,7 @@ def test_today_so_far_count_excludes_imported_notes(client):
 
 
 # ── URL captures fetch the page's real title (og:title / <title>), mocked fetch ─
-import capture  # noqa: E402
+from domain import capture  # noqa: E402
 
 
 class _FakeResp:

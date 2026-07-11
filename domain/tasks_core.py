@@ -4,15 +4,15 @@ non-Flask surfaces (bot router, proactive AI, queries, capture daemon).
 This module is deliberately Blueprint-free: it holds the task logic (task_dict,
 subtask_progress, complete_task, recurrence respawn, archive/purge, today/week
 membership, the week_since staleness clock) so a bot daemon can import it without
-pulling in Flask. `routes_tasks.py` re-exports these for back-compat.
+pulling in Flask. `routes/tasks.py` re-exports these for back-compat.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from db import now_iso, days_ago_iso, today_iso, get_setting
-from capture import create_task
+from core.db import now_iso, days_ago_iso, today_iso, get_setting
+from domain.capture import create_task
 
 _WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 

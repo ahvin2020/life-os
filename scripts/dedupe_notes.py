@@ -30,8 +30,8 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-import vault_store  # noqa: E402
-from capture import first_url, normalize_url  # noqa: E402
+from domain import vault_store  # noqa: E402
+from domain.capture import first_url, normalize_url  # noqa: E402
 
 
 def _dup_groups() -> list:

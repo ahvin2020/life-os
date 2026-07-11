@@ -263,7 +263,7 @@ def build_preview(tabs: list[dict], *, fetched: bool, note: str = "") -> str:
 
 # ── apply ──────────────────────────────────────────────────────────────────────
 def apply_all(tabs: list[dict], *, verbose: bool = True) -> dict:
-    from db import connect
+    from core.db import connect
     conn = connect()
     ledger = load_ledger()
     stats = {"created": 0, "already": 0, "skipped": 0}

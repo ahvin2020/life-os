@@ -16,8 +16,8 @@ import argparse, datetime, json, os, re, sys, zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # import_common puts the repo root on sys.path, so vault_store / claude_cli resolve.
 from import_common import ledger_key, load_ledger, save_ledger  # noqa: E402
-import vault_store  # noqa: E402
-from claude_cli import call_claude  # noqa: E402
+from domain import vault_store  # noqa: E402
+from ai.claude_cli import call_claude  # noqa: E402
 
 CUTOFF = datetime.datetime(2025, 1, 1).timestamp()
 BATCH = 60
