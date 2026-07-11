@@ -37,6 +37,21 @@ def main():
     import thumbs
     threading.Thread(target=lambda: thumbs.warm_recent(), daemon=True).start()
 
+    # Self-reload on settled code changes — same mechanism as the capture daemon, so a
+    # file sync (Synology Drive on the NAS, an editor save on the Mac) picks up without a
+    # manual restart. (Jinja templates already hot-reload under debug=True; this covers .py.)
+    # We OWN port 5070, so exit-and-respawn (releases the socket) rather than execv, whose
+    # inherited bound fd would fail to re-bind. Relies on the supervisor to respawn:
+    # launchd KeepAlive here, the container restart policy on the NAS.
+    import reloader
+    _code_baseline = reloader.code_mtime()
+    threading.Thread(
+        target=lambda: reloader.watch_loop(
+            _code_baseline, lambda m: print(f"[web] {m}", flush=True), restart=reloader.exit_and_respawn
+        ),
+        daemon=True,
+    ).start()
+
     print(f"Life OS running at http://localhost:{args.port}")
     print(f"Database: {args.db}")
     app.run(port=args.port, debug=True, use_reloader=False)

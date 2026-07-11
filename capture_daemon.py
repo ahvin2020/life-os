@@ -58,6 +58,32 @@ def _log(msg: str) -> None:
         pass
 
 
+# ── last-ditch content preservation (safety rail when the normal path crashes) ─
+_RAW_LOG_PATH = os.path.join(_ROOT, "data", "capture_raw.log")
+
+
+def _safety_log_raw(msg) -> None:
+    """Preserve inbound content to capture_raw.log when handling crashed BEFORE its
+    own logging (e.g. the crash IS a router import failure, so router.log_raw is
+    unreachable). Self-contained — depends on nothing that might be mid-sync — and
+    never raises. This is what makes "It's logged and safe" actually true."""
+    try:
+        text = (msg.get("text") or msg.get("caption") or "").strip()
+        if not text:
+            if "voice" in msg or "audio" in msg:
+                text = "[voice note — transcription lost to crash]"
+            elif "photo" in msg or _is_image_document(msg):
+                text = "[photo — lost to crash]"
+            else:
+                return
+        os.makedirs(os.path.dirname(_RAW_LOG_PATH), exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(_RAW_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{ts}\ttelegram-crash\t{text}\n")
+    except Exception:
+        pass
+
+
 # ── settings helpers (offset persistence, heartbeats, digest bookkeeping) ─────
 # Promoted to db.py so web + daemon share one accessor; names kept for call sites.
 from db import get_setting as _get_setting, set_setting as _set_setting
@@ -258,10 +284,15 @@ def main() -> int:
 
     offset = int(_get_setting(conn, "telegram_offset", "0") or "0")
     sweep_due_at = None        # epoch seconds; set after a fallback capture
+    import reloader
+    code_baseline = reloader.code_mtime()   # re-exec when our own .py files change past this
     _log(f"starting long-poll loop (offset={offset})")
 
     while True:
         try:
+            if reloader.should_reload(code_baseline):   # pick up code edits without a manual restart
+                _log("code change detected — reloading daemon")
+                reloader.reexec(conn.close)
             updates = tg.get_updates(offset)
             for upd in updates:
                 offset = upd["update_id"] + 1
@@ -377,6 +408,7 @@ def _process_update(conn, tg, allowed, upd, sweep_due_at):
             tg.send_message(chat_id, "I can handle text, links, photos and voice notes for now.")
     except Exception as e:
         _log(f"handling update {upd.get('update_id')} failed: {e}")
+        _safety_log_raw(msg)   # preserve the content even if the crash was before the normal log
         if chat_id:
             try:
                 tg.send_message(chat_id, "⚠️ Sorry — that one failed. It's logged and safe.")
