@@ -1,25 +1,65 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}Journal · {{ day }}{% endblock %}
 {% block content %}
-<div class="vhead"><h1>{{ pretty }}</h1><span class="spacer"></span><a class="mini" href="/journal">← today</a></div>
-<div class="card">
-  <textarea id="j-raw" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;line-height:1.6;padding:14px;min-height:340px;resize:vertical">{{ page.raw if page else '' }}</textarea>
-  <div class="erow"><span class="saved" id="j-saved" style="color:var(--muted)">plain markdown — vault/journal/{{ day }}.md</span><button class="qgo" id="j-save" type="button" style="margin-left:auto">Save</button></div>
+<a class="backlink" href="/journal">← Today</a>
+<div class="vhead">
+  <h1>{{ pretty }}</h1>
+  {% if rel %}<span class="jrel">{{ rel }}</span>{% endif %}
+</div>
+
+<div class="jgrid jday">
+  <div class="jmain">
+    <div class="card">
+      {% if page and page.entries %}
+        {% for e in page.entries %}{{ m.journal_entry(e, day) }}{% endfor %}
+      {% elif page and page.raw.strip() %}
+        <p style="white-space:pre-wrap">{{ page.raw }}</p>
+      {% else %}
+        <div class="empty">Nothing was written on this day.</div>
+      {% endif %}
+    </div>
+
+    {% if page %}
+    <details class="jraw">
+      <summary>Edit raw markdown</summary>
+      <div class="card">
+        <textarea id="j-raw">{{ page.raw }}</textarea>
+        <div class="erow"><span class="saved" id="j-saved">plain markdown — vault/journal/{{ day }}.md</span><button class="qgo" id="j-save" type="button" style="margin-left:auto">Save</button></div>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+
+  {% if page and page.entries %}
+  <div class="rcol">
+    <div class="card sub2">
+      <div class="chead"><h2>This day</h2></div>
+      <div class="jstat"><span class="num">{{ page.entries | length }}</span> {{ 'entry' if page.entries | length == 1 else 'entries' }}</div>
+      {% if voice_count %}<div class="jstat"><span class="num">{{ voice_count }}</span> voice {{ 'recording' if voice_count == 1 else 'recordings' }} 🎙</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
-  var box = document.getElementById("j-raw"), saved = document.getElementById("j-saved");
-  var timer = null;
-  function save() {
+  var box = document.getElementById("j-raw"), saved = document.getElementById("j-saved"), btn = document.getElementById("j-save");
+  if (!box) return;
+  var timer = null, base = saved.textContent;
+  function save(reload) {
     saved.textContent = "saving…";
     var fd = new FormData(); fd.append("raw", box.value);
-    fetch("/journal/{{ day }}/save", { method: "POST", body: fd }).then(function () { saved.textContent = "saved ✓"; });
+    fetch("/journal/{{ day }}/save", { method: "POST", body: fd }).then(function () {
+      saved.textContent = "saved ✓";
+      // The Save button re-syncs the structured entries above; auto-save just persists.
+      if (reload) { setTimeout(function () { window.location.reload(); }, 350); }
+      else { setTimeout(function () { saved.textContent = base; }, 1600); }
+    });
   }
-  box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(save, 800); });
-  box.addEventListener("blur", save);
-  document.getElementById("j-save").addEventListener("click", save);
+  box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(function () { save(false); }, 800); });
+  btn.addEventListener("click", function () { save(true); });
 })();
 </script>
 {% endblock %}

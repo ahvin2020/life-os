@@ -47,6 +47,11 @@ LEDGER_PATH = os.path.join(DATA_DIR, "import_ledger.json")
 # reviewable in the Notes view.
 IMPORTED_TAG = "imported"
 
+# Preview grouping order + section headings, shared by import_todo / import_sheet.
+_ORDER = ["task", "note", "journal", "skip", "uncertain"]
+_HEADINGS = {"task": "Tasks", "note": "Notes", "journal": "Journal",
+             "skip": "Skip", "uncertain": "Uncertain"}
+
 
 # ── ledger ────────────────────────────────────────────────────────────────────
 def ledger_key(raw: str, role: str = "") -> str:

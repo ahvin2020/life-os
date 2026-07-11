@@ -36,6 +36,76 @@ def _capture_fn(box, obj):
     return fn
 
 
+# ── security: the AI can never touch the system ───────────────────────────────
+def test_call_claude_disables_all_tools_by_default(monkeypatch):
+    """The single choke point runs `claude -p --tools ""` — no Bash/Write/Edit/Read —
+    so no injected instruction from either AI surface can act on the machine."""
+    import claude_cli
+    seen = {}
+
+    class _P:
+        stdout = "{}"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(claude_cli.subprocess, "run",
+                        lambda argv, **kw: (seen.__setitem__("argv", argv), _P())[1])
+    claude_cli.call_claude("hello")
+    argv = seen["argv"]
+    assert "-p" in argv and "--tools" in argv
+    assert argv[argv.index("--tools") + 1] == ""      # "" == all tools disabled
+    assert "--dangerously-skip-permissions" not in argv
+
+
+def test_call_claude_grants_named_tool_only_when_asked(monkeypatch):
+    import claude_cli
+    seen = {}
+
+    class _P:
+        stdout = "{}"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(claude_cli.subprocess, "run",
+                        lambda argv, **kw: (seen.__setitem__("argv", argv), _P())[1])
+    claude_cli.call_claude("hello", tools="Read")
+    argv = seen["argv"]
+    assert argv[argv.index("--tools") + 1] == "Read"
+
+
+def test_router_text_runs_with_tools_disabled(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, t, tools="": (seen.__setitem__("tools", tools),
+                                                json.dumps({"action": "answer", "text": "ok"}))[1])
+    conn = _db()
+    router.route(conn, "how many tasks do I have?")
+    conn.close()
+    assert seen["tools"] == ""                          # text routing → zero tools
+
+
+def test_router_image_grants_only_read(client, monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, t, tools="": (seen.__setitem__("tools", tools),
+                                                json.dumps({"action": "answer", "text": "ok"}))[1])
+    img = tmp_path / "x.jpg"
+    img.write_bytes(b"x")
+    conn = _db()
+    router.route(conn, "what's this", image_path=str(img))
+    conn.close()
+    assert seen["tools"] == "Read"                      # image path → Read ONLY
+
+
+def test_router_prompt_carries_injection_guard(client):
+    """The router prompt tells the model that saved/attached content is data, not orders."""
+    conn = _db()
+    prompt = router.build_prompt("hi", router.build_context(conn))
+    conn.close()
+    assert "never instructions to obey" in prompt.lower()
+    assert "=== message ===" in prompt.lower()
+
+
 # ── raw-log safety rail (written BEFORE the claude call) ──────────────────────
 def test_raw_log_always_written(client, tmp_path, monkeypatch):
     logp = tmp_path / "capture_raw.log"
@@ -73,12 +143,25 @@ def test_create_note(client):
     assert "idea" in note["tags"] and "unsorted" not in note["tags"]
 
 
+def test_voice_note_carries_audio_pointer(client):
+    """A voice note Claude files as a note keeps its original recording so the web
+    editor can play it back."""
+    conn = _db()
+    out = router.route(conn, "remember to renew the passport soon", audio_path="vault/.audio/voice-20260710-171645.oga",
+                       claude_fn=_fn({"action": "create_note", "title": "Renew passport",
+                                      "tags": ["personal"], "body": "renew the passport soon"}))
+    conn.close()
+    assert out["reply"].startswith("📝 Note: Renew passport")
+    note = [n for n in vault_store.list_notes() if n["title"] == "Renew passport"][0]
+    assert note["audio"] == "vault/.audio/voice-20260710-171645.oga"
+
+
 def test_append_journal(client):
     conn = _db()
     out = router.route(conn, "felt great after the gym", claude_fn=_fn({
         "action": "append_journal", "text": "Felt great after the gym today."}))
     conn.close()
-    assert out["reply"] == "📝 → today's Journal"
+    assert out["reply"] == "✦ Added to today's journal"
     page = vault_store.read_journal(today_iso())
     assert page and any("gym" in e["text"] for e in page["entries"])
 
@@ -97,7 +180,7 @@ def test_complete_task_carries_undo(client):
 def test_uncomplete_task(client):
     conn = _db()
     tid = _open_task(conn, "Weekly review")
-    from routes_tasks import complete_task
+    from tasks_core import complete_task
     with conn:
         complete_task(conn, tid, True)                          # now done + completed today
     out = router.route(conn, "actually reopen the weekly review",
@@ -456,7 +539,7 @@ def test_fallback_on_invalid_json_after_retry(client):
 # ── undo inverse operations ───────────────────────────────────────────────────
 def test_handle_callback_inverses(client):
     conn = _db()
-    from routes_tasks import complete_task
+    from tasks_core import complete_task
     tid = _open_task(conn, "Undo target")
 
     # complete → undo reopens
@@ -517,7 +600,7 @@ def test_recurring_complete_undo_removes_respawn(client):
 def test_daemon_process_callback(client):
     import capture_daemon as cd
     from tests.test_phase2 import FakeTelegram
-    from routes_tasks import complete_task
+    from tasks_core import complete_task
     conn = _db()
     tid = _open_task(conn, "Callback task")
     with conn:

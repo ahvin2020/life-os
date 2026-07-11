@@ -13,8 +13,8 @@ from db import now_sg
 from capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal,
                      imported_task_ids)
-from routes_tasks import today_tasks, week_tasks, day_score, archive_old_done
-from routes_goals import goal_progress
+from tasks_core import today_tasks, week_tasks, day_score, archive_old_done
+from goals_core import goal_progress
 import vault_store
 
 bp = Blueprint("main", __name__)
@@ -61,7 +61,7 @@ def home():
     score = day_score(tasks)
 
     goal_rows = conn.execute(
-        "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created LIMIT 4"
+        "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created LIMIT 4"
     ).fetchall()
     goals = []
     for g in goal_rows:
@@ -74,17 +74,38 @@ def home():
     any_task = conn.execute("SELECT 1 FROM tasks LIMIT 1").fetchone()
     any_goal = conn.execute("SELECT 1 FROM goals LIMIT 1").fetchone()
     goals_list = [dict(g) for g in conn.execute(
-        "SELECT id, title FROM goals WHERE archived_at IS NULL ORDER BY created").fetchall()]
+        "SELECT id, title FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()]
     conn.close()
     first_run = not any_task and not any_goal and not vault_store.list_notes() \
         and not vault_store.list_journal_days()
 
     journal_empty = not vault_store.read_journal(today)
     now = now_sg()
+
+    # Greeting: opening the app should feel like arriving somewhere, not facing a pile.
+    hour = now.hour
+    greeting = ("Good morning" if 5 <= hour < 12 else
+                "Good afternoon" if 12 <= hour < 18 else
+                "Good evening" if 18 <= hour < 23 else "Still up")
+    # Lead with yesterday's wins (Sunsama's ritual): start from a win, not a to-do list.
+    conn2 = db()
+    sg_mid = datetime.fromisoformat(today).replace(tzinfo=now.tzinfo)
+    y_start = (sg_mid - timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    y_end = sg_mid.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    yesterday_done = conn2.execute(
+        "SELECT COUNT(*) c FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
+        "AND completed_at >= ? AND completed_at < ?", (y_start, y_end)).fetchone()["c"]
+    conn2.close()
+    # All-done ending (peak-end): the day's list is empty or fully checked off.
+    all_done = bool(tasks) and score["done"] == score["total"] and score["total"] > 0
+
     return render_template(
         "today.html", active="home",
-        weekday=now.strftime("%A"),
-        date_str=now.strftime("%-d %b %Y · %H:%M · Asia/Singapore"),
+        weekday=now.strftime("%A"), greeting=greeting,
+        yesterday_done=yesterday_done, all_done=all_done,
+        # date only — a static render-time clock goes stale on screen, and the tz
+        # name is settings info, not something to re-read every morning
+        date_str=now.strftime("%-d %b %Y"),
         tasks=tasks, week=week, score=score, goals=goals, feed=feed, goals_list=goals_list,
         first_run=first_run, journal_empty=journal_empty)
 

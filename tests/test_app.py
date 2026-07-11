@@ -7,7 +7,7 @@ import db_init  # noqa: F401  (ensures path set up by conftest import order)
 import web_core
 import vault_store
 from capture import create_task, route_capture
-from routes_tasks import (next_due_date, complete_task, today_tasks, week_tasks,
+from tasks_core import (next_due_date, complete_task, today_tasks, week_tasks,
                           archive_old_done)
 from db import connect, today_iso, now_iso
 
@@ -196,7 +196,7 @@ def test_capture_endpoint(client):
 
 
 # ── notes round-trip to disk ──────────────────────────────────────────────────
-def test_note_file_roundtrip_pin_delete(client):
+def test_note_file_roundtrip_edit_delete(client):
     r = client.post("/notes/new", data={"title": "Rate card", "body": "hello", "tags": "business, idea"},
                     headers={"X-Requested-With": "XMLHttpRequest"})
     slug = r.get_json()["slug"]
@@ -204,11 +204,10 @@ def test_note_file_roundtrip_pin_delete(client):
     assert os.path.exists(path)                             # file created on disk
     raw = open(path).read()
     assert raw.startswith("---") and "title: Rate card" in raw and "business" in raw
-    # edit + pin
+    # edit
     client.post(f"/notes/{slug}/save", data={"title": "Rate card 2026", "body": "world", "tags": "business"})
-    client.post(f"/notes/{slug}/pin")
     n = vault_store.read_note(slug)
-    assert n["title"] == "Rate card 2026" and n["pinned"] and "world" in n["body"]
+    assert n["title"] == "Rate card 2026" and "world" in n["body"]
     # soft-delete moves file to .trash, restore brings it back
     client.post(f"/notes/{slug}/delete")
     assert not os.path.exists(path)
@@ -240,7 +239,7 @@ def test_capture_journal_via_router(client):
 
 # ── goals rollup math ─────────────────────────────────────────────────────────
 def test_goal_rollup_and_number(client):
-    from routes_goals import goal_progress, current_period_start
+    from goals_core import goal_progress, current_period_start
     conn = _db()
     with conn:
         cur = conn.execute(

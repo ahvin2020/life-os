@@ -36,8 +36,8 @@ def client():
     db_init.init_db(os.environ["LIFEOS_DB_PATH"])
 
     # register blueprints once
-    import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals
-    for mod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals):
+    import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings
+    for mod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings):
         if mod.bp.name not in web_core.app.blueprints:
             web_core.app.register_blueprint(mod.bp)
 

@@ -41,7 +41,8 @@
       document.addEventListener('submit', function (e) { _ensureCsrf(e.target); }, true);
     })();
   </script>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script>window.LIFEOS_TODAY = "{{ today }}";</script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_ver('app.css') if asset_ver is defined else '' }}">
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
 </head>
 <body>
@@ -53,11 +54,16 @@
     <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes<span class="count">{{ nav_counts.notes }}</span></a>
     <a class="nav-btn {{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
     <a class="nav-btn {{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+    <a class="nav-btn setlink {{ 'active' if active=='settings' else '' }}" href="/settings"><span class="ico">⚙</span>Settings</a>
+    {# healthy systems are SILENT — the per-job rows only appear when something needs
+       attention; nothing renders when all three are ok #}
+    {% if not (health.capture == 'ok' and health.triage == 'ok' and health.backup == 'ok') %}
     <div class="foot">
-      <div title="Telegram capture daemon heartbeat (red if idle &gt;10 min)"><span class="dot {{ health.capture }}"></span>capture · {{ health.capture }}</div>
-      <div title="Claude triage last run (red if &gt;26 h)"><span class="dot {{ health.triage }}"></span>triage · {{ health.triage }}</div>
-      <div title="Nightly DB backup (red if &gt;26 h)"><span class="dot {{ health.backup }}"></span>backup · {{ health.backup }}</div>
+      <div title="Telegram capture daemon heartbeat (red if idle &gt;10 min)"><span class="dot {{ health.capture }}"></span>capture · {{ health_age.capture or 'never' }}</div>
+      <div title="Claude triage last run (red if &gt;26 h)"><span class="dot {{ health.triage }}"></span>triage · {{ health_age.triage or 'never' }}</div>
+      <div title="Nightly DB backup (red if &gt;26 h)"><span class="dot {{ health.backup }}"></span>backup · {{ health_age.backup or 'never' }}</div>
     </div>
+    {% endif %}
   </nav>
 
   <main class="main">
@@ -80,6 +86,8 @@
   <a class="{{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
 </nav>
 
+<a class="gearlink" href="/settings" aria-label="Settings">⚙</a>
+
 <a class="fab" href="/#qin" aria-label="Quick add">＋</a>
 
 <!-- note editor modal -->
@@ -88,7 +96,6 @@
     <div class="ehead">
       <span class="etag">Note</span>
       <span class="spacer" style="flex:1"></span>
-      <button class="mini" id="ed-pin" type="button">★ pin</button>
       <button class="mini" id="ed-close" type="button">✕</button>
     </div>
     <div class="erow">
@@ -96,11 +103,16 @@
     </div>
     <div class="erow">
       <label class="fld" style="flex:1">tags<input class="txt" id="ed-tags" placeholder="idea, link"></label>
-      <span class="saved" id="ed-saved"></span>
+    </div>
+    <div class="erow nplay" id="ed-audio-row" hidden>
+      <span class="plabel">🎙 your recording</span>
+      <audio id="ed-audio" preload="none"></audio>
     </div>
     <textarea id="ed-body" placeholder="Write markdown…" aria-label="Note body"></textarea>
     <div class="erow">
-      <button class="mini danger" id="ed-delete" type="button">delete</button>
+      <button class="mini danger" id="ed-delete" type="button">Delete</button>
+      <span class="saved" id="ed-saved"></span>
+      <button class="qgo" id="ed-save" type="button">Save</button>
     </div>
   </div>
 </div>
@@ -112,30 +124,59 @@
       <input id="te-title" placeholder="Task title" aria-label="Task title">
       <button class="mini" id="te-close" type="button">✕</button>
     </div>
-    <div class="erow">
+    <div class="erow egrid2">
       <label class="fld">due date<input class="txt" id="te-due" type="date"></label>
-      <label class="fld">priority
-        <select id="te-priority"><option value="">—</option><option value="high">high</option><option value="med">med</option><option value="low">low</option></select>
-      </label>
-      <label class="fld">category
-        <select id="te-category"><option value="">—</option><option value="content">content</option><option value="business">business</option><option value="personal">personal</option></select>
-      </label>
-    </div>
-    <div class="erow">
-      <label class="fld">column
-        <select id="te-col"><option value="backlog">Backlog</option><option value="week">This week</option><option value="done">Done</option></select>
-      </label>
-      <label class="fld">recurrence<input class="txt" id="te-recur" placeholder="daily / weekly:sun / monthly:1"></label>
       <label class="fld">goal<select id="te-goal"><option value="">—</option></select></label>
+    </div>
+    <div class="fld">priority
+      <div class="seg" id="te-priority-seg">
+        <button type="button" class="segbtn" data-val="">—</button>
+        <button type="button" class="segbtn" data-val="low">low</button>
+        <button type="button" class="segbtn" data-val="med">med</button>
+        <button type="button" class="segbtn" data-val="high">high</button>
+      </div>
+      <input type="hidden" id="te-priority">
+    </div>
+    <div class="fld">category
+      <div class="seg" id="te-category-seg">
+        <button type="button" class="segbtn" data-val="">—</button>
+        <button type="button" class="segbtn" data-val="content"><span class="cdot content"></span>content</button>
+        <button type="button" class="segbtn" data-val="business"><span class="cdot business"></span>business</button>
+        <button type="button" class="segbtn" data-val="personal"><span class="cdot personal"></span>personal</button>
+      </div>
+      <input type="hidden" id="te-category">
+    </div>
+    <div class="erow egrid2">
+      <div class="fld">recurrence
+        <div class="recur">
+          <select id="te-recur-type"><option value="">Doesn't repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+          <select id="te-recur-wday" hidden><option value="mon">Mon</option><option value="tue">Tue</option><option value="wed">Wed</option><option value="thu">Thu</option><option value="fri">Fri</option><option value="sat">Sat</option><option value="sun">Sun</option></select>
+          <select id="te-recur-mday" hidden></select>
+        </div>
+        <input type="hidden" id="te-recur">
+      </div>
+      <div class="fld">column
+        <div class="seg" id="te-col-seg">
+          <button type="button" class="segbtn" data-val="backlog">Backlog</button>
+          <button type="button" class="segbtn" data-val="week">This week</button>
+          <button type="button" class="segbtn" data-val="done">Done</button>
+        </div>
+        <input type="hidden" id="te-col">
+      </div>
     </div>
     <div class="erow"><button class="mini" id="te-plan" type="button">☀ Do today</button><span class="saved" id="te-saved"></span></div>
     <div id="te-subs" class="subs" style="margin-left:0"></div>
     <div class="erow"><input class="txt" id="te-subnew" style="flex:1" placeholder="add subtask…"><button class="mini" id="te-subadd" type="button">＋</button></div>
-    <div class="erow"><button class="mini danger" id="te-delete" type="button">delete</button><button class="qgo" id="te-save" type="button" style="margin-left:auto">Save</button></div>
+    <div class="erow"><button class="mini danger" id="te-delete" type="button">Delete</button><button class="qgo" id="te-save" type="button" style="margin-left:auto">Save</button></div>
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<!-- app.js was split into ordered bundles sharing one global namespace; core.js
+     defines the shared helpers (globals) and MUST load first, then the page files. -->
+<script src="{{ url_for('static', filename='core.js') }}?v={{ asset_ver('core.js') if asset_ver is defined else '' }}"></script>
+<script src="{{ url_for('static', filename='board.js') }}?v={{ asset_ver('board.js') if asset_ver is defined else '' }}"></script>
+<script src="{{ url_for('static', filename='notes.js') }}?v={{ asset_ver('notes.js') if asset_ver is defined else '' }}"></script>
+<script src="{{ url_for('static', filename='feed.js') }}?v={{ asset_ver('feed.js') if asset_ver is defined else '' }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

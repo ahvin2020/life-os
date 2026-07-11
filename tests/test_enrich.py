@@ -92,7 +92,7 @@ def test_enrich_note_rewrites_title_summary_tags(client):
 
 def test_enrich_prompt_includes_metadata_words_and_profile(client, monkeypatch):
     captured = {}
-    monkeypatch.setattr(capture, "_read_profile", lambda: "PROFILE-MARKER")
+    monkeypatch.setattr(vault_store, "read_profile", lambda: "PROFILE-MARKER")
     vault_store.create_note(title="x", body="watch this https://youtu.be/z later for the CPF video",
                             tags=["link"])
     slug = vault_store.list_notes()[0]["slug"]

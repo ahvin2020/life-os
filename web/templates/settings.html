@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Settings</h1></div>
+
+<form method="post" action="/settings/save" class="setform">
+
+  <div class="sect"><span>Proactive AI &amp; schedule</span><span class="rule"></span></div>
+  <div class="setgroup">
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Morning brief</div><div class="sdesc">Daily AI brief naming your #1 thing for the day</div></div>
+      <div class="sctrls"><input class="ctrl schedtime schedctl" type="time" name="digest_hour" value="{{ values.digest_hour or defaults.digest_hour }}" aria-label="Morning brief time"><input type="checkbox" name="brief_enabled" value="1" {% if toggles.brief_enabled %}checked{% endif %} aria-label="Enable morning brief"></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Evening reflection</div><div class="sdesc">Journal-reflection prompts, sent each night</div></div>
+      <div class="sctrls"><input class="ctrl schedtime schedctl" type="time" name="reflection_hour" value="{{ values.reflection_hour or defaults.reflection_hour }}" aria-label="Evening reflection time"><input type="checkbox" name="reflection_enabled" value="1" {% if toggles.reflection_enabled %}checked{% endif %} aria-label="Enable evening reflection"></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Backlog triage</div><div class="sdesc">Do / Defer / Delete pass over your stale tasks (on-demand always works too)</div></div>
+      {% set daynames = {'sun':'Sunday','mon':'Monday','tue':'Tuesday','wed':'Wednesday','thu':'Thursday','fri':'Friday','sat':'Saturday','daily':'Daily'} %}
+      <div class="sctrls"><select class="ctrl schedctl" name="triage_day" style="min-width:110px" aria-label="Triage day">
+        {% for d in triage_days %}<option value="{{ d }}" {% if triage_day == d %}selected{% endif %}>{{ daynames[d] }}</option>{% endfor %}
+      </select><input class="ctrl schedtime schedctl" type="time" name="triage_time" value="{{ values.triage_time or defaults.triage_time }}" aria-label="Triage time"><input type="checkbox" name="triage_enabled" value="1" {% if toggles.triage_enabled %}checked{% endif %} aria-label="Enable backlog triage"></div>
+    </div>
+  </div>
+
+  <div class="sect"><span>Voice &amp; capture</span><span class="rule"></span></div>
+  <div class="setgroup">
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Transcription language</div><div class="sdesc">Whisper language for voice notes (auto-detect is unreliable — pick one)</div></div>
+      {% set vl = values.voice_language or defaults.voice_language %}
+      <div class="sctrls"><select class="ctrl" name="voice_language" style="min-width:160px">
+        {% for code, name in [('en','English'),('zh','Chinese'),('ms','Malay'),('ta','Tamil'),('hi','Hindi'),('id','Indonesian'),('ja','Japanese'),('ko','Korean'),('es','Spanish'),('fr','French'),('de','German')] %}
+        <option value="{{ code }}" {% if vl == code %}selected{% endif %}>{{ name }} ({{ code }})</option>
+        {% endfor %}
+      </select></div>
+    </div>
+  </div>
+
+  <div class="sect"><span>General</span><span class="rule"></span></div>
+  <div class="setgroup">
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">App timezone</div><div class="sdesc">Used for all &ldquo;today&rdquo; logic; blank = this device (<span class="mono">{{ machine_tz }}</span>)</div></div>
+      <div class="sctrls"><select class="ctrl" name="app_tz" style="min-width:180px">{% for z in tz_options %}<option value="{{ z }}" {% if z == tz_current %}selected{% endif %}>{{ z }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Archive done after</div><div class="sdesc">Completed tasks move to the archive</div></div>
+      <div class="sctrls"><input class="ctrl dayin" type="number" min="1" max="365" inputmode="numeric" name="archive_done_days" value="{{ values.archive_done_days or defaults.archive_done_days }}"><span class="unit">days</span></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Purge deleted after</div><div class="sdesc">Soft-deleted items are removed for good</div></div>
+      <div class="sctrls"><input class="ctrl dayin" type="number" min="1" max="365" inputmode="numeric" name="purge_deleted_days" value="{{ values.purge_deleted_days or defaults.purge_deleted_days }}"><span class="unit">days</span></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Stale backlog after</div><div class="sdesc">Backlog cards start confessing their age</div></div>
+      <div class="sctrls"><input class="ctrl dayin" type="number" min="1" max="365" inputmode="numeric" name="stale_backlog_days" value="{{ values.stale_backlog_days or defaults.stale_backlog_days }}"><span class="unit">days</span></div>
+    </div>
+  </div>
+
+  <div class="sect"><span>Backup</span><span class="rule"></span></div>
+  <div class="setgroup">
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Offsite location</div><div class="sdesc">Where the nightly copy is mirrored; leave blank to use the default synced folder shown</div></div>
+      <div class="sctrls"><input class="ctrl" style="width:230px;font-family:var(--mono);font-size:12px" type="text" name="backup_location" value="{{ backup_location }}" placeholder="{{ backup_dir_default }}"></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Keep backups</div><div class="sdesc">Older backups are pruned automatically</div></div>
+      <div class="sctrls"><input class="ctrl dayin" type="number" min="1" max="365" inputmode="numeric" name="backup_keep" value="{{ values.backup_keep or defaults.backup_keep }}"><span class="unit">recent</span></div>
+    </div>
+  </div>
+
+  <div class="setsave"><span class="setsaved" id="setsaved" aria-live="polite">Saved ✓</span></div>
+</form>
+
+<div class="sect"><span>System health</span><span class="rule"></span></div>
+<div class="setgroup">
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">Capture daemon</div><div class="sdesc"><span class="mono">{{ status.capture_last_ran | fstamp }}</span> · <span class="mono">{{ nextrun.capture }}</span></div></div>
+    <div class="sctrls"><span class="health"><span class="dot {{ status.health.capture }}"></span></span><button class="runbtn" type="button" data-run="capture">Restart</button></div>
+  </div>
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">#unsorted sweep</div><div class="sdesc"><span class="mono">{{ status.triage_last_ran | fstamp }}</span> · next <span class="mono">{{ nextrun.triage }}</span></div></div>
+    <div class="sctrls"><span class="health"><span class="dot {{ status.health.triage }}"></span></span><button class="runbtn" type="button" data-run="triage">Run now</button></div>
+  </div>
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span> · next <span class="mono">{{ nextrun.backup }}</span></div></div>
+    <div class="sctrls"><span class="health"><span class="dot {{ status.health.backup }}"></span></span><button class="runbtn" type="button" data-run="backup">Run now</button></div>
+  </div>
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">Proactive AI</div><div class="sdesc">brief <span class="mono">{{ status.digest_last_sent | fdate }}</span>{% if nextrun.brief %} → next <span class="mono">{{ nextrun.brief }}</span>{% endif %} · reflection <span class="mono">{{ status.reflection_last_sent | fdate }}</span>{% if nextrun.reflection %} → next <span class="mono">{{ nextrun.reflection }}</span>{% endif %}</div></div>
+  </div>
+</div>
+{% endblock %}

@@ -279,4 +279,21 @@ def test_notes_ask_endpoint_shape(client):
                     headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 200
     j = r.get_json()
-    assert j["status"] == "ok" and j["results"] == [] and j["fallback"] is False and j["q"] == ""
+    assert j["status"] == "ok" and j["html"] == "" and j["count"] == 0
+    assert j["fallback"] is False and j["q"] == ""
+
+
+def test_notes_ask_renders_real_note_cards(client):
+    # Claude is unavailable in tests → deterministic recency fallback, but the endpoint
+    # still renders the SAME note_card macro as the grid (the visual-parity fix).
+    c1 = _lib_note("CPF top-up hacks", "cpf-epf-retirement",
+                   created="2026-07-05T09:00:00+08:00", url="https://youtu.be/abc")
+    r = client.post("/notes/ask", data={"q": "cpf"},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["count"] >= 1
+    # Same macro as the grid → same card DOM (note card in an .ngrid, tag pill, data-slug).
+    assert 'class="ngrid"' in j["html"] and 'class="note' in j["html"]
+    assert 'class="ntag"' in j["html"]
+    assert f'data-slug="{c1["slug"]}"' in j["html"]

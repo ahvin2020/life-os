@@ -6,11 +6,12 @@ Today's page is editable in-browser; j:/voice captures append timestamped entrie
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, send_file, abort
 
-from web_core import db, respond, today_iso
+from web_core import db, respond, today_iso, is_ajax
 import vault_store
 
 bp = Blueprint("journal", __name__)
@@ -53,6 +54,33 @@ def today_so_far(conn, today: str) -> dict:
     }
 
 
+def _month_cadence(today: str) -> dict:
+    """This month's writing rhythm as a dot per day — habit made visible WITHOUT a
+    daily-streak nag (research: streak cadence, not streaks, is what breeds guilt)."""
+    import calendar
+    base = datetime.strptime(today, "%Y-%m-%d").date()
+    written = {d["day"] for d in vault_store.list_journal_days()}
+    ndays = calendar.monthrange(base.year, base.month)[1]
+    # GitHub-style contribution graph: 7 weekday rows (Sun→Sat) × week columns.
+    lead = (base.replace(day=1).weekday() + 1) % 7        # Sunday=0
+    cells = [None] * lead
+    count = 0
+    for dd in range(1, ndays + 1):
+        d = base.replace(day=dd)
+        iso = d.isoformat()
+        w = iso in written
+        count += 1 if w else 0
+        cells.append({"iso": iso, "day": dd, "written": w, "today": iso == today,
+                      "future": dd > base.day, "label": d.strftime("%a %-d %b")})
+    while len(cells) % 7:                                  # pad the trailing week
+        cells.append(None)
+    start_sun = base.replace(day=1) - timedelta(days=lead)
+    weeks = [{"tick": (start_sun + timedelta(days=i)).day, "cells": cells[i:i + 7]}
+             for i in range(0, len(cells), 7)]
+    return {"weeks": weeks, "count": count, "month": base.strftime("%B"),
+            "weekdays": ["S", "M", "T", "W", "T", "F", "S"]}
+
+
 def _annotate_occurrences(page):
     """Give each entry an `idx` — its occurrence among same-HH:MM entries — so the
     per-entry edit/delete API can disambiguate duplicate timestamps."""
@@ -77,7 +105,7 @@ def journal_page():
         "journal.html", today=today,
         today_pretty=datetime.strptime(today, "%Y-%m-%d").strftime("%A %-d %B"),
         page=page, prev_days=days, flashbacks=_flashbacks(today),
-        today_so_far=tsf, active="journal")
+        today_so_far=tsf, cadence=_month_cadence(today), active="journal")
 
 
 @bp.route("/journal/entry", methods=["POST"])
@@ -88,22 +116,65 @@ def journal_entry():
     day = request.form.get("day") or today_iso()
     source = request.form.get("source") or ""
     vault_store.append_journal_entry(day, text, source)
-    if _ajax():
+    if is_ajax():
         return jsonify({"status": "ok", "day": day})
     return respond(True, "Entry added", to="/journal")
 
 
+@bp.route("/journal/<day>/entry/<ts>/audio")
+def journal_entry_audio(day, ts):
+    """Serve the original recording for ONE voice journal entry, keyed by day + HH:MM
+    + occurrence (?i=idx, matching e.idx). Pointer trusted only for its basename (no
+    traversal); the file always lives in vault/.audio/. 404 when the entry has none."""
+    page = _annotate_occurrences(vault_store.read_journal(day))
+    if not page:
+        abort(404)
+    try:
+        idx = max(0, int(request.args.get("i") or 0))
+    except (TypeError, ValueError):
+        idx = 0
+    entry = next((e for e in page["entries"]
+                  if e["time"] == ts and e.get("idx") == idx and e.get("audio")), None)
+    if not entry:
+        abort(404)
+    path = os.path.join(vault_store.audio_dir(), os.path.basename(entry["audio"]))
+    if not os.path.exists(path):
+        abort(404)
+    resp = send_file(path, mimetype="audio/ogg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
+
+
+def _relative_day(day: str, today: str) -> str:
+    """A friendly 'yesterday'/'3 days ago' badge; empty for anything over a week out
+    (the full date in the header already says it)."""
+    try:
+        delta = (datetime.strptime(today, "%Y-%m-%d").date()
+                 - datetime.strptime(day, "%Y-%m-%d").date()).days
+    except ValueError:
+        return ""
+    if delta == 0:
+        return "today"
+    if delta == 1:
+        return "yesterday"
+    if 2 <= delta <= 6:
+        return f"{delta} days ago"
+    return ""
+
+
 @bp.route("/journal/<day>")
 def journal_day(day):
-    page = vault_store.read_journal(day)
-    if _ajax():
+    page = _annotate_occurrences(vault_store.read_journal(day))
+    if is_ajax():
         return jsonify({"status": "ok", "day": day, "raw": page["raw"] if page else ""})
     try:
         pretty = datetime.strptime(day, "%Y-%m-%d").strftime("%A %-d %B %Y")
     except ValueError:
         pretty = day
-    return render_template("journal_day.html", day=day, pretty=pretty,
-                           page=page, active="journal")
+    voice_count = sum(1 for e in page["entries"] if e.get("audio")) if page else 0
+    return render_template("journal_day.html", day=day, pretty=pretty, page=page,
+                           rel=_relative_day(day, today_iso()),
+                           voice_count=voice_count, active="journal")
 
 
 @bp.route("/journal/<day>/save", methods=["POST"])
@@ -144,7 +215,3 @@ def journal_entry_delete(day, ts):
     if page is None:
         return jsonify({"status": "error", "message": "entry not found"}), 404
     return jsonify({"status": "ok", "day": day, "raw": page["raw"], "prev_raw": prev_raw})
-
-
-def _ajax():
-    return request.headers.get("X-Requested-With") == "XMLHttpRequest"

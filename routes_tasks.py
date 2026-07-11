@@ -7,225 +7,26 @@ Today view and the Tasks board reading the same logic.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 from flask import Blueprint, render_template, request, jsonify
 
 from web_core import db, respond, today_iso
 from db import now_iso
-from capture import create_task, next_sort_order
+from capture import create_task
+
+# Pure task-domain helpers now live in tasks_core (Blueprint-free so the bot
+# daemon / proactive AI can import them). Re-exported here for back-compat:
+# existing `from routes_tasks import today_tasks` call sites still resolve.
+from tasks_core import (
+    _WEEKDAYS, _row_to_task, _WEEK_SINCE_SQL, set_task_col, _progress,
+    subtask_progress, task_dict, next_due_date, _respawn_recurring, complete_task,
+    _reconcile_parent, _setting_days, archive_old_done, purge_deleted, today_tasks,
+    today_task_rows, week_tasks, bump_reschedule, day_score,
+)
 
 bp = Blueprint("tasks", __name__)
 
 CATEGORIES = ("content", "business", "personal")
 COLUMNS = ("backlog", "week", "done")
-_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-
-
-# ── pure helpers (shared with routes_main) ───────────────────────────────────
-def _row_to_task(r) -> dict:
-    return {
-        "id": r["id"], "title": r["title"], "col": r["col"],
-        "sort_order": r["sort_order"], "priority": r["priority"],
-        "category": r["category"], "due_date": r["due_date"],
-        "planned_on": r["planned_on"], "recur_rule": r["recur_rule"],
-        "goal_id": r["goal_id"], "parent_id": r["parent_id"],
-        "done": bool(r["done"]), "completed_at": r["completed_at"],
-        "archived_at": r["archived_at"],
-    }
-
-
-def subtask_progress(conn, task_id) -> dict:
-    rows = conn.execute(
-        "SELECT done FROM tasks WHERE parent_id = ? AND deleted_at IS NULL", (task_id,)).fetchall()
-    total = len(rows)
-    done = sum(1 for r in rows if r["done"])
-    pct = (done / total * 100) if total else 0
-    return {"done": done, "total": total, "pct": pct}
-
-
-def task_dict(conn, r) -> dict:
-    """Full task dict including subtasks + ring progress (for a parent)."""
-    t = _row_to_task(r)
-    subs = conn.execute(
-        "SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id",
-        (r["id"],)).fetchall()
-    t["subtasks"] = [_row_to_task(s) for s in subs]
-    prog = subtask_progress(conn, r["id"])
-    t["sub_done"], t["sub_total"], t["sub_pct"] = prog["done"], prog["total"], prog["pct"]
-    return t
-
-
-def next_due_date(rule: str, from_date: str = None) -> str:
-    """Next occurrence for a recurrence rule. Supports:
-    'daily' | 'weekly:<mon..sun>' | 'monthly:<1-28>'. Returns an ISO date."""
-    base = datetime.strptime(from_date or today_iso(), "%Y-%m-%d").date()
-    rule = (rule or "").strip().lower()
-    if rule == "daily":
-        return (base + timedelta(days=1)).isoformat()
-    if rule.startswith("weekly:"):
-        target = rule.split(":", 1)[1].strip()[:3]
-        if target in _WEEKDAYS:
-            ti = _WEEKDAYS.index(target)
-            delta = (ti - base.weekday()) % 7
-            delta = delta or 7  # always strictly in the future
-            return (base + timedelta(days=delta)).isoformat()
-    if rule.startswith("monthly:"):
-        try:
-            dom = max(1, min(28, int(rule.split(":", 1)[1])))
-        except ValueError:
-            dom = base.day
-        month = base.month + 1
-        year = base.year + (1 if month > 12 else 0)
-        month = 1 if month > 12 else month
-        return base.replace(year=year, month=month, day=dom).isoformat()
-    return (base + timedelta(days=1)).isoformat()
-
-
-def _respawn_recurring(conn, r):
-    """Insert a fresh copy of a completed recurring task with the next due date,
-    carrying its subtasks over as unchecked."""
-    # Base the next occurrence off the LATER of the old due date and today, so
-    # completing a long-overdue recurring task lands the respawn in the future
-    # instead of another already-overdue copy.
-    today = today_iso()
-    from_date = r["due_date"] or today
-    if from_date < today:
-        from_date = today
-    next_due = next_due_date(r["recur_rule"], from_date)
-    new_id = create_task(
-        conn, r["title"], col=r["col"] if r["col"] != "done" else "week",
-        priority=r["priority"], category=r["category"], due_date=next_due,
-        recur_rule=r["recur_rule"], goal_id=r["goal_id"])
-    subs = conn.execute(
-        "SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id",
-        (r["id"],)).fetchall()
-    for s in subs:
-        create_task(conn, s["title"], parent_id=new_id)
-    return new_id
-
-
-def complete_task(conn, task_id, done: bool):
-    """Mark a task done/undone, respawning recurring tasks and reconciling parents.
-    Returns a dict describing side effects (for toast messaging)."""
-    r = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not r:
-        return {"ok": False}
-    ts = now_iso()
-    result = {"ok": True, "respawned": None, "parent_completed": None}
-    if done:
-        conn.execute(
-            "UPDATE tasks SET done=1, completed_at=?, col=CASE WHEN parent_id IS NULL "
-            "THEN 'done' ELSE col END, updated=? WHERE id=?",
-            (today_iso(), ts, task_id))
-        if r["parent_id"] is None and r["recur_rule"]:
-            result["respawned"] = _respawn_recurring(conn, r)
-    else:
-        conn.execute(
-            "UPDATE tasks SET done=0, completed_at=NULL, col=CASE WHEN parent_id IS NULL "
-            "AND col='done' THEN 'week' ELSE col END, updated=? WHERE id=?",
-            (ts, task_id))
-    # Reconcile parent when a subtask changed.
-    if r["parent_id"] is not None:
-        result["parent_completed"] = _reconcile_parent(conn, r["parent_id"])
-    return result
-
-
-def _reconcile_parent(conn, parent_id):
-    """Auto-complete a parent when its last subtask is checked; un-complete it when a
-    subtask is unchecked. Returns True (completed), False (un-completed), or None."""
-    prog = subtask_progress(conn, parent_id)
-    if prog["total"] == 0:
-        return None
-    p = conn.execute("SELECT * FROM tasks WHERE id=?", (parent_id,)).fetchone()
-    ts = now_iso()
-    if prog["done"] == prog["total"] and not p["done"]:
-        conn.execute(
-            "UPDATE tasks SET done=1, completed_at=?, col='done', updated=? WHERE id=?",
-            (today_iso(), ts, parent_id))
-        if p["recur_rule"]:
-            _respawn_recurring(conn, p)
-        return True
-    if prog["done"] < prog["total"] and p["done"]:
-        conn.execute(
-            "UPDATE tasks SET done=0, completed_at=NULL, "
-            "col=CASE WHEN col='done' THEN 'week' ELSE col END, updated=? WHERE id=?",
-            (ts, parent_id))
-        return False
-    return None
-
-
-def archive_old_done(conn):
-    """Set archived_at on done tasks whose completed_at is older than 7 days.
-    Rows stay in the DB (queryable) but drop out of the board."""
-    cutoff = (datetime.strptime(today_iso(), "%Y-%m-%d") - timedelta(days=7)).date().isoformat()
-    with conn:
-        conn.execute(
-            "UPDATE tasks SET archived_at=? WHERE done=1 AND archived_at IS NULL "
-            "AND parent_id IS NULL AND completed_at IS NOT NULL AND completed_at < ?",
-            (now_iso(), cutoff))
-
-
-def purge_deleted(conn):
-    """Hard-delete tasks soft-deleted more than 30 days ago (undo window elapsed).
-    Same pattern as archive_old_done; subtasks cascade via the FK."""
-    cutoff = (datetime.strptime(today_iso(), "%Y-%m-%d") - timedelta(days=30)).date().isoformat()
-    with conn:
-        conn.execute(
-            "DELETE FROM tasks WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
-
-
-def today_tasks(conn) -> list:
-    """Tasks that belong on Today: parent tasks (not subtasks, not archived) that are
-    due today, overdue-and-open, ☀ planned today, or completed today (dimmed)."""
-    today = today_iso()
-    rows = conn.execute(
-        """SELECT * FROM tasks
-             WHERE parent_id IS NULL AND archived_at IS NULL AND deleted_at IS NULL AND (
-               due_date = ?
-               OR (due_date IS NOT NULL AND due_date < ? AND done = 0)
-               OR planned_on = ?
-               OR (done = 1 AND completed_at = ?)
-             )
-           ORDER BY done, sort_order, id""",
-        (today, today, today, today)).fetchall()
-    return [task_dict(conn, r) for r in rows]
-
-
-def week_tasks(conn) -> list:
-    """Open top-level tasks parked in the 'week' column that are NOT already on Today —
-    a view-only pool shown under the Today list so the week's pending work is visible and
-    one tap ('Do today') promotes it. Excludes anything due today, overdue, planned today,
-    or done (those already belong to Today); this does NOT change Today membership."""
-    today = today_iso()
-    rows = conn.execute(
-        """SELECT * FROM tasks
-             WHERE parent_id IS NULL AND archived_at IS NULL AND deleted_at IS NULL
-               AND col = 'week' AND done = 0
-               AND (due_date IS NULL OR due_date > ?)
-               AND (planned_on IS NULL OR planned_on != ?)
-           ORDER BY sort_order, id""",
-        (today, today)).fetchall()
-    return [task_dict(conn, r) for r in rows]
-
-
-def bump_reschedule(conn, task_id):
-    """Increment a task's postpone counter — called when a due_date moves later or a
-    previously-set planned_on is cleared. Feeds the backlog-intelligence 'postponed N×'
-    signal. Best-effort: never the primary effect of an edit, so it never raises."""
-    try:
-        conn.execute(
-            "UPDATE tasks SET reschedule_count = COALESCE(reschedule_count, 0) + 1 WHERE id=?",
-            (task_id,))
-    except Exception:
-        pass
-
-
-def day_score(tasks) -> dict:
-    total = len(tasks)
-    done = sum(1 for t in tasks if t["done"])
-    pct = (done / total * 100) if total else 0
-    return {"done": done, "total": total, "pct": pct}
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -234,15 +35,28 @@ def tasks_page():
     conn = db()
     archive_old_done(conn)
     purge_deleted(conn)
+    today = today_iso()
     board = {c: [] for c in COLUMNS}
+    pinned = []
     rows = conn.execute(
         "SELECT * FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
         "AND deleted_at IS NULL ORDER BY sort_order, id").fetchall()
     for r in rows:
-        board[r["col"]].append(task_dict(conn, r))
+        t = task_dict(conn, r)
+        # On-today tasks (due today / overdue / ☀-planned, sticky) PIN to the top
+        # of the week column wherever their col says they live — on the board,
+        # today-ness is a place, not a badge. Their stored col is untouched.
+        if not t["done"] and (
+                (t["due_date"] and t["due_date"] <= today)
+                or (t["planned_on"] and t["planned_on"] <= today)):
+            t["pinned"] = True
+            pinned.append(t)
+        else:
+            board[r["col"]].append(t)
+    board["week"] = pinned + board["week"]
     counts = {c: len(board[c]) for c in COLUMNS}
     goals = conn.execute(
-        "SELECT id, title FROM goals WHERE archived_at IS NULL ORDER BY created").fetchall()
+        "SELECT id, title FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()
     conn.close()
     return render_template("tasks.html", board=board, counts=counts,
                            categories=CATEGORIES, goals=goals, active="tasks")
@@ -262,13 +76,13 @@ def task_new():
             priority=f.get("priority") or None,
             category=f.get("category") or None,
             due_date=f.get("due_date") or None,
+            planned_on=f.get("planned_on") or None,
             recur_rule=f.get("recur_rule") or None,
             goal_id=int(f["goal_id"]) if f.get("goal_id") else None,
             parent_id=int(f["parent_id"]) if f.get("parent_id") else None,
         )
     conn.close()
-    return respond(True, "Task added", to="/tasks") if not _wants_json() else \
-        jsonify({"status": "ok", "id": tid})
+    return respond(True, "Task added", to="/tasks", extra={"id": tid})
 
 
 @bp.route("/tasks/<int:task_id>/edit", methods=["POST"])
@@ -288,8 +102,10 @@ def task_edit(task_id):
             val = f.get(col) or None
             fields.append(f"{col}=?")
             params.append(val)
-    if "col" in f and f.get("col") in COLUMNS:
-        fields.append("col=?"); params.append(f.get("col"))
+    new_col = f.get("col") if ("col" in f and f.get("col") in COLUMNS) else None
+    if new_col:
+        fields.append(_WEEK_SINCE_SQL); params.extend([new_col, today_iso()])
+        fields.append("col=?"); params.append(new_col)
     if "goal_id" in f:
         fields.append("goal_id=?"); params.append(int(f["goal_id"]) if f.get("goal_id") else None)
     if not fields:
@@ -298,6 +114,27 @@ def task_edit(task_id):
     fields.append("updated=?"); params.append(now_iso())
     params.append(task_id)
     with conn:
+        # The editor's column select crossing the done boundary IS completion /
+        # un-completion — route through complete_task (completed_at, recurrence
+        # respawn) exactly like the checkbox and /tasks/reorder, so no affordance
+        # can produce a "done" task that never ran completion logic.
+        if new_col:
+            cur = conn.execute("SELECT done, parent_id FROM tasks WHERE id=?",
+                               (task_id,)).fetchone()
+            if cur and cur["parent_id"] is None:
+                if new_col == "done" and not cur["done"]:
+                    complete_task(conn, task_id, True)
+                elif new_col != "done" and cur["done"]:
+                    complete_task(conn, task_id, False)
+            if new_col == "backlog":
+                # Moving to Backlog takes a task off Today (same semantics as the
+                # board's drag): a ☀ plan is cleared and counted as a postpone.
+                # (A due date can never be cleared implicitly.)
+                p = conn.execute("SELECT planned_on, done FROM tasks WHERE id=?",
+                                 (task_id,)).fetchone()
+                if p and not p["done"] and p["planned_on"] and p["planned_on"] <= today_iso():
+                    conn.execute("UPDATE tasks SET planned_on=NULL WHERE id=?", (task_id,))
+                    bump_reschedule(conn, task_id)
         conn.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id=?", params)
         if postponed:
             bump_reschedule(conn, task_id)
@@ -319,20 +156,46 @@ def task_complete(task_id):
 
 @bp.route("/tasks/<int:task_id>/plan", methods=["POST"])
 def task_plan(task_id):
-    """Toggle ☀ planned-for-today."""
+    """Toggle ☀ planned-for-today. Sticky: a plan from a past day still counts as
+    'on today' (it rolled over), so toggling it CLEARS it rather than re-stamping.
+    ☀ on a DONE task means "I need to do this (again)" — it reopens the task first
+    (un-complete → back to 'week'), never producing a struck-through card pinned
+    on Today."""
     conn = db()
-    r = conn.execute("SELECT planned_on FROM tasks WHERE id=?", (task_id,)).fetchone()
+    r = conn.execute("SELECT planned_on, done, parent_id FROM tasks WHERE id=?",
+                     (task_id,)).fetchone()
     if not r:
         conn.close()
         return respond(False, "Task not found", fallback="/tasks")
-    new_val = None if r["planned_on"] == today_iso() else today_iso()
+    today = today_iso()
+    on_today = bool(r["planned_on"]) and r["planned_on"] <= today
+    new_val = None if on_today else today
+    reopened = False
     with conn:
+        if new_val is not None and r["done"] and r["parent_id"] is None:
+            complete_task(conn, task_id, False)      # reopen: done → open, col='week'
+            reopened = True
         conn.execute("UPDATE tasks SET planned_on=?, updated=? WHERE id=?",
                      (new_val, now_iso(), task_id))
+        # "On today" is a SUBSET of "This week" (user rule 2026-07-10): planning
+        # promotes a backlog task into the week column, and un-planning leaves it
+        # there — not-today does NOT mean not-this-week. Runs on both toggles so
+        # legacy planned-while-backlog rows also settle into week on untick.
+        cur = conn.execute("SELECT col, done, parent_id FROM tasks WHERE id=?",
+                           (task_id,)).fetchone()
+        if cur and cur["parent_id"] is None and not cur["done"] and cur["col"] == "backlog":
+            set_task_col(conn, task_id, "week")
         if new_val is None and r["planned_on"]:      # a set plan was cleared → a postpone
             bump_reschedule(conn, task_id)
+            # Un-planning surfaces the task at the TOP of its home column (it was
+            # just on Today — it shouldn't sink to the bottom of the backlog).
+            conn.execute(
+                "UPDATE tasks SET sort_order = (SELECT COALESCE(MIN(sort_order), 0) - 1 "
+                "FROM tasks WHERE col = (SELECT col FROM tasks WHERE id=?) "
+                "AND parent_id IS NULL) WHERE id=?",
+                (task_id, task_id))
     conn.close()
-    return jsonify({"status": "ok", "planned": bool(new_val)})
+    return jsonify({"status": "ok", "planned": bool(new_val), "reopened": reopened})
 
 
 @bp.route("/tasks/<int:task_id>/delete", methods=["POST"])
@@ -361,22 +224,41 @@ def task_restore(task_id):
 
 @bp.route("/tasks/reorder", methods=["POST"])
 def task_reorder():
-    """Persist SortableJS order. Body: {col, ids:[...]} — ids in display order."""
+    """Persist SortableJS order. Body: {col, ids:[...]} — ids in display order.
+    Dragging across the done boundary IS completion/un-completion — routed through
+    complete_task so recurrence respawn + completed_at happen exactly like the
+    checkbox path (previously a drag into Done left done=0)."""
     data = request.get_json(silent=True) or {}
     col = data.get("col")
     ids = data.get("ids") or []
+    today = today_iso()
     conn = db()
     with conn:
         for i, tid in enumerate(ids):
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue                     # hostile/garbage id — skip, never 500
             if col in COLUMNS:
-                conn.execute("UPDATE tasks SET sort_order=?, col=?, updated=? WHERE id=?",
-                             (i, col, now_iso(), int(tid)))
+                r = conn.execute("SELECT done, parent_id FROM tasks WHERE id=?",
+                                 (tid,)).fetchone()
+                if r and r["parent_id"] is None:
+                    if col == "done" and not r["done"]:
+                        complete_task(conn, tid, True)
+                    elif col != "done" and r["done"]:
+                        complete_task(conn, tid, False)
+                if col == "backlog":
+                    # landing in Backlog takes a task off Today (the board's JS
+                    # unplans first — this keeps the raw API equally coherent)
+                    conn.execute(
+                        "UPDATE tasks SET planned_on=NULL WHERE id=? AND done=0 "
+                        "AND planned_on IS NOT NULL AND planned_on <= ?", (tid, today))
+                conn.execute(
+                    f"UPDATE tasks SET sort_order=?, {_WEEK_SINCE_SQL}, col=?, "
+                    "updated=? WHERE id=?",
+                    (i, col, today, col, now_iso(), tid))
             else:
                 conn.execute("UPDATE tasks SET sort_order=?, updated=? WHERE id=?",
-                             (i, now_iso(), int(tid)))
+                             (i, now_iso(), tid))
     conn.close()
     return jsonify({"status": "ok"})
-
-
-def _wants_json():
-    return request.headers.get("X-Requested-With") == "XMLHttpRequest"

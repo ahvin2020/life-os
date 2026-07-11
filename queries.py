@@ -12,17 +12,12 @@ goal_progress) and vault_store — no query logic is duplicated here.
 
 from __future__ import annotations
 
-import os
 import re
-from datetime import datetime, timedelta
 
 from db import today_iso
-from routes_tasks import today_tasks, day_score
-from routes_goals import goal_progress
+from tasks_core import today_tasks, day_score
+from goals_core import goal_progress
 import vault_store
-
-# Free-form Q&A context budget (chars). Oldest material is trimmed first.
-_CTX_CAP = 12000
 
 # Nouns that make a message about Kelvin's data.
 _QNOUNS = ("todo", "todos", "task", "tasks", "today", "overdue", "goal", "goals",
@@ -79,7 +74,7 @@ def _due_suffix(t: dict, today: str) -> str:
 
 def _task_line(t: dict, today: str) -> str:
     mark = "❗" if t.get("priority") == "high" else "•"
-    plan = " · ☀" if t.get("planned_on") == today else ""
+    plan = " · ☀" if (t.get("planned_on") and t["planned_on"] <= today) else ""
     return f"{mark} {t['title']}{_due_suffix(t, today)}{plan}"
 
 
@@ -126,7 +121,7 @@ def _answer_column(conn, today, col, heading):
 
 def _answer_goals(conn):
     rows = conn.execute(
-        "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall()
+        "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created").fetchall()
     if not rows:
         return "🎯 No goals set yet."
     lines = ["🎯 Goals:"]
@@ -164,21 +159,10 @@ def _answer_find(term):
     return f"🔍 Notes matching '{term}':\n" + "\n".join("• " + h for h in hits)
 
 
-_SUPPORTED = (
-    "I can answer things like:\n"
-    "• what are my todos / what's on today\n"
-    "• any overdue?\n"
-    "• tasks this week / backlog\n"
-    "• goals\n"
-    "• journal — what did I write today\n"
-    "• find <term>\n"
-    "…or ask me anything about your tasks, notes, journal and goals.")
-
-
 def answer_query(conn, text: str):
     """Route a query-shaped message to a DETERMINISTIC handler (instant, free).
     Returns the answer string, or None when no deterministic handler matches — the
-    caller then falls back to the free-form Claude path (answer_freeform)."""
+    caller then routes the message to the agentic router (router.route)."""
     t = (text or "").strip().lower()
     today = today_iso()
 
@@ -193,134 +177,9 @@ def answer_query(conn, text: str):
         return _answer_journal(today)
     if "backlog" in t:
         return _answer_column(conn, today, "backlog", "🗂 Backlog")
-    if "this week" in t:                         # NOT bare "week" — "how was my week?" → free-form
+    if "this week" in t:                         # NOT bare "week" — "how was my week?" → router
         return _answer_column(conn, today, "week", "🗓 This week")
     if any(w in t for w in ("todo", "task", "today")):
         return _answer_today(conn, today)
-    return None                                  # → free-form Claude fallback
+    return None                                  # → agentic router fallback
 
-
-# ── free-form Claude Q&A (read-only fallback tier) ────────────────────────────
-_STOPWORDS = {"what", "when", "where", "which", "about", "did", "have", "this",
-              "that", "with", "the", "and", "for", "was", "how", "any", "are",
-              "my", "i", "do", "too", "much", "on", "of", "a", "is", "me", "say",
-              "said", "week", "today", "tell", "give"}
-
-
-def _salient_terms(question: str) -> list:
-    words = re.findall(r"[a-z0-9]{3,}", (question or "").lower())
-    seen, out = set(), []
-    for w in words:
-        if w not in _STOPWORDS and w not in seen:
-            seen.add(w)
-            out.append(w)
-    return out
-
-
-def build_context(conn, question: str, cap: int = _CTX_CAP) -> str:
-    """Assemble a READ-ONLY snapshot for the model to answer `question` from.
-    Trims oldest material first to stay under `cap` chars. Includes profile.md."""
-    today = today_iso()
-    week_ago = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=7)).date().isoformat()
-
-    # profile.md (always kept — it's the smallest, most valuable context)
-    profile = ""
-    ppath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vault", "profile.md")
-    if os.path.exists(ppath):
-        with open(ppath, encoding="utf-8") as f:
-            profile = f.read()
-
-    # open tasks + done-this-week
-    open_rows = conn.execute(
-        "SELECT title, col, due_date, category, priority FROM tasks WHERE parent_id IS NULL "
-        "AND archived_at IS NULL AND deleted_at IS NULL AND done=0 ORDER BY col, sort_order").fetchall()
-    open_lines = [f"- {r['title']} [{r['col']}"
-                  + (f", due {r['due_date']}" if r["due_date"] else "")
-                  + (f", {r['category']}" if r["category"] else "")
-                  + (f", {r['priority']}" if r["priority"] else "") + "]"
-                  for r in open_rows]
-    done_rows = conn.execute(
-        "SELECT title, completed_at FROM tasks WHERE parent_id IS NULL AND done=1 "
-        "AND deleted_at IS NULL AND completed_at >= ? ORDER BY completed_at", (week_ago,)).fetchall()
-    done_lines = [f"- {r['title']} (done {r['completed_at']})" for r in done_rows]
-
-    # goals with progress
-    goal_lines = []
-    for g in conn.execute("SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall():
-        p = goal_progress(conn, g)
-        if g["kind"] == "number":
-            goal_lines.append(f"- {g['title']} ({g['period']}): {int(p.get('current', 0))}/{int(p.get('target', 0))}")
-        else:
-            goal_lines.append(f"- {g['title']} ({g['period']}): {p.get('done', 0)}/{p.get('total', 0)}")
-
-    # journal, last 7 days (oldest-first so trimming drops oldest)
-    journal_blocks = []
-    for d in sorted(vault_store.list_journal_days(), key=lambda x: x["day"]):
-        if d["day"] < week_ago:
-            continue
-        page = vault_store.read_journal(d["day"])
-        if page and page["entries"]:
-            body = "\n".join(f"  {e['time']} {e['text']}" for e in page["entries"])
-            journal_blocks.append(f"{d['day']}:\n{body}")
-
-    # note titles + tags, plus full bodies of up to 3 that match the question
-    notes = vault_store.list_notes()
-    note_title_lines = [f"- {n['title']} [{', '.join('#' + t for t in n['tags'])}]" for n in notes]
-    terms = _salient_terms(question)
-    matched = []
-    for n in notes:
-        hay = (n["title"] + " " + (n["body"] or "")).lower()
-        if any(term in hay for term in terms):
-            matched.append(n)
-        if len(matched) >= 3:
-            break
-    note_body_blocks = [f"### {n['title']}\n{(n['body'] or '').strip()[:2000]}" for n in matched]
-
-    # Sections in trim priority: journal (oldest) and note titles trimmed first.
-    def _assemble():
-        parts = [
-            "=== profile.md ===\n" + profile,
-            "=== OPEN TASKS ===\n" + ("\n".join(open_lines) or "(none)"),
-            "=== DONE THIS WEEK ===\n" + ("\n".join(done_lines) or "(none)"),
-            "=== GOALS ===\n" + ("\n".join(goal_lines) or "(none)"),
-            "=== JOURNAL (last 7 days) ===\n" + ("\n\n".join(journal_blocks) or "(none)"),
-            "=== NOTE TITLES ===\n" + ("\n".join(note_title_lines) or "(none)"),
-            "=== RELEVANT NOTE BODIES ===\n" + ("\n\n".join(note_body_blocks) or "(none)"),
-        ]
-        return "\n\n".join(parts)
-
-    ctx = _assemble()
-    # Trim oldest-first to respect the cap: drop oldest journal days, then oldest titles.
-    while len(ctx) > cap and journal_blocks:
-        journal_blocks.pop(0)
-        ctx = _assemble()
-    while len(ctx) > cap and note_title_lines:
-        note_title_lines.pop(0)
-        ctx = _assemble()
-    if len(ctx) > cap:
-        ctx = ctx[:cap]
-    return ctx
-
-
-def build_qa_prompt(conn, question: str) -> str:
-    ctx = build_context(conn, question)
-    return (
-        "You are Kelvin's personal Life OS assistant answering a question about HIS "
-        "own data (below). Answer briefly in plain text suitable for Telegram — no "
-        "markdown tables. Reference specific items by name. If the data below does "
-        "not contain the answer, say so plainly; NEVER invent facts.\n\n"
-        f"{ctx}\n\n=== QUESTION ===\n{question}\n\n=== ANSWER ===\n")
-
-
-def answer_freeform(conn, question: str, claude_fn=None):
-    """Read-only free-form Q&A via `claude -p`. Returns the answer text, or None on
-    failure/timeout (caller shows a retry message). NEVER mutates any data."""
-    prompt = build_qa_prompt(conn, question)
-    if claude_fn is None:
-        from triage.run_triage import call_claude
-        claude_fn = lambda p: call_claude(p, timeout=60)
-    try:
-        out = (claude_fn(prompt) or "").strip()
-    except Exception:
-        return None
-    return out or None

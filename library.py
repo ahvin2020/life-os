@@ -35,7 +35,6 @@ from claude_cli import call_claude
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _CLUSTER_LOG = os.path.join(_ROOT, "data", "cluster_log.json")
-_PROFILE_PATH = os.path.join(_ROOT, "vault", "profile.md")
 
 # The fixed taxonomy (also listed in vault/profile.md). One tag per imported note.
 CLUSTERS = (
@@ -237,17 +236,10 @@ def _candidate_block(pool: list) -> str:
     return "\n".join(lines)
 
 
-def _profile() -> str:
-    if os.path.exists(_PROFILE_PATH):
-        with open(_PROFILE_PATH, encoding="utf-8") as f:
-            return f.read()
-    return ""
-
-
 def build_selection_prompt(raw_message: str, topic: str, count: int, pool: list) -> str:
     return (
         "=== vault/profile.md (who Kelvin is) ===\n"
-        f"{_profile()}\n\n"
+        f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
         "Kelvin is a Singapore finance/investing YouTuber (@KelvinLearnsInvesting). From "
         "his saved idea library below, pick the strongest ideas for his NEXT VIDEO on the "

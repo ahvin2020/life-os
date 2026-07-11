@@ -6,12 +6,13 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import capture_daemon as cd
+import proactive
 import triage.run_triage as rt
 import vault_store
 import web_core
 from capture import create_task, route_capture
-from routes_tasks import today_tasks, purge_deleted
-from routes_goals import goal_progress, archive_expired_goals, current_period_start
+from tasks_core import today_tasks, purge_deleted
+from goals_core import goal_progress, archive_expired_goals, current_period_start
 from db import connect, today_iso, now_iso
 
 
@@ -97,7 +98,7 @@ def test_transcribe_passes_language_and_condition(monkeypatch):
     assert out == "What should I do today?"                     # stripped
     assert calls["language"] == "en"                            # explicit, not auto-detect
     assert calls["cond"] is False                               # repetition-loop guard
-    assert "medium" in calls["model"]                           # upgraded from base
+    assert "large-v3" in calls["model"]                         # upgraded for accented clips
 
 
 # ── triage application (mock claude output) ───────────────────────────────────
@@ -303,41 +304,6 @@ def test_query_handlers_output(client):
     conn.close()
 
 
-def test_freeform_context_builder_and_cap(client):
-    import queries
-    conn = _db()
-    today = today_iso()
-    with conn:
-        create_task(conn, "Sponsor deal with Moomoo", col="week", due_date=today, category="business")
-    vault_store.create_note(title="Moomoo sponsor deal terms", body="They offered X for a dedicated video.",
-                            tags=["business"])
-    vault_store.create_note(title="Unrelated recipe", body="chicken rice steps", tags=["personal"])
-    ctx = queries.build_context(conn, "what did I say about the Moomoo sponsor deal?")
-    conn.close()
-    # profile + task + the matching note body are present; the unrelated note body is not
-    assert "profile.md" in ctx
-    assert "Sponsor deal with Moomoo" in ctx
-    assert "They offered X for a dedicated video." in ctx      # matched note body included
-    assert "chicken rice steps" not in ctx                     # non-matching body excluded
-    assert len(ctx) <= 12000                                   # size cap honoured
-
-
-def test_freeform_answer_mocked_and_timeout(client):
-    import queries
-    conn = _db()
-    with conn:
-        create_task(conn, "Edit the REITs video", col="week")
-    # mocked claude reply path
-    reply = queries.answer_freeform(conn, "what's left to do?",
-                                    claude_fn=lambda p: "You still need to edit the REITs video.")
-    assert reply and "REITs" in reply
-    # timeout / failure path → None (daemon shows a retry message)
-    def _boom(p):
-        raise TimeoutError("claude timed out")
-    assert queries.answer_freeform(conn, "how was my week?", claude_fn=_boom) is None
-    conn.close()
-
-
 def test_open_question_goes_to_router_answer(client, monkeypatch):
     """An open question with no deterministic handler goes to the router, whose
     `answer` action replies inline — the SINGLE claude entry point (no separate Q&A)."""
@@ -400,7 +366,7 @@ def test_digest_lists_tasks_and_goals(client):
         conn.execute(
             "INSERT INTO goals (title, period, period_start, kind, target_num, current_num, created) "
             "VALUES ('Newsletter','month','2026-07-01','number',500,438,?)", (now_iso(),))
-    text = cd.build_digest(conn)
+    text = proactive.build_digest(conn)
     conn.close()
     assert "Due today thing" in text and "Overdue thing" in text
     assert "Newsletter" in text and "438/500" in text
@@ -412,7 +378,7 @@ def test_digest_sunday_stale_backlog(client):
         tid = create_task(conn, "Rotting backlog item", col="backlog")
         conn.execute("UPDATE tasks SET updated=? WHERE id=?", ("2026-05-01T00:00:00Z", tid))
     sunday = datetime(2026, 7, 12, 9, 0)                        # a Sunday
-    text = cd.build_digest(conn, day="2026-07-12", now=sunday)
+    text = proactive.build_digest(conn, day="2026-07-12", now=sunday)
     conn.close()
     assert "Stale backlog" in text and "Rotting backlog item" in text
     assert "next week's goals" in text

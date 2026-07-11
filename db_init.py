@@ -17,7 +17,7 @@ import argparse
 import sqlite3
 import sys
 
-from db import connect, DB_PATH, SCHEMA_VERSION
+from db import connect, DB_PATH, SCHEMA_VERSION, today_iso
 
 TABLES = [
     ("meta", """
@@ -46,6 +46,7 @@ TABLES = [
             unit         TEXT,
             achieved_at  TEXT,
             archived_at  TEXT,
+            deleted_at   TEXT,
             created      TEXT NOT NULL
         )
     """),
@@ -69,6 +70,7 @@ TABLES = [
             archived_at  TEXT,
             deleted_at   TEXT,
             reschedule_count INTEGER NOT NULL DEFAULT 0,
+            week_since   TEXT,
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -130,6 +132,27 @@ def migrate(conn) -> list:
             conn.execute(
                 "ALTER TABLE tasks ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0")
             applied.append("v4: tasks.reschedule_count")
+
+    # v5: week_since — the "This week" staleness clock. Stamped when a task enters
+    # the week column, cleared when it leaves; feeds the board's "Nd" stale badge.
+    # Backfill = today (the real entry date is unknowable; start counting now).
+    if 0 < disk < 5 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "week_since" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN week_since TEXT")
+            conn.execute("UPDATE tasks SET week_since=? WHERE col='week' AND done=0",
+                         (today_iso(),))
+            applied.append("v5: tasks.week_since (+backfill)")
+
+    # v6: soft-delete for goals (undo, not confirmation — parity with tasks/notes).
+    # Task links survive: goal_id's ON DELETE SET NULL never fires on a soft delete.
+    if 0 < disk < 6 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goals'").fetchone():
+        gcols = [r[1] for r in conn.execute("PRAGMA table_info(goals)").fetchall()]
+        if "deleted_at" not in gcols:
+            conn.execute("ALTER TABLE goals ADD COLUMN deleted_at TEXT")
+            applied.append("v6: goals.deleted_at")
     return applied
 
 

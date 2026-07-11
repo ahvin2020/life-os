@@ -2,16 +2,19 @@
 {% import "_macros.html" as m %}
 {% block title %}Today{% endblock %}
 {% block content %}
+{% if greeting %}<div class="greet">{{ greeting }}, Kelvin</div>{% endif %}
 <div class="vhead">
-  <h1>{{ weekday }}</h1><span class="date">{{ date_str }}</span>
+  <h1>{{ weekday }}</h1><span class="date">{{ date_str }}{% if yesterday_done %} · yesterday you finished {{ yesterday_done }}{% endif %}</span>
   <span class="spacer"></span>
   <span class="ringwrap" title="day score"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915" style="stroke-dasharray:{{ score.pct }} 100"></circle></svg></span>
-  <span class="chip warn">{{ score.done }}/{{ score.total }} done</span>
+  {# neutral chip — the day score is status, not needs-attention (amber is reserved) #}
+  <span class="chip">{{ score.done }}/{{ score.total }} done</span>
 </div>
 
 <div class="qcap">
   <span class="qplus">＋</span>
-  <input type="text" id="qin" placeholder="Add a task, note, or journal entry… (or paste a link)" aria-label="Quick add">
+  {# short enough to survive mid widths uncropped; bare-URL capture still works #}
+  <input type="text" id="qin" placeholder="Add a task, note, or journal entry…" aria-label="Quick add">
   <div class="qtypes" id="qtypes">
     <button class="qt active" data-t="auto" type="button">auto</button>
     <button class="qt" data-t="task" type="button">task</button>
@@ -28,7 +31,7 @@
   <div class="task"><span class="pri l"></span><label>Add your first task — type <span class="kbd">t: buy groceries</span> above</label></div>
   <div class="task"><span class="pri l"></span><label>Jot a note — type <span class="kbd">n: video idea</span> above</label></div>
   <div class="task"><span class="pri l"></span><label>Set a goal on the <a href="/goals">Goals</a> page</label></div>
-  <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">Telegram capture, voice notes, and NAS deploy arrive in Phase 2.</div></div>
+  <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">Or just text the bot — send anything (text, voice, links) to @kelvin_lifeos_bot.</div></div>
 </div>
 {% endif %}
 
@@ -36,7 +39,10 @@
   <div class="lcol">
     <div class="card hero">
       <div class="chead"><h2>Today's tasks</h2><a href="/tasks">all tasks →</a></div>
-      {% if tasks %}
+      {% if all_done %}
+        <div class="allclear"><div class="ac-big">You’re clear for today.</div><div class="ac-sub">Everything’s checked off — have a good one.</div></div>
+        {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
+      {% elif tasks %}
         {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
       {% else %}
         <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>

@@ -14,9 +14,9 @@ import argparse
 
 from web_core import app, DB_PATH
 import db_init
-import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals
+import routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings
 
-for _bpmod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals):
+for _bpmod in (routes_main, routes_tasks, routes_notes, routes_journal, routes_goals, routes_settings):
     app.register_blueprint(_bpmod.bp)
 
 
@@ -30,6 +30,12 @@ def main():
     import web_core as _wc
     _wc._DB_PATH = args.db
     db_init.init_db(args.db)
+
+    # Warm note thumbnails in the background so the first Notes browse is instant instead
+    # of fetching og:images on demand. Daemon thread — never blocks startup or shutdown.
+    import threading
+    import thumbs
+    threading.Thread(target=lambda: thumbs.warm_recent(), daemon=True).start()
 
     print(f"Life OS running at http://localhost:{args.port}")
     print(f"Database: {args.db}")

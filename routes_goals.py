@@ -14,98 +14,17 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request, jsonify
 
-from web_core import db, respond, today_iso
+from web_core import db, respond, today_iso, is_ajax
 from db import now_iso
 
+# Pure goal-domain helpers now live in goals_core (Blueprint-free so the bot
+# daemon / proactive AI can import them). Re-exported here for back-compat.
+from goals_core import (
+    TIMEFRAMES, current_period_start, goal_progress, format_goal_progress,
+    archive_expired_goals, purge_deleted_goals,
+)
+
 bp = Blueprint("goals", __name__)
-
-TIMEFRAMES = ("week", "month", "quarter", "year", "by_date", "ongoing")
-
-
-def current_period_start(timeframe: str, today: str = None) -> str:
-    """Anchor date for a timeframe's current period. by_date/ongoing return today
-    as a harmless anchor (their rollover keys off end_date / never)."""
-    d = datetime.strptime(today or today_iso(), "%Y-%m-%d").date()
-    if timeframe == "week":
-        return (d - timedelta(days=d.weekday())).isoformat()       # Monday
-    if timeframe == "quarter":
-        q_month = ((d.month - 1) // 3) * 3 + 1
-        return d.replace(month=q_month, day=1).isoformat()         # 1st of quarter
-    if timeframe == "year":
-        return d.replace(month=1, day=1).isoformat()               # Jan 1
-    if timeframe == "month":
-        return d.replace(day=1).isoformat()                        # 1st of month
-    return d.isoformat()
-
-
-def goal_progress(conn, g) -> dict:
-    """Derive progress from which fields exist (not from deprecated `kind`). Returns a
-    dict the template switches on via `shape` ('measure'|'rollup'|'milestone'|'both'),
-    keeping the legacy keys (current/target/done/total/pct/linked) so nothing breaks."""
-    rows = conn.execute(
-        "SELECT id, title, done FROM tasks WHERE goal_id=? AND archived_at IS NULL "
-        "AND deleted_at IS NULL ORDER BY done, sort_order, id", (g["id"],)).fetchall()
-    total = len(rows)
-    done = sum(1 for r in rows if r["done"])
-    linked = [{"title": r["title"], "done": bool(r["done"])} for r in rows]
-
-    cur = g["current_num"] or 0
-    tgt = g["target_num"]
-    unit = g["unit"]
-    achieved = g["achieved_at"] is not None
-
-    # measure present: an explicit target, OR a current number carrying a unit.
-    has_measure = (tgt is not None) or (bool(unit) and cur)
-    has_tasks = total > 0
-
-    if has_measure and has_tasks:
-        shape = "both"
-    elif has_measure:
-        shape = "measure"
-    elif has_tasks:
-        shape = "rollup"
-    else:
-        shape = "milestone"
-
-    if shape in ("measure", "both"):
-        pct = (cur / tgt * 100) if tgt else 0
-    elif shape == "rollup":
-        pct = (done / total * 100) if total else 0
-    else:
-        pct = 100 if achieved else 0
-
-    return {"shape": shape, "linked": linked, "done": done, "total": total,
-            "current": cur, "target": tgt or 0, "unit": unit or "",
-            "achieved": achieved, "pct": pct}
-
-
-def archive_expired_goals(conn):
-    """Auto-archive goals whose period has ended. Applies to week/month/quarter/year
-    (computed period ends) and by_date (after end_date passes); ongoing NEVER archives.
-    Legacy rows with a NULL timeframe fall back to their `period`."""
-    today = today_iso()
-    ts = now_iso()
-    with conn:
-        conn.execute(
-            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL "
-            "AND COALESCE(timeframe, period)='week' "
-            "AND date(period_start, '+7 day') <= ?", (ts, today))
-        conn.execute(
-            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL "
-            "AND COALESCE(timeframe, period)='month' "
-            "AND date(period_start, 'start of month', '+1 month') <= ?", (ts, today))
-        conn.execute(
-            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL "
-            "AND COALESCE(timeframe, period)='quarter' "
-            "AND date(period_start, '+3 months') <= ?", (ts, today))
-        conn.execute(
-            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL "
-            "AND COALESCE(timeframe, period)='year' "
-            "AND date(period_start, '+1 year') <= ?", (ts, today))
-        conn.execute(
-            "UPDATE goals SET archived_at=? WHERE archived_at IS NULL "
-            "AND COALESCE(timeframe, period)='by_date' "
-            "AND end_date IS NOT NULL AND end_date < ?", (ts, today))
 
 
 def _section_labels(today: str) -> dict:
@@ -127,8 +46,9 @@ def _section_labels(today: str) -> dict:
 def goals_page():
     conn = db()
     archive_expired_goals(conn)
+    purge_deleted_goals(conn)
     rows = conn.execute(
-        "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY created").fetchall()
+        "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()
     buckets = {k: [] for k in TIMEFRAMES}
     for g in rows:
         tf = g["timeframe"] or g["period"]
@@ -178,7 +98,7 @@ def goal_new():
              timeframe, end_date, unit, now_iso()))
     gid = cur.lastrowid
     conn.close()
-    if _ajax():
+    if is_ajax():
         return jsonify({"status": "ok", "id": gid})
     return respond(True, "Goal created", to="/goals")
 
@@ -214,12 +134,21 @@ def goal_achieve(goal_id):
 
 @bp.route("/goals/<int:goal_id>/delete", methods=["POST"])
 def goal_delete(goal_id):
+    """Soft-delete (undo, not confirmation — parity with tasks/notes): stamp
+    deleted_at so the goal drops out of every view but stays restorable. Task links
+    survive (goal_id's ON DELETE SET NULL never fires). Purged after 30 days."""
     conn = db()
     with conn:
-        conn.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+        conn.execute("UPDATE goals SET deleted_at=? WHERE id=?", (now_iso(), goal_id))
     conn.close()
-    return respond(True, "Goal deleted", to="/goals")
+    return jsonify({"status": "ok", "id": goal_id})
 
 
-def _ajax():
-    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+@bp.route("/goals/<int:goal_id>/restore", methods=["POST"])
+def goal_restore(goal_id):
+    """Undo a goal soft-delete."""
+    conn = db()
+    with conn:
+        conn.execute("UPDATE goals SET deleted_at=NULL WHERE id=?", (goal_id,))
+    conn.close()
+    return jsonify({"status": "ok", "id": goal_id})

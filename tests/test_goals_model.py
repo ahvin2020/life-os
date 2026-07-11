@@ -22,7 +22,7 @@ def _mkgoal(conn, title, timeframe="week", period="week", period_start=None,
             kind="rollup", target=None, current=0, end_date=None, unit=None,
             achieved_at=None):
     """Insert a goal with the v3 columns and return its id."""
-    from routes_goals import current_period_start
+    from goals_core import current_period_start
     ps = period_start or current_period_start(timeframe)
     with conn:
         cur = conn.execute(
@@ -77,7 +77,7 @@ def test_v2_to_v3_migration_backfills_timeframe(tmp_path):
 # ── progress derivation — one per shape ───────────────────────────────────────
 def test_shape_measure(client):
     conn = _db()
-    from routes_goals import goal_progress
+    from goals_core import goal_progress
     gid = _mkgoal(conn, "Subs", timeframe="month", target=500, current=460, unit="subs")
     g = conn.execute("SELECT * FROM goals WHERE id=?", (gid,)).fetchone()
     p = goal_progress(conn, g)
@@ -89,7 +89,7 @@ def test_shape_measure(client):
 
 def test_shape_rollup(client):
     conn = _db()
-    from routes_goals import goal_progress
+    from goals_core import goal_progress
     gid = _mkgoal(conn, "Videos", timeframe="month")
     t1 = create_task(conn, "A", col="week", goal_id=gid)
     create_task(conn, "B", col="week", goal_id=gid)
@@ -104,7 +104,7 @@ def test_shape_rollup(client):
 
 def test_shape_milestone_toggle_pct(client):
     conn = _db()
-    from routes_goals import goal_progress
+    from goals_core import goal_progress
     gid = _mkgoal(conn, "Launch community", timeframe="quarter")
     g = conn.execute("SELECT * FROM goals WHERE id=?", (gid,)).fetchone()
     p = goal_progress(conn, g)
@@ -119,7 +119,7 @@ def test_shape_milestone_toggle_pct(client):
 
 def test_shape_both(client):
     conn = _db()
-    from routes_goals import goal_progress
+    from goals_core import goal_progress
     gid = _mkgoal(conn, "Publish + measure", timeframe="month", target=2, current=1)
     t1 = create_task(conn, "A", col="week", goal_id=gid)
     create_task(conn, "B", col="week", goal_id=gid)
@@ -135,7 +135,7 @@ def test_shape_both(client):
 
 # ── archive rollover per timeframe ────────────────────────────────────────────
 def test_rollover_per_timeframe(client):
-    from routes_goals import archive_expired_goals
+    from goals_core import archive_expired_goals
     conn = _db()
     today = today_iso()
     # expired periods

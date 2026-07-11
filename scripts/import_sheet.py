@@ -38,7 +38,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from import_common import (  # noqa: E402
-    DATA_DIR, apply_item, load_ledger, save_ledger,
+    DATA_DIR, _ORDER, _HEADINGS, apply_item, load_ledger, save_ledger,
 )
 
 SHEET_ID = "1TjH4atuJYUgLjw22h_H1XK02v5l9zccgvwp9ysOb7fM"
@@ -203,9 +203,7 @@ def map_tab(rows: list[list[str]], shape: str) -> list[dict]:
 
 
 # ── preview ────────────────────────────────────────────────────────────────────
-_ORDER = ["task", "note", "journal", "skip", "uncertain"]
-_HEADINGS = {"task": "Tasks", "note": "Notes", "journal": "Journal",
-             "skip": "Skip", "uncertain": "Uncertain"}
+# _ORDER / _HEADINGS are shared via import_common.
 
 
 def _proposed_str(r: dict) -> str:

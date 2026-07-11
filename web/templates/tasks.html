@@ -5,6 +5,7 @@
 <div class="vhead"><h1>Tasks</h1>
   <button class="tagbtn active" data-cat="all" type="button">All</button>
   {% for c in categories %}<button class="tagbtn" data-cat="{{ c }}" type="button">{{ c|capitalize }}</button>{% endfor %}
+  <input class="search tasksearch" id="tsearch" type="search" placeholder="Search tasks…" aria-label="Search tasks">
   <span class="spacer"></span><button class="mini addbtn" data-newtask="week" type="button">＋ New task</button></div>
 
 {% if counts.backlog + counts.week + counts.done == 0 %}
@@ -15,12 +16,12 @@
   {% set titles = {'backlog': 'Backlog', 'week': 'This week', 'done': 'Done'} %}
   {% for col in ['backlog', 'week', 'done'] %}
   <div class="col" data-col="{{ col }}">
-    <h3>{{ titles[col] }} <span class="count">{{ counts[col] }}</span></h3>
+    <h3{% if col == 'done' %} title="auto-archives after 7 days"{% endif %}>{{ titles[col] }} <span class="count">{{ counts[col] }}</span></h3>
     <div class="kstack">
       {% for t in board[col] %}{{ m.kcard(t, today) }}{% endfor %}
     </div>
-    {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ add task</button>
-    {% else %}<div class="hint" style="margin-top:2px">auto-archives after 7 days</div>{% endif %}
+    {# no explanatory footer under Done — the archive rule lives in the h3 tooltip #}
+    {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ add task</button>{% endif %}
   </div>
   {% endfor %}
 </div>

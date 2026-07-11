@@ -67,22 +67,33 @@ def next_sort_order(conn, col: str, parent_id=None) -> int:
 
 def create_task(conn, title, *, col="backlog", priority=None, category=None,
                 due_date=None, planned_on=None, recur_rule=None, goal_id=None,
-                parent_id=None) -> int:
+                parent_id=None, at_top=False) -> int:
     """Insert a task (or subtask when parent_id is set). Returns the new id.
-    Single source of truth for task inserts."""
+    Single source of truth for task inserts. at_top=True surfaces the new task at
+    the TOP of its column — used by the capture paths (bot / composer / refile),
+    where "I just sent this" should be the first thing seen, not buried at the
+    bottom of a long column. Board/editor creation keeps bottom placement."""
     ts = now_iso()
     if parent_id is not None:
         col = "backlog"  # subtasks ignore column/due
         due_date = planned_on = None
-    sort_order = next_sort_order(conn, col, parent_id)
+    if at_top and parent_id is None:
+        row = conn.execute(
+            "SELECT COALESCE(MIN(sort_order), 1) AS m FROM tasks "
+            "WHERE col = ? AND parent_id IS NULL", (col,)).fetchone()
+        sort_order = int(row["m"]) - 1
+    else:
+        sort_order = next_sort_order(conn, col, parent_id)
+    # week_since = the "This week" staleness clock, stamped on entering the column.
+    week_since = today_iso() if col == "week" else None
     cur = conn.execute(
         """INSERT INTO tasks
              (title, col, sort_order, priority, category, due_date, planned_on,
               recur_rule, goal_id, parent_id, done, completed_at, archived_at,
-              created, updated)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?)""",
+              week_since, created, updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?)""",
         (title.strip(), col, sort_order, priority, category, due_date, planned_on,
-         recur_rule, goal_id, parent_id, ts, ts),
+         recur_rule, goal_id, parent_id, week_since, ts, ts),
     )
     return cur.lastrowid
 
@@ -93,10 +104,14 @@ def _looks_like_url(text: str) -> bool:
                                     "tiktok.com", "http://", "https://"))
 
 
-def route_capture(conn, text: str, source: str = "web", forced: str = "auto") -> dict:
+def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
+                  enrich: str = "async") -> dict:
     """Classify `text` and file it immediately. Returns a dict describing where it
-    went: {kind, id|slug, label, tags?}. `forced` overrides prefix detection when the
-    user picks a type chip ('task'|'note'|'journal'); 'auto' respects prefixes/URLs."""
+    went: {kind, id|slug, label, title?, tags?}. `forced` overrides prefix detection when
+    the user picks a type chip ('task'|'note'|'journal'); 'auto' respects prefixes/URLs.
+    `enrich` controls link enrichment: 'async' (default → web/voice) schedules the
+    background rewrite; 'off' skips it so a caller (the Telegram bot) can enrich inline
+    and edit its own reply."""
     text = (text or "").strip()
     if not text:
         return {"kind": "none", "label": "nothing to add"}
@@ -128,16 +143,18 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto") ->
         existing = find_link_note_by_url(url) if url else None
         if existing:
             vault_store.touch_note(existing["slug"])
-            schedule_enrichment(existing["slug"])
+            if enrich == "async":
+                schedule_enrichment(existing["slug"])
             tag_str = " ".join("#" + t for t in existing["tags"]) if existing["tags"] else ""
             return {"kind": "note", "slug": existing["slug"],
                     "label": "Notes" + (f" · {tag_str}" if tag_str else ""),
-                    "tags": existing["tags"], "deduped": True}
+                    "title": existing["title"], "tags": existing["tags"], "deduped": True}
         tags = ["link"]
         if any(d in low for d in _IDEA_DOMAINS):
             tags.append("idea")
         res = _as_note(conn, body, tags=tags, title=_url_title(body))
-        schedule_enrichment(res["slug"])   # async: capture stays instant
+        if enrich == "async":
+            schedule_enrichment(res["slug"])   # async: capture stays instant
         return res
     # ambiguous → filed now as an unsorted note; triage refiles later (Phase 2)
     return _as_note(conn, body, tags=["unsorted"])
@@ -159,10 +176,13 @@ def _as_task(conn, text) -> dict:
     if text.rstrip().endswith("!"):
         priority = "high"
         text = text.rstrip()[:-1].strip()
+    title = text or "Untitled task"
     with conn:
-        tid = create_task(conn, text or "Untitled task", col="week", priority=priority)
+        tid = create_task(conn, title, col="week", priority=priority,
+                          at_top=True)
     label = "Tasks" + (" · high" if priority else "")
-    return {"kind": "task", "id": tid, "label": label}
+    return {"kind": "task", "id": tid, "label": label, "title": title,
+            "priority": priority}
 
 
 def _as_note(conn, text, tags, title=None) -> dict:
@@ -173,7 +193,8 @@ def _as_note(conn, text, tags, title=None) -> dict:
     note = vault_store.create_note(title=title, body=text, tags=tags)
     tag_str = " ".join("#" + t for t in tags) if tags else ""
     label = "Notes" + (f" · {tag_str}" if tag_str else "")
-    return {"kind": "note", "slug": note["slug"], "label": label, "tags": tags}
+    return {"kind": "note", "slug": note["slug"], "label": label,
+            "title": note["title"], "tags": tags}
 
 
 def _as_journal(text) -> dict:
@@ -219,8 +240,6 @@ def _url_title(text):
 # to produce {title, summary, tags}, and rewrites the note. It runs ASYNC after the
 # instant save so capture stays instant; any network/claude failure leaves the note
 # untouched (same never-block-capture contract as triage).
-_PROFILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "vault", "profile.md")
 _ADD_TO_NOTE_RE = re.compile(r"^\s*add to note\s*", re.I)
 
 
@@ -330,14 +349,6 @@ def _user_words(body: str, url: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _read_profile() -> str:
-    try:
-        with open(_PROFILE_PATH, encoding="utf-8") as f:
-            return f.read()
-    except Exception:
-        return ""
-
-
 def _enrich_prompt(url: str, meta: dict, words: str, profile: str) -> str:
     meta_lines = "\n".join(f"{k}: {v}" for k, v in meta.items() if v) or "(none available)"
     return (
@@ -356,20 +367,9 @@ def _enrich_prompt(url: str, meta: dict, words: str, profile: str) -> str:
 
 
 def _parse_enrichment(raw: str) -> dict | None:
-    if not raw:
-        return None
-    raw = raw.strip()
-    fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.S)
-    if fence:
-        raw = fence.group(1).strip()
-    m = re.search(r"\{.*\}", raw, re.S)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
+    from claude_cli import extract_json
+    data = extract_json(raw, "object")
+    if data is None:
         return None
     title = (data.get("title") or "").strip()
     summary = (data.get("summary") or "").strip()
@@ -384,10 +384,11 @@ def _default_claude(prompt: str) -> str:
     return call_claude(prompt, timeout=45)
 
 
-def enrich_note(slug: str, *, fetch_fn=None, claude_fn=None) -> dict | None:
-    """Enrich ONE captured link note in place. Fetches metadata, makes one claude call,
-    and rewrites title/tags/body = URL + summary + user's words + fetched description.
-    Returns the saved note, or None if there's no URL / claude fails (note untouched)."""
+def _enrich(slug: str, *, fetch_fn=None, claude_fn=None) -> tuple | None:
+    """Shared enrichment work: fetch page metadata, make ONE claude call, and rewrite the
+    note title/tags/body = URL + summary + user's words + fetched description. Returns
+    (saved_note, data) where data={title, summary, tags}, or None if there's no URL /
+    claude fails (note left untouched — the never-block-capture contract)."""
     note = vault_store.read_note(slug)
     if not note:
         return None
@@ -396,7 +397,7 @@ def enrich_note(slug: str, *, fetch_fn=None, claude_fn=None) -> dict | None:
         return None
     meta = (fetch_fn or fetch_link_metadata)(url) or {}
     words = _user_words(note["body"], url)
-    prompt = _enrich_prompt(url, meta, words, _read_profile())
+    prompt = _enrich_prompt(url, meta, words, vault_store.read_profile())
     try:
         raw = (claude_fn or _default_claude)(prompt)
     except Exception:
@@ -414,7 +415,25 @@ def enrich_note(slug: str, *, fetch_fn=None, claude_fn=None) -> dict | None:
     if meta.get("description") and meta["description"] not in (words, data["summary"]):
         parts.append(meta["description"])
     body = "\n\n".join(parts)
-    return vault_store.write_note(slug, title, tags, body, note["pinned"], note["created"])
+    saved = vault_store.write_note(slug, title, tags, body, note["pinned"], note["created"])
+    return saved, data
+
+
+def enrich_note(slug: str, *, fetch_fn=None, claude_fn=None) -> dict | None:
+    """Enrich ONE captured link note in place. Returns the saved note, or None if there's
+    no URL / claude fails (note untouched). Used by the async web/voice path."""
+    res = _enrich(slug, fetch_fn=fetch_fn, claude_fn=claude_fn)
+    return res[0] if res else None
+
+
+def enrich_link(slug: str, *, fetch_fn=None, claude_fn=None) -> tuple:
+    """Telegram sibling of enrich_note: returns (saved_note, summary) so the bot reply can
+    surface the one-line 'why it matters'. (None, "") when enrichment didn't run."""
+    res = _enrich(slug, fetch_fn=fetch_fn, claude_fn=claude_fn)
+    if not res:
+        return None, ""
+    saved, data = res
+    return saved, (data.get("summary") or "")
 
 
 def _enrich_enabled() -> bool:
@@ -469,7 +488,7 @@ def convert_note_to_task(conn, slug: str, *, title=None, category=None,
     with conn:
         tid = create_task(conn, title or note["title"] or "Untitled task",
                           col="week", priority=priority, category=category,
-                          due_date=due_date)
+                          due_date=due_date, at_top=True)
     vault_store.delete_note(slug)
     bits = [b for b in ("high" if priority == "high" else None, category,
                         ("due " + due_date) if due_date else None) if b]

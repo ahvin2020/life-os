@@ -165,15 +165,16 @@ def test_recent_notes_sorted_by_created_not_mtime(client):
     assert html.index("Fresh capture") < html.index("Old import")
 
 
-# ── dead links become real, clickable links (finding 3) ────────────────────────
-def test_note_card_domain_chip_and_snippet_are_links(client):
+# ── the thumbnail carries the ONE clickable source link; snippets stay prose ───
+def test_note_card_source_link_and_snippet_drops_raw_url(client):
     vault_store.create_note(
         title="instagram.com",
         body="check this https://www.instagram.com/reel/DXlGR2QDA_W/ out",
         tags=["link"])
     html = client.get("/notes").data.decode()
-    # domain chip is a real anchor to the note's first URL, opens in a new tab
-    assert '<a class="domain" href="https://www.instagram.com/reel/DXlGR2QDA_W/"' in html
+    # the thumbnail is a real anchor to the note's first URL, opens in a new tab
+    assert 'class="nsrc"' in html
+    assert 'href="https://www.instagram.com/reel/DXlGR2QDA_W/"' in html
     assert 'target="_blank"' in html and 'rel="noopener"' in html
-    # the URL in the snippet is linkified (not dead plain text)
-    assert 'class="inlink"' in html
+    # the raw URL does NOT eat the snippet preview
+    assert "check this out" in html

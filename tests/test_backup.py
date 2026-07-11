@@ -94,3 +94,25 @@ def test_run_backup_writes_prunes_mirrors_and_heartbeats(client, tmp_path, monke
     conn = connect(db_path)
     assert health_status(conn)["backup"] == "ok"                  # dot went green
     conn.close()
+
+
+def test_run_backup_honors_backup_keep_and_location_settings(client, tmp_path, monkeypatch):
+    from db import set_setting, connect
+    db_path = os.environ["LIFEOS_DB_PATH"]
+    local = tmp_path / "backups"; local.mkdir()
+    dest = tmp_path / "my-offsite"                                 # user-chosen location (created by backup)
+    monkeypatch.setenv("LIFEOS_BACKUP_DIR", str(local))
+    monkeypatch.delenv("LIFEOS_SYNCED_BACKUP_DIR", raising=False)  # so the setting takes effect
+    conn = connect(db_path)
+    with conn:
+        set_setting(conn, "backup_keep", "3")                     # retention override
+        set_setting(conn, "backup_location", str(dest))           # location override
+    conn.close()
+    for i in range(5):
+        _touch(str(local), f"app-2025010{i}-000000.db")
+
+    result = backup_db.run_backup(db_path)
+
+    assert os.path.dirname(result["synced"]) == str(dest)         # mirrored to the chosen dir
+    assert os.path.exists(result["synced"])
+    assert len([f for f in os.listdir(local) if f.startswith("app-")]) == 3   # pruned to backup_keep

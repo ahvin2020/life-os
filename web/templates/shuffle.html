@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Shuffle{% endblock %}
+{% block content %}
+<div class="vhead"><h1>Shuffle</h1><span class="spacer"></span>
+  <a class="mini" href="/notes">Done</a></div>
+<p class="shufintro">A peaceful pass over notes you haven’t touched in a while — keep the gems, archive the rest.</p>
+
+<div id="shufdeck" data-total="{{ deck|length }}">
+  {% for n in deck %}
+  <div class="shufcard{% if not loop.first %} hide{% endif %}" data-slug="{{ n.slug }}" data-i="{{ loop.index0 }}">
+    {% if n.kind != 'text' %}
+    <div class="shufthumb {{ n.kind }}">
+      <img loading="lazy" src="{{ url_for('notes.note_thumb', slug=n.slug) }}" onerror="this.closest('.shufthumb').classList.add('noimg')" alt="">
+    </div>
+    {% endif %}
+    <div class="shufbody">
+      <div class="shuftitle">{{ n.title }}</div>
+      {% if n.snippet and n.snippet.strip() != n.title.strip() %}<div class="shufsnip">{{ n.snippet }}</div>{% endif %}
+      <div class="shufmeta">{% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">open source ↗</a> · {% endif %}saved {{ n.updated | fdate }}</div>
+    </div>
+  </div>
+  {% endfor %}
+  <div class="shufdone hide" id="shufdone">
+    <div class="shufdone-big">That’s the pile, cleared. 🌿</div>
+    <div class="shufdone-sub">Nice pruning. <a href="/notes">Back to notes</a> · <a href="/notes/shuffle">go again</a></div>
+  </div>
+</div>
+
+<div class="shufbar" id="shufbar">
+  <button class="shufbtn-x delete" id="shuf-delete" type="button" title="Delete">Delete</button>
+  <button class="shufbtn-x archive" id="shuf-archive" type="button" title="Archive">Archive</button>
+  <button class="shufbtn-x keep" id="shuf-keep" type="button" title="Keep">Keep →</button>
+  <div class="shufprog" id="shufprog"></div>
+</div>
+
+<script>
+(function () {
+  var deck = document.getElementById("shufdeck");
+  if (!deck) return;
+  var cards = Array.prototype.slice.call(deck.querySelectorAll(".shufcard"));
+  var done = document.getElementById("shufdone");
+  var bar = document.getElementById("shufbar");
+  var prog = document.getElementById("shufprog");
+  var i = 0;
+  function render() {
+    cards.forEach(function (c, k) { c.classList.toggle("hide", k !== i); });
+    if (i >= cards.length) { done.classList.remove("hide"); bar.classList.add("hide"); return; }
+    prog.textContent = (i + 1) + " / " + cards.length;
+  }
+  function advance() { i++; render(); }
+  function act(path, extra) {
+    var card = cards[i];
+    if (card && card.dataset.slug && window.post) window.post(path.replace("SLUG", card.dataset.slug), extra || {});
+    advance();
+  }
+  document.getElementById("shuf-keep").addEventListener("click", advance);
+  document.getElementById("shuf-archive").addEventListener("click", function () { act("/notes/SLUG/archive", { archived: "1" }); });
+  document.getElementById("shuf-delete").addEventListener("click", function () { act("/notes/SLUG/delete"); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); advance(); }
+    else if (e.key === "a") document.getElementById("shuf-archive").click();
+    else if (e.key === "d") document.getElementById("shuf-delete").click();
+  });
+  render();
+})();
+</script>
+{% endblock %}

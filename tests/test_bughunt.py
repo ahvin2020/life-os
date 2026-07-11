@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 import db_init  # noqa: F401  (path set up by conftest import order)
 from capture import create_task
-from routes_tasks import complete_task
+from tasks_core import complete_task
 from routes_journal import today_so_far
 from db import connect, today_iso, now_iso
 

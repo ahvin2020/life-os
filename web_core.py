@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hmac
 import os
-import re
 import secrets
 from datetime import datetime, timezone
 
@@ -23,7 +22,7 @@ from flask import (
     flash, jsonify, session, abort,
 )
 
-from db import connect, now_iso, today_iso, now_sg, DB_PATH, TZ
+from db import connect, now_iso, today_iso, now_sg, get_tz, DB_PATH
 
 app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
 
@@ -122,6 +121,22 @@ def _fmt_date(value):
         return value
 
 
+def _fmt_stamp(value):
+    """UTC ISO audit timestamp → app-tz '10 Jul 21:07' (year shown only when it isn't
+    this year). Used for the heartbeat 'ran ...' lines. Empty → 'never'."""
+    if not value:
+        return "never"
+    try:
+        dt = (datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S")
+              .replace(tzinfo=timezone.utc).astimezone(get_tz()))
+    except Exception:
+        return value
+    stamp = f"{dt.day} {dt.strftime('%b')} {dt.strftime('%H:%M')}"
+    if dt.year != now_sg().year:
+        stamp = f"{dt.day} {dt.strftime('%b')} {dt.year}, {dt.strftime('%H:%M')}"
+    return stamp
+
+
 def _days_ago(value):
     """Days between today (SG) and value; positive = past, negative = future."""
     if not value:
@@ -134,7 +149,9 @@ def _days_ago(value):
 
 
 def _due_label(value):
-    """Human due label relative to today: today / yesterday / overdue / a date."""
+    """Human due label relative to today, compact + glanceable: today / yesterday /
+    '3d over' (severity without date math) / tomorrow / weekday inside a week /
+    '13 Jul' (the year only when it isn't this year)."""
     n = _days_ago(value)
     if n is None:
         return _fmt_date(value)
@@ -142,51 +159,42 @@ def _due_label(value):
         return "today"
     if n == 1:
         return "yesterday"
-    if n < 0:
-        return _fmt_date(value)
+    if n > 1:
+        return f"{n}d over"
+    if n == -1:
+        return "tomorrow"
+    d = datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    if n >= -6:
+        return d.strftime("%a")
+    if d.year == now_sg().year:
+        return f"{d.day} {d.strftime('%b')}"
     return _fmt_date(value)
 
 
-_LINKIFY_RE = re.compile(r"https?://[^\s<>\"')]+")
-
-
-def _linkify(value):
-    """Escape text, then turn bare URLs into real, non-purple links that open in a new
-    tab. Used for note snippets so a shared URL is clickable, not dead plain text."""
-    from markupsafe import Markup, escape
-    if value is None:
-        return ""
-    text = str(value)
-    out, last = [], 0
-    for m in _LINKIFY_RE.finditer(text):
-        out.append(str(escape(text[last:m.start()])))
-        url = str(escape(m.group(0)))
-        out.append(f'<a href="{url}" target="_blank" rel="noopener" '
-                   f'class="inlink" onclick="event.stopPropagation()">{url}</a>')
-        last = m.end()
-    out.append(str(escape(text[last:])))
-    return Markup("".join(out))
-
-
 app.jinja_env.filters["fdate"] = _fmt_date
+app.jinja_env.filters["fstamp"] = _fmt_stamp
 app.jinja_env.filters["days_ago"] = _days_ago
 app.jinja_env.filters["due_label"] = _due_label
-app.jinja_env.filters["linkify"] = _linkify
 
 
 # ── request helpers ───────────────────────────────────────────────────────────
-def _is_ajax() -> bool:
-    """True when the request came from our fetch() helpers (X-Requested-With)."""
+def is_ajax() -> bool:
+    """True when the request came from our fetch() helpers (X-Requested-With).
+    Single source — route blueprints import this rather than re-declaring it."""
     return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
-def respond(ok, msg, to=None, fallback=None):
+def respond(ok, msg, to=None, fallback=None, extra=None):
     """AJAX-or-redirect reply shared by POST action routes.
 
     On an AJAX request returns JSON; otherwise flashes and redirects to `to` (or
-    `fallback`). Extra JSON payload can be merged by callers via jsonify directly."""
-    if _is_ajax():
-        return jsonify({"status": "ok" if ok else "error", "message": msg}), (200 if ok else 400)
+    `fallback`). `extra` (a dict) is merged into the JSON payload — e.g. the new row
+    id from a create route — so callers stay on this one helper instead of forking."""
+    if is_ajax():
+        payload = {"status": "ok" if ok else "error", "message": msg}
+        if extra:
+            payload.update(extra)
+        return jsonify(payload), (200 if ok else 400)
     flash(msg, "success" if ok else "error")
     return redirect(to or fallback or "/")
 
@@ -237,17 +245,42 @@ def health_status(conn, now=None) -> dict:
     return out
 
 
+def _fmt_age(seconds) -> str:
+    """Compact last-ran age for the sidebar dots: 40s ago / 12m ago / 5h ago / 3d ago."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s ago"
+    if s < 3600:
+        return f"{s // 60}m ago"
+    if s < 86400:
+        return f"{s // 3600}h ago"
+    return f"{s // 86400}d ago"
+
+
+def health_ages(conn, now=None) -> dict:
+    """Per-job 'time since last run' label ('40s'|'5h'|…), or None if never ran."""
+    now = now or datetime.now(timezone.utc)
+    out = {}
+    for name, key, _ in _HEALTH_CHECKS:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        ts = _parse_iso_utc(row["value"]) if row else None
+        out[name] = _fmt_age((now - ts).total_seconds()) if ts else None
+    return out
+
+
 @app.context_processor
 def inject_health():
-    """Make the health dots available to every template."""
+    """Make the health dots + last-ran ages available to every template."""
     status = {"capture": "off", "triage": "off", "backup": "off"}
+    ages = {"capture": None, "triage": None, "backup": None}
     try:
         conn = db()
         status = health_status(conn)
+        ages = health_ages(conn)
         conn.close()
     except Exception:
         pass
-    return {"health": status}
+    return {"health": status, "health_age": ages}
 
 
 @app.context_processor
@@ -268,3 +301,18 @@ def inject_nav():
     except Exception:
         pass
     return {"nav_counts": counts, "today": today_iso()}
+
+
+@app.context_processor
+def inject_asset_ver():
+    """Cache-bust static assets by file mtime — the no-build-step app is synced
+    to the NAS, so a stale app.css/app.js is otherwise served after every edit."""
+    import os
+    static_dir = os.path.join(os.path.dirname(__file__), "web", "static")
+
+    def asset_ver(filename):
+        try:
+            return int(os.path.getmtime(os.path.join(static_dir, filename)))
+        except OSError:
+            return 0
+    return {"asset_ver": asset_ver}

@@ -20,16 +20,12 @@ fallback text — a scheduled send is never dropped.
 from __future__ import annotations
 
 import math
-import os
 from datetime import date, datetime, timedelta
 
 import vault_store
 from claude_cli import call_claude
 from db import now_sg, today_iso
-from routes_goals import current_period_start, goal_progress
-
-_ROOT = os.path.dirname(os.path.abspath(__file__))
-_PROFILE_PATH = os.path.join(_ROOT, "vault", "profile.md")
+from goals_core import current_period_start, goal_progress, format_goal_progress
 
 STALE_DAYS = 30
 
@@ -43,13 +39,6 @@ def _stale_days(conn) -> int:
 
 
 # ── shared helpers ────────────────────────────────────────────────────────────
-def _load_profile() -> str:
-    if os.path.exists(_PROFILE_PATH):
-        with open(_PROFILE_PATH, encoding="utf-8") as f:
-            return f.read()
-    return ""
-
-
 def _d(s: str) -> date:
     """Parse the date portion of an ISO string ('YYYY-MM-DD' or full timestamp)."""
     return datetime.strptime(s[:10], "%Y-%m-%d").date()
@@ -114,12 +103,8 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
     day = day or today_iso()
     now = now or now_sg()
 
-    rows = conn.execute(
-        "SELECT id, title, due_date, planned_on, priority, category, created, "
-        "reschedule_count FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
-        "AND deleted_at IS NULL AND done=0 AND (due_date=? OR "
-        "(due_date IS NOT NULL AND due_date<?) OR planned_on=?) "
-        "ORDER BY (due_date IS NULL), due_date, sort_order", (day, day, day)).fetchall()
+    from tasks_core import today_task_rows
+    rows = today_task_rows(conn, day)
     tasks = []
     for r in rows:
         if r["due_date"] and r["due_date"] < day:
@@ -136,7 +121,7 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
 
     goals = []
     for g in conn.execute(
-            "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall():
+            "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created").fetchall():
         p = goal_progress(conn, g)
         tf = g["timeframe"] or g["period"]
         end = _period_end(tf, g, day)
@@ -144,10 +129,9 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
         has_open_task = any(not l["done"] for l in p["linked"])
         behind = False
         need_per_day = None
+        prog_str = format_goal_progress(p)
         if p["shape"] in ("measure", "both"):
             cur, tgt = p["current"] or 0, p["target"] or 0
-            unit = (" " + p["unit"]) if p["unit"] else ""
-            prog_str = f"{int(cur)}/{int(tgt)}{unit}"
             remaining = max(0, tgt - cur)
             if tgt and end:
                 p_start = _d(current_period_start(tf, day))
@@ -159,10 +143,6 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
                     need_per_day = remaining / days_left
                 elif remaining > 0:
                     need_per_day = remaining          # period essentially over
-        elif p["shape"] == "rollup":
-            prog_str = f"{p['done']}/{p['total']} tasks"
-        else:
-            prog_str = "achieved" if p["achieved"] else "in progress"
         goals.append({
             "title": g["title"], "timeframe": tf, "shape": p["shape"],
             "prog_str": prog_str, "period_end": end.isoformat() if end else None,
@@ -220,7 +200,7 @@ def brief_prompt(ctx: dict, backlog_summary: str | None = None) -> str:
         weave = extra
     return (
         "=== vault/profile.md (who Kelvin is — voice + context) ===\n"
-        f"{_load_profile()}\n\n"
+        f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
         "You are Kelvin's Life OS assistant writing his MORNING BRIEF. Read the live "
         "context and write a short, sharp brief he'll actually act on, in his own "
@@ -241,10 +221,85 @@ def brief_prompt(ctx: dict, backlog_summary: str | None = None) -> str:
         "=== BRIEF ===\n")
 
 
+# ── deterministic morning digest (the brief's fallback body) ──────────────────
+def _digest_tasks(conn, today):
+    """Open tasks that matter today: due today, overdue, or ☀ planned."""
+    from tasks_core import today_task_rows
+    return today_task_rows(conn, today)
+
+
+def _stale_backlog(conn, today, days=None):
+    """Backlog tasks untouched for `days`+ (the Sunday do-or-delete nudge)."""
+    from db import get_setting
+    if days is None:
+        try:
+            days = int(get_setting(conn, "stale_backlog_days", "30"))
+        except (TypeError, ValueError):
+            days = 30
+    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days)).date().isoformat()
+    return conn.execute(
+        "SELECT title, updated FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
+        "AND deleted_at IS NULL AND done = 0 AND substr(updated,1,10) < ? ORDER BY updated",
+        (cutoff,)).fetchall()
+
+
+def build_digest(conn, day=None, now=None) -> str:
+    """Compose the morning-digest text: today's tasks, goal progress, journal nudge,
+    and (Sundays) stale backlog + set-goals reminder. Pure — unit-tested directly."""
+    day = day or today_iso()
+    now = now or now_sg()
+
+    lines = [f"☀ Good morning — {now.strftime('%A %-d %b')}"]
+
+    tasks = _digest_tasks(conn, day)
+    lines.append("")
+    if tasks:
+        lines.append(f"📋 Today ({len(tasks)}):")
+        for t in tasks:
+            mark = ""
+            if t["due_date"] and t["due_date"] < day:
+                mark = " · overdue"
+            elif t["due_date"] == day:
+                mark = " · due today"
+            elif t["planned_on"] and t["planned_on"] <= day:   # sticky: rolled-over too
+                mark = " · ☀ planned"
+            if t["priority"] == "high":
+                mark += " · high"
+            lines.append(f"  • {t['title']}{mark}")
+    else:
+        lines.append("📋 Nothing due or planned today — a clear board.")
+
+    goals = conn.execute(
+        "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created").fetchall()
+    if goals:
+        lines.append("")
+        lines.append("🎯 Goals:")
+        for g in goals:
+            prog = format_goal_progress(goal_progress(conn, g))
+            lines.append(f"  • {g['title']}: {prog}")
+
+    # Journal nudge if yesterday had no entry.
+    yesterday = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).date().isoformat()
+    if not vault_store.read_journal(yesterday):
+        lines.append("")
+        lines.append("✦ No journal entry yesterday — how did the day go?")
+
+    # Sunday extras: stale backlog + set next week's goals.
+    if now.weekday() == 6:
+        stale = _stale_backlog(conn, day)
+        lines.append("")
+        if stale:
+            lines.append(f"🧹 Stale backlog — do or delete ({len(stale)}):")
+            for s in stale:
+                lines.append(f"  • {s['title']}")
+        lines.append("🗓 Weekly review: set next week's goals.")
+
+    return "\n".join(lines)
+
+
 def fallback_brief(conn, day: str, now, backlog_summary: str | None = None) -> str:
     """Deterministic morning brief — the existing digest template. Used when claude
     fails, so a missed send is impossible."""
-    from capture_daemon import build_digest
     text = build_digest(conn, day, now)
     if backlog_summary and now.weekday() != 6:   # Sunday digest already lists stale items
         text += "\n\n" + backlog_summary
@@ -319,16 +374,8 @@ def build_backlog_context(conn, day: str = None) -> dict:
 
     goals = []
     for g in conn.execute(
-            "SELECT * FROM goals WHERE archived_at IS NULL ORDER BY period, created").fetchall():
-        p = goal_progress(conn, g)
-        shape = p.get("shape")
-        if shape in ("measure", "both"):
-            unit = (" " + p["unit"]) if p.get("unit") else ""
-            prog = f"{int(p.get('current', 0))}/{int(p.get('target', 0))}{unit}"
-        elif shape == "rollup":
-            prog = f"{p.get('done', 0)}/{p.get('total', 0)} tasks"
-        else:
-            prog = "achieved" if p.get("achieved") else "in progress"
+            "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created").fetchall():
+        prog = format_goal_progress(goal_progress(conn, g))
         goals.append({"id": g["id"], "title": g["title"],
                       "timeframe": g["timeframe"] or g["period"], "prog": prog})
 
@@ -361,7 +408,7 @@ def build_backlog_context(conn, day: str = None) -> dict:
 def backlog_prompt(ctx: dict) -> str:
     return (
         "=== vault/profile.md (who Kelvin is — voice + context) ===\n"
-        f"{_load_profile()}\n\n"
+        f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
         "You are Kelvin's Life OS assistant running a BACKLOG TRIAGE. Below is his full "
         "open backlog (stalest first) and what he's actually completed lately. In his "
@@ -475,7 +522,7 @@ def reflection_prompt(ctx: dict) -> str:
                "than asking generic questions.\n" if ctx["journaled_today"] else "")
     return (
         "=== vault/profile.md (who Kelvin is — voice + context) ===\n"
-        f"{_load_profile()}\n\n"
+        f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
         "You are Kelvin's Life OS assistant writing his EVENING REFLECTION. Below is "
         "what actually happened today plus the last week's journal. Write 2-3 short "

@@ -346,9 +346,10 @@ def test_digest_guard_hour_and_once(client, monkeypatch):
     assert tg.sent[-1][1] == "BRIEF"
 
 
-def test_digest_sunday_weaves_backlog(client, monkeypatch):
+def test_digest_does_not_weave_backlog(client, monkeypatch):
+    """Backlog triage is its own scheduled surface now — the morning brief no longer
+    weaves it in, even on Sunday."""
     seen = {}
-    monkeypatch.setattr(proactive, "backlog_triage", lambda c: "BACKLOG-TRIAGE")
     monkeypatch.setattr(proactive, "morning_brief",
                         lambda c, d, n, backlog_summary=None: seen.update(bs=backlog_summary) or "BRIEF")
     conn = _db()
@@ -356,7 +357,25 @@ def test_digest_sunday_weaves_backlog(client, monkeypatch):
     sunday = datetime(2026, 7, 12, 8, 0, tzinfo=TZ)                      # a Sunday
     assert cd.maybe_send_digest(conn, tg, "chat", now=sunday) is True
     conn.close()
-    assert seen["bs"] == "BACKLOG-TRIAGE"                                # woven into the brief
+    assert seen["bs"] is None                                           # not woven in
+
+
+def test_scheduled_backlog_triage_day_time_and_once(client, monkeypatch):
+    """The independent triage fires on its day at/after its time, once per day."""
+    from db import delete_setting
+    monkeypatch.setattr(proactive, "backlog_triage", lambda c: "TRIAGE-MSG")
+    conn = _db()
+    tg = FakeTelegram()
+    sun_8 = datetime(2026, 7, 12, 8, 0, tzinfo=TZ)                       # before 09:00 default
+    assert cd.maybe_send_backlog_triage(conn, tg, "chat", now=sun_8) is False
+    sun_9 = datetime(2026, 7, 12, 9, 0, tzinfo=TZ)                       # Sunday 09:00
+    assert cd.maybe_send_backlog_triage(conn, tg, "chat", now=sun_9) is True
+    assert tg.sent[-1][1] == "TRIAGE-MSG"
+    assert cd.maybe_send_backlog_triage(conn, tg, "chat", now=sun_9) is False   # once/day
+    delete_setting(conn, "triage_scheduled_sent")
+    mon_9 = datetime(2026, 7, 13, 9, 0, tzinfo=TZ)                       # wrong day
+    assert cd.maybe_send_backlog_triage(conn, tg, "chat", now=mon_9) is False
+    conn.close()
 
 
 def test_reflection_guard_time_and_once(client, monkeypatch):

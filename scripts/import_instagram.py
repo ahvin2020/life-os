@@ -11,11 +11,13 @@ flood the Recent section, and are tagged #ig #link #idea #imported.
 
 Usage: python3 scripts/import_instagram.py --zip <export.zip> [--apply]
 """
-import argparse, datetime, json, os, re, subprocess, sys, zipfile
+import argparse, datetime, json, os, re, sys, zipfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import vault_store
-from scripts.import_common import ledger_key, load_ledger, save_ledger
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# import_common puts the repo root on sys.path, so vault_store / claude_cli resolve.
+from import_common import ledger_key, load_ledger, save_ledger  # noqa: E402
+import vault_store  # noqa: E402
+from claude_cli import call_claude  # noqa: E402
 
 CUTOFF = datetime.datetime(2025, 1, 1).timestamp()
 BATCH = 60
@@ -70,7 +72,6 @@ CACHE_PATH = "data/ig_filter_cache.json"
 
 def claude_filter(items, urls):
     """items: list of (idx, caption); urls: idx->url. Returns set of kept idx."""
-    import os
     cache = {}
     if os.path.exists(CACHE_PATH):
         cache = json.load(open(CACHE_PATH))
@@ -81,9 +82,7 @@ def claude_filter(items, urls):
     for i in range(0, len(items), BATCH):
         chunk = items[i:i + BATCH]
         listing = "\n".join(f"{idx}: {cap[:180]}" for idx, cap in chunk)
-        out = subprocess.run(
-            ["claude", "-p", FILTER_PROMPT.format(items=listing)],
-            capture_output=True, text=True, timeout=300).stdout
+        out = call_claude(FILTER_PROMPT.format(items=listing), timeout=300)
         m = re.search(r"\[[\d,\s]*\]", out)
         if not m:
             print(f"  batch {i//BATCH + 1}: unparseable reply, keeping all {len(chunk)} for safety")

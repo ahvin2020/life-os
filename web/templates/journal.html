@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}Journal{% endblock %}
 {% block content %}
 <div class="vhead"><h1>Journal</h1><span class="date">{{ today_pretty }}</span></div>
@@ -6,20 +7,10 @@
 <div class="jgrid">
   <div class="jmain">
     <div class="card" style="margin-bottom:14px">
-      <div class="chead"><h2>Today · {{ today_pretty }}</h2></div>
+      {# just "Today" — the page header two lines up already shows the date #}
+      <div class="chead"><h2>Today</h2></div>
       {% if page and page.entries %}
-        {% for e in page.entries %}
-        <div class="jentry" data-day="{{ today }}" data-time="{{ e.time }}" data-idx="{{ e.idx }}">
-          <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}
-            <span class="jacts">
-              <button class="jmore" type="button" aria-label="Entry actions">⋯</button>
-              <button class="jact jedit" type="button">Edit</button>
-              <button class="jact jdel" type="button">Delete</button>
-            </span>
-          </div>
-          <p class="jtext">{{ e.text }}</p>
-        </div>
-        {% endfor %}
+        {% for e in page.entries %}{{ m.journal_entry(e, today) }}{% endfor %}
       {% elif page and page.raw.strip() %}
         <p style="white-space:pre-wrap">{{ page.raw }}</p>
       {% else %}
@@ -42,6 +33,17 @@
   </div>
 
   <div class="rcol">
+    <div class="card sub2">
+      <div class="chead"><h2>This month</h2><span class="cadcount">{{ cadence.count }} days</span></div>
+      <div class="ghgraph" style="grid-template-columns: auto repeat(7, 1fr)">
+        <span class="ghcorner"></span>
+        {% for wd in cadence.weekdays %}<span class="ghwd">{{ wd }}</span>{% endfor %}
+        {% for wk in cadence.weeks %}
+          <span class="ghtick">{{ wk.tick }}</span>
+          {% for c in wk.cells %}{% if c and not c.future %}<a class="cd{% if c.written %} w{% endif %}{% if c.today %} today{% endif %}" href="/journal/{{ c.iso }}" data-tip="{{ c.label }} — {{ 'wrote' if c.written else 'no entry' }}"></a>{% elif c %}<span class="cd future" data-tip="{{ c.label }} — upcoming"></span>{% else %}<span class="cd pad"></span>{% endif %}{% endfor %}
+        {% endfor %}
+      </div>
+    </div>
     {% if flashbacks %}
     <div class="card sub2">
       <div class="chead"><h2>On this day</h2></div>
@@ -53,7 +55,7 @@
     <div class="card sub2">
       <div class="chead"><h2>Today so far</h2></div>
       {% for c in today_so_far.completed %}
-      <div class="agrow dim"><span class="when">✓</span><span class="what">{{ c.title }}</span></div>
+      <div class="agrow dim"><span class="when tick">✓</span><span class="what">{{ c.title }}</span></div>
       {% endfor %}
       {% if today_so_far.captures %}
       <div class="agrow dim"><span class="what"><span class="num">{{ today_so_far.captures }}</span> captured today</span></div>

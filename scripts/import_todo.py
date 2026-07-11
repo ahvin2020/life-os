@@ -22,14 +22,15 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from import_common import (  # noqa: E402
-    DATA_DIR, LEDGER_PATH, apply_item, load_ledger, save_ledger, ledger_key,
+    DATA_DIR, LEDGER_PATH, _ORDER, _HEADINGS,
+    apply_item, load_ledger, save_ledger, ledger_key,
 )
+from claude_cli import call_claude  # noqa: E402  (import_common put repo root on sys.path)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TODO_PATH = "/Users/kelvintan/Desktop/todo.txt"
@@ -148,25 +149,14 @@ def _build_prompt(profile: str, batch: list[dict], start_index: int) -> str:
 
 
 def _claude_available() -> bool:
-    try:
-        # stdin=DEVNULL is essential: `claude -p` blocks reading stdin otherwise
-        # (it hangs forever when stdin is an inherited pipe/tty).
-        subprocess.run(["claude", "-p", "say hi"], capture_output=True, text=True,
-                       timeout=60, check=True, stdin=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
+    # Probe through the single-source CLI wrapper (call_claude returns "" on any
+    # failure, non-empty stdout on success).
+    return bool(call_claude("say hi", timeout=60))
 
 
 def _run_claude(prompt: str) -> str | None:
-    try:
-        proc = subprocess.run(["claude", "-p", prompt], capture_output=True,
-                              text=True, timeout=300, stdin=subprocess.DEVNULL)
-        if proc.returncode != 0:
-            return None
-        return proc.stdout
-    except Exception:
-        return None
+    # call_claude returns "" on failure; normalise to None for the callers here.
+    return call_claude(prompt, timeout=300) or None
 
 
 def _extract_json_array(text: str):
@@ -254,9 +244,7 @@ def _normalize(obj) -> dict:
 
 
 # ── 3. PREVIEW ─────────────────────────────────────────────────────────────────
-_ORDER = ["task", "note", "journal", "skip", "uncertain"]
-_HEADINGS = {"task": "Tasks", "note": "Notes", "journal": "Journal",
-             "skip": "Skip", "uncertain": "Uncertain"}
+# _ORDER / _HEADINGS are shared via import_common.
 
 
 def _proposed_str(r: dict) -> str:

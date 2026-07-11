@@ -40,10 +40,11 @@
 
 {% macro goal_card(g) -%}
 {% set p = g.progress %}
-<div class="goal">
+{% set gdone = (p.achieved if p.shape == 'milestone' else p.pct >= 100) %}
+<div class="goal{{ ' achieved' if gdone else '' }}" data-goal-id="{{ g.id }}">
   <div class="ghead"><span class="t">{{ g.title }}</span>
     {% if p.shape in ['measure', 'both'] %}
-      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}">{{ p.current|int }} / {{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
+      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}" data-target="{{ p.target|int }}" data-unit="{{ p.unit }}" tabindex="0" role="button" title="update number">{{ p.current|int }} / {{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
     {% elif p.shape == 'rollup' %}
       <span class="gnum">{{ p.done }} / {{ p.total }}</span>
     {% else %}
@@ -70,7 +71,7 @@
     <div class="gsrc">link tasks to this goal via the task editor (◎)</div>
     {% endif %}
   {% endif %}
-  <div class="erow"><span class="spacer" style="flex:1"></span><form method="post" action="/goals/{{ g.id }}/delete"><button class="mini danger gdel" type="submit">delete</button></form></div>
+  <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini danger gdel" type="button" data-goal-id="{{ g.id }}">delete</button></div>
 </div>
 {%- endmacro %}
 

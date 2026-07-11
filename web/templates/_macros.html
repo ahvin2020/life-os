@@ -1,50 +1,88 @@
-{# Shared task rendering — one source of truth for the Today rows and the kanban cards. #}
+{# Shared task rendering — one source of truth for the Today rows and the kanban cards.
+   "On today" is STICKY: any planned_on <= today counts (a plan rolls over until done
+   or unplanned), so every pill/data comparison uses <=, never ==. #}
 
-{% macro _data(t) -%}
+{% macro _onday(t, today) -%}{{ '1' if t.planned_on and t.planned_on <= today else '0' }}{%- endmacro %}
+
+{# One journal entry — used by today's page AND the past-day page, so both render
+   identically (timestamp, per-entry edit/delete, and the dark voice player). The
+   player row ships hidden; core.js reveals it only once the recording loads. #}
+{% macro journal_entry(e, day) -%}
+<div class="jentry" data-day="{{ day }}" data-time="{{ e.time }}" data-idx="{{ e.idx }}">
+  <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}
+    <span class="jacts">
+      <button class="jmore" type="button" aria-label="Entry actions">⋯</button>
+      <button class="jact jedit" type="button">Edit</button>
+      <button class="jact jdel" type="button">Delete</button>
+    </span>
+  </div>
+  <p class="jtext">{{ e.text }}</p>
+  {% if e.audio %}
+  <div class="erow nplay" hidden><span class="plabel">🎙 your recording</span>
+    <audio preload="none" src="/journal/{{ day }}/entry/{{ e.time }}/audio?i={{ e.idx }}"></audio></div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{# NOTE: `today` is passed explicitly — an imported macro module does NOT see the
+   page context, so referencing the context-processor `today` here silently
+   yields Undefined (the old data-planned always rendered "0"). #}
+{% macro _data(t, today) -%}
 data-task-id="{{ t.id }}" data-title="{{ t.title|e }}" data-due="{{ t.due_date or '' }}"
 data-priority="{{ t.priority or '' }}" data-category="{{ t.category or '' }}"
 data-col="{{ t.col }}" data-recur="{{ t.recur_rule or '' }}" data-goal-id="{{ t.goal_id or '' }}"
-data-planned="{{ '1' if t.planned_on == today else '0' }}"
+data-planned="{{ _onday(t, today) }}"
 data-subs='{{ t.subtasks|tojson }}'
+{%- endmacro %}
+
+{% macro plan_pill(t, today, extra_class='') -%}
+  {# a DONE task is never "on today" as status — its pill reads as the action
+     ("☀ Do today" = reopen), hover-revealed, not a stale amber badge #}
+  {% set on = (not t.done) and t.planned_on and t.planned_on <= today %}
+  <button class="planbtn {{ extra_class }} {{ 'on' if on else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if on else '☀ Do today' }}</button>
 {%- endmacro %}
 
 {% macro due_span(t, today) -%}
   {% if t.done %}
-    <span class="due">done</span>
+    {# no "done" text — strikethrough + dim + checked box already say it #}
+    <span class="due"></span>
   {% elif t.due_date %}
     {% set ago = t.due_date | days_ago %}
     <span class="due {{ 'over' if (ago is not none and ago > 0) else ('today' if ago == 0 else '') }}">{{ t.due_date | due_label }}</span>
+  {% else %}
+    {# empty slot keeps the row's data columns (chip · pill · due) aligned #}
+    <span class="due"></span>
   {% endif %}
 {%- endmacro %}
 
 {# A Today-list item: simple row, or a parent with a subtask ring. #}
 {% macro today_item(t, today) -%}
   {% if t.sub_total and t.sub_total > 0 %}
-    <div class="ptask" {{ _data(t) }}>
+    <div class="ptask" {{ _data(t, today) }}>
       <div class="head">
         <span class="ringwrap" id="rw-t{{ t.id }}"><svg class="ring" id="ring-t{{ t.id }}" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
-        <span class="t taskedit">{{ t.title }}</span>
+        <span class="t taskedit" tabindex="0" role="button">{{ t.title }}</span>
         <span class="trow">
           <span class="subcount" id="cnt-t{{ t.id }}">{{ t.sub_done }}/{{ t.sub_total }}</span>
           {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
-          <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+          {% if not t.done %}{{ plan_pill(t, today) }}{% endif %}
           {{ due_span(t, today) }}
         </span>
       </div>
       <div class="subs" data-ring-init="t{{ t.id }}">
         {% for s in t.subtasks %}
-        <div class="sub {{ 'done' if s.done else '' }}"><input type="checkbox" data-ring="t{{ t.id }}" data-sub-id="{{ s.id }}" {{ 'checked' if s.done else '' }}><label>{{ s.title }}</label></div>
+        <div class="sub {{ 'done' if s.done else '' }}"><input type="checkbox" data-ring="t{{ t.id }}" data-sub-id="{{ s.id }}" {{ 'checked' if s.done else '' }}><label><span class="tt">{{ s.title }}</span></label></div>
         {% endfor %}
       </div>
     </div>
   {% else %}
-    <div class="task {{ 'done' if t.done else '' }}" {{ _data(t) }} {% if t.done %}style="opacity:.55"{% endif %}>
+    <div class="task {{ 'done' if t.done else '' }}" {{ _data(t, today) }} {% if t.done %}style="opacity:.55"{% endif %}>
       {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
       <label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}" {{ 'checked' if t.done else '' }}></label>
-      <label class="taskedit">{{ t.title }}</label>
+      <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
       <span class="trow">
         {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
-        <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+        {% if not t.done %}{{ plan_pill(t, today) }}{% endif %}
         {{ due_span(t, today) }}
       </span>
     </div>
@@ -55,42 +93,98 @@ data-subs='{{ t.subtasks|tojson }}'
    are Today-hero affordances). Priority dot, title (opens the editor), optional
    subtask count, due label, and the Do-today pill to promote it into Today. #}
 {% macro week_item(t, today) -%}
-  <div class="task weekrow" {{ _data(t) }}>
+  <div class="task" {{ _data(t, today) }}>
     {% if t.priority %}<span class="pri {{ t.priority }}"></span>{% endif %}
     {% if not (t.sub_total and t.sub_total > 0) %}<label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}"></label>{% endif %}
-    <label class="taskedit">{{ t.title }}</label>
+    <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
     <span class="trow">
       {% if t.sub_total and t.sub_total > 0 %}<span class="subcount">{{ t.sub_done }}/{{ t.sub_total }}</span>{% endif %}
       {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
-      <button class="planbtn {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+      {{ plan_pill(t, today) }}
       {{ due_span(t, today) }}
     </span>
   </div>
 {%- endmacro %}
 
-{# A kanban card. #}
+{# A kanban card. On-today cards (t.pinned, set by tasks_page) render at the top of
+   the week column with the amber pill as status; completion is the checkbox (drag
+   to Done still works for unpinned cards). Week cards confess staleness — muted
+   mono "Nd · K× moved" — but only past the thresholds (≥7 days in column or ≥2
+   postpones); fresh cards stay a single clean line. #}
 {% macro kcard(t, today) -%}
-  <div class="kcard" data-cat="{{ t.category or '' }}" {{ _data(t) }} {% if t.done %}style="opacity:.55"{% endif %}>
+  {% set wage = t.week_since | days_ago if t.week_since else none %}
+  {% set stale = (not t.pinned) and (not t.done) and t.col == 'week'
+     and ((wage is not none and wage >= 7) or (t.reschedule_count or 0) >= 2) %}
+  <div class="kcard{{ ' pinned' if t.pinned }}{{ ' done' if t.done }}" data-cat="{{ t.category or '' }}" {{ _data(t, today) }}>
     {% if t.sub_total and t.sub_total > 0 %}
       <div class="khead">
         <span class="ringwrap" id="rw-t{{ t.id }}"><svg class="ring" id="ring-t{{ t.id }}" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915"></circle></svg><span class="check">✓</span></span>
-        <span class="t taskedit">{{ t.title }}</span>
+        <span class="t taskedit" tabindex="0" role="button">{{ t.title }}</span>
         <span class="subcount" id="cnt-t{{ t.id }}">{{ t.sub_done }}/{{ t.sub_total }}</span>
       </div>
       <div class="subs" data-ring-init="t{{ t.id }}">
         {% for s in t.subtasks %}
-        <div class="sub {{ 'done' if s.done else '' }}"><input type="checkbox" data-ring="t{{ t.id }}" data-sub-id="{{ s.id }}" {{ 'checked' if s.done else '' }}><label>{{ s.title }}</label></div>
+        <div class="sub {{ 'done' if s.done else '' }}"><input type="checkbox" data-ring="t{{ t.id }}" data-sub-id="{{ s.id }}" {{ 'checked' if s.done else '' }}><label><span class="tt">{{ s.title }}</span></label></div>
         {% endfor %}
       </div>
     {% else %}
-      <span class="t taskedit">{% if t.priority %}<span class="pri {{ t.priority }}"></span> {% endif %}{{ t.title }}
+      {# no checkbox on board cards — drag to Done IS the completion gesture here
+         (one affordance, not two); checkboxes live on the Today page rows #}
+      <span class="t taskedit" tabindex="0" role="button">{% if t.priority %}<span class="pri {{ t.priority }}"></span> {% endif %}{{ t.title }}
         {% if t.recur_rule %}<span class="rec" title="recurring">↻ {{ t.recur_rule }}</span>{% endif %}
       </span>
     {% endif %}
-    <div class="krow{% if not (t.due_date or t.goal_id or t.planned_on == today) %} ghost{% endif %}">
-      {% if t.due_date %}{{ due_span(t, today) }}{% endif %}
+    {# a DONE card's date/plan are history, not meta — they must not prop the row
+       open (an empty krow left a blank band under struck titles) #}
+    {% set meta_due = t.due_date and not t.done %}
+    {% set meta_plan = (not t.done) and _onday(t, today) == '1' %}
+    {% set meta_cat = t.category %}
+    <div class="krow{% if not (meta_due or t.goal_id or stale or meta_plan or meta_cat) %} ghost{% endif %}">
+      {% if meta_cat %}<span class="cat">{{ t.category }}</span>{% endif %}
+      {% if meta_due %}{{ due_span(t, today) }}{% endif %}
       {% if t.goal_id %}<span class="goalref">◎ goal</span>{% endif %}
-      <button class="planbtn kplan {{ 'on' if t.planned_on == today else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if t.planned_on == today else '☀ Do today' }}</button>
+      {% if stale %}<span class="kstale">{% if wage is not none and wage >= 7 %}{{ wage }}d{% endif %}{% if (t.reschedule_count or 0) >= 2 %}{{ ' · ' if wage is not none and wage >= 7 }}{{ t.reschedule_count }}× moved{% endif %}</span>{% endif %}
+      {{ plan_pill(t, today, 'kplan') }}
     </div>
   </div>
+{%- endmacro %}
+
+{# ── Note card — ONE source for the notes grid AND the library "Ask" results, so
+   Ask panels look identical to browsing. `why` (Claude's one-line reason, Ask only)
+   takes the snippet slot when present. Imported into a plain module (no base.html),
+   so it relies only on globals (url_for, the fdate filter). #}
+{%- set NOTE_BULK = ['idea', 'imported', 'link', 'ig', 'saved', 'video', 'note'] -%}
+{%- set NOTE_IG_ICON -%}<span class="src-ic ig" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2.7" y="2.7" width="18.6" height="18.6" rx="5.4" fill="none" stroke="#fff" stroke-width="2.1"/><circle cx="12" cy="12" r="4.3" fill="none" stroke="#fff" stroke-width="2.1"/><circle cx="17.5" cy="6.5" r="1.35" fill="#fff"/></svg></span>{%- endset -%}
+{%- set NOTE_YT_ICON -%}<span class="src-ic yt" aria-hidden="true"><svg viewBox="0 0 28 20"><path d="M11 6 L19.5 10 L11 14 Z" fill="#fff"/></svg></span>{%- endset -%}
+
+{% macro note_card(n, why='') -%}
+{%- set topic = (n.tags | reject('in', NOTE_BULK) | list) -%}
+{%- set tag = topic[0] if topic else (n.tags[0] if n.tags else '') -%}
+{#- searchable haystack for the live filter: tags + a body excerpt, lowercased, so
+    trading-about notes (and the options-trading tag) match even though neither the tag
+    nor the body is rendered on the card. Ask stays the full-content semantic path. -#}
+{%- set searchblob = ((n.tags|join(' ')) ~ ' ' ~ (n.body or ''))[:600] | lower -%}
+{% if n.kind == 'text' %}
+<div class="note txt" data-slug="{{ n.slug }}" data-tags="{{ n.tags|join(' ') }}" data-spaces="{{ n.spaces|join(' ') }}" data-search="{{ searchblob }}" tabindex="0" role="button">
+  <div class="nbody">
+    <div class="ntitle">{{ n.title }}</div>
+    {% if why %}<div class="why">{{ why }}</div>{% elif n.snippet and n.snippet.strip() != n.title.strip() %}<div class="nsnip">{{ n.snippet }}</div>{% endif %}
+    <div class="nmeta">{% if tag %}<span class="ntag">{{ tag }}</span>{% endif %}<span class="ndate">{{ n.created | fdate }}</span></div>
+  </div>
+</div>
+{% else %}
+<div class="note {{ n.kind }}" data-slug="{{ n.slug }}" data-tags="{{ n.tags|join(' ') }}" data-spaces="{{ n.spaces|join(' ') }}" data-search="{{ searchblob }}" tabindex="0" role="button">
+  <div class="nthumb">
+    <img class="nimg" loading="lazy" src="{{ url_for('notes.note_thumb', slug=n.slug) }}" onerror="this.closest('.nthumb').classList.add('noimg')" alt="">
+    {% if n.domain and 'instagram' in n.domain %}{{ NOTE_IG_ICON }}{% elif n.kind == 'video' %}{{ NOTE_YT_ICON }}{% endif %}
+    {% if n.url %}<a class="nsrc" href="{{ n.url }}" target="_blank" rel="noopener" title="Open source" onclick="event.stopPropagation()" aria-label="Open source"></a>{% endif %}
+    {% if n.kind == 'video' and 'youtu' in (n.domain or '') %}<span class="play"></span>{% endif %}
+  </div>
+  <div class="nbody">
+    <div class="ntitle">{{ n.title }}</div>
+    {% if why %}<div class="why">{{ why }}</div>{% elif n.snippet and n.snippet.strip() != n.title.strip() %}<div class="nsnip">{{ n.snippet }}</div>{% endif %}
+    <div class="nmeta">{% if tag %}<span class="ntag">{{ tag }}</span>{% endif %}<span class="ndate">{{ n.created | fdate }}</span></div>
+  </div>
+</div>
+{% endif %}
 {%- endmacro %}

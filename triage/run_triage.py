@@ -105,22 +105,8 @@ def call_claude(prompt: str, timeout: int = 180) -> str:
 
 def parse_decisions(raw: str) -> list:
     """Extract the JSON array of decisions from Claude's output (tolerates fences/prose)."""
-    if not raw:
-        return []
-    raw = raw.strip()
-    # Strip code fences if present.
-    fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.S)
-    if fence:
-        raw = fence.group(1).strip()
-    # Grab the outermost JSON array.
-    m = re.search(r"\[.*\]", raw, re.S)
-    if not m:
-        return []
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, list) else []
-    except json.JSONDecodeError:
-        return []
+    from claude_cli import extract_json
+    return extract_json(raw, "array") or []
 
 
 def apply_decisions(conn, decisions: list) -> list:

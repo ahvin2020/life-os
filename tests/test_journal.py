@@ -104,3 +104,30 @@ def test_entry_delete_route_and_404(client):
     # missing entry → 404
     r2 = client.post(f"/journal/{DAY}/entry/09:00/delete", data={"idx": "0"})
     assert r2.status_code == 404
+
+
+# ── voice journal entries carry a playable recording ──────────────────────────
+def test_voice_entry_stores_and_parses_audio_pointer(client):
+    ptr = "vault/.audio/voice-20260709-090000.oga"
+    page = vault_store.append_journal_entry(DAY, "Morning workout done.", audio=ptr)
+    e = page["entries"][0]
+    assert e["audio"] == ptr and e["source"] == ""      # pointer split out of the slot
+    assert f"## {e['time']} · audio:{ptr}" in page["raw"]  # header carries it verbatim
+    # editing the body leaves the recording pointer intact (header preserved)
+    page = vault_store.edit_journal_entry(DAY, e["time"], 0, "Edited body.")
+    assert page["entries"][0]["audio"] == ptr
+
+
+def test_journal_entry_audio_route_serves_and_404s(client):
+    ptr = "vault/.audio/voice-20260709-181500.oga"
+    vault_store.append_journal_entry(DAY, "Gym felt great.", audio=ptr)
+    # drop a real file where the route resolves the basename
+    os.makedirs(vault_store.audio_dir(), exist_ok=True)
+    with open(os.path.join(vault_store.audio_dir(), os.path.basename(ptr)), "wb") as f:
+        f.write(b"OggS-fake")
+    e = vault_store.read_journal(DAY)["entries"][0]
+    r = client.get(f"/journal/{DAY}/entry/{e['time']}/audio?i=0")
+    assert r.status_code == 200 and r.headers["Content-Type"] == "audio/ogg"
+    # an entry with no recording → 404
+    r2 = client.get(f"/journal/{DAY}/entry/00:00/audio?i=0")
+    assert r2.status_code == 404

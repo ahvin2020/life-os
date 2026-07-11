@@ -26,10 +26,21 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from db import DB_PATH, now_iso, connect  # noqa: E402
+from db import DB_PATH, now_iso, connect, get_setting  # noqa: E402
 
-KEEP = 7  # retain the most recent N backups in each folder
+KEEP = 7  # default retention (most recent N) — overridable via settings.backup_keep
 _PREFIX, _SUFFIX = "app-", ".db"
+
+
+def _setting(db_path, key):
+    """Read one settings value (or None). Best-effort; never raises."""
+    try:
+        conn = connect(db_path)
+        v = get_setting(conn, key)
+        conn.close()
+        return v or None
+    except Exception:
+        return None
 
 
 def backup_dir() -> str:
@@ -87,15 +98,24 @@ def stamp_heartbeat(db_path: str = DB_PATH) -> None:
 
 def run_backup(db_path: str = DB_PATH) -> dict:
     """Full nightly job: online backup → prune local → mirror offsite → prune offsite →
-    heartbeat. Returns a summary dict."""
+    heartbeat. Retention (settings.backup_keep) and the offsite location
+    (settings.backup_location) are user-overridable; env vars still win for tests."""
+    keepv = _setting(db_path, "backup_keep")
+    keep = int(keepv) if (keepv and str(keepv).isdigit()) else KEEP
+    # offsite mirror: env override (tests) > backup_location setting > default
+    synced_base = (os.environ.get("LIFEOS_SYNCED_BACKUP_DIR")
+                   or _setting(db_path, "backup_location")
+                   or os.path.join(_REPO_ROOT, "data-backups"))
+    os.makedirs(synced_base, exist_ok=True)
+
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     name = f"{_PREFIX}{ts}{_SUFFIX}"
     local = os.path.join(backup_dir(), name)
     _online_backup(db_path, local)
-    pruned_local = prune(backup_dir())
-    synced = os.path.join(synced_dir(), name)
+    pruned_local = prune(backup_dir(), keep)
+    synced = os.path.join(synced_base, name)
     shutil.copy2(local, synced)
-    pruned_synced = prune(synced_dir())
+    pruned_synced = prune(synced_base, keep)
     stamp_heartbeat(db_path)
     return {"backup": local, "synced": synced,
             "pruned_local": len(pruned_local), "pruned_synced": len(pruned_synced)}
