@@ -6,9 +6,10 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Code is bind-mounted read-only at runtime (the Synology Drive synced folder);
-# nothing app-specific is baked into the image, so a code edit + container restart
-# is the whole deploy loop. See deploy/README.md.
+# Bake the app code INTO the image (the .dockerignore keeps vault/data/.env out).
+# The image IS the deploy artifact now: git push → CI builds → ghcr → Watchtower pulls.
+# vault/ and data/ are the only things mounted at runtime (user data). See deploy/README.md.
+COPY . /app
 ENV TZ=Asia/Singapore
-EXPOSE 5060
-CMD ["python3", "server.py", "--port", "5060", "--db", "/data/app.db"]
+EXPOSE 5070
+CMD ["python3", "server.py", "--port", "5070", "--db", "/data/app.db"]

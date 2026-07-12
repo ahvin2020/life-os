@@ -1,0 +1,29 @@
+# Keep the PUBLIC ghcr.io image to code only — never bake in user data or secrets.
+# vault/ (notes+journal) and data/ (app.db, secret_key, logs) are mounted at runtime;
+# .env holds the bot token. None of these belong in a published image.
+.env
+.env.*
+vault/
+data/
+data-backups/
+
+# VCS, virtualenv, caches, build cruft
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.DS_Store
+
+# Dev-only material not needed at runtime
+tests/
+design/
+.github/
+.claude/
+*.log
