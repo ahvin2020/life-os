@@ -104,6 +104,54 @@ def _looks_like_url(text: str) -> bool:
                                     "tiktok.com", "http://", "https://"))
 
 
+# ── multi-item messages ─────────────────────────────────────────────────────────
+# One Telegram message can hold several captures, one per line ("paste 3 links"). A
+# whole message is otherwise treated as ONE note, so line 2+ used to vanish into the
+# first note's body. We split ONLY when EVERY non-empty line is independently a
+# capturable unit (a URL or a prefixed item); a link-with-caption or a prose note with
+# line breaks has non-unit lines, so it stays intact.
+_SHORT_PREFIXES = ("t:", "n:", "i:", "j:")
+# Natural prefixes the phone keyboard auto-capitalises / spells out, mapped to the
+# canonical short form route_capture understands (so a split line needs no claude).
+_NATURAL_PREFIX = {
+    "task:": "t:", "todo:": "t:", "to-do:": "t:", "to do:": "t:",
+    "note:": "n:", "idea:": "i:", "journal:": "j:", "diary:": "j:",
+}
+
+
+def _is_capture_unit(line: str) -> bool:
+    """True if `line` on its own is a distinct capture (URL or prefixed item)."""
+    low = line.strip().lower()
+    if not low:
+        return False
+    if _looks_like_url(line):
+        return True
+    if low[:2] in _SHORT_PREFIXES:
+        return True
+    return any(low.startswith(p) for p in _NATURAL_PREFIX)
+
+
+def normalize_capture_line(line: str) -> str:
+    """Rewrite a natural prefix ('Note: x') to the canonical short form ('n: x') so the
+    deterministic route_capture handles it; URLs and short prefixes pass through."""
+    line = line.strip()
+    low = line.lower()
+    for nat, short in _NATURAL_PREFIX.items():
+        if low.startswith(nat):
+            return short + " " + line[len(nat):].strip()
+    return line
+
+
+def split_capture_lines(text: str):
+    """Split a multi-item message into its per-line captures, or None when it's a single
+    capture (fewer than 2 lines, or any line isn't a standalone unit — e.g. a link with a
+    caption, or a multi-line prose note). Returned lines are normalized for route_capture."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) < 2 or not all(_is_capture_unit(ln) for ln in lines):
+        return None
+    return [normalize_capture_line(ln) for ln in lines]
+
+
 def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
                   enrich: str = "async") -> dict:
     """Classify `text` and file it immediately. Returns a dict describing where it

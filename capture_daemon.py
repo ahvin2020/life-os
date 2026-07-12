@@ -256,6 +256,36 @@ def maybe_send_backlog_triage(conn, tg, chat_id, now=None) -> bool:
     return True
 
 
+def maybe_send_weekly_review(conn, tg, chat_id, now=None) -> bool:
+    """Send the weekly review once on its scheduled day at/after its time (settings
+    weekly_day + weekly_time; default Sunday 18:00). Celebrates the week's wins, names
+    what slipped, and tees up next week — distinct from the morning brief and the
+    do/defer/delete backlog triage. Returns True if sent."""
+    from core.db import today_iso, now_sg
+    from ai import proactive
+    if _get_setting(conn, "weekly_enabled", "1") == "0":
+        return False
+    now = now or now_sg()
+    today = today_iso()
+    day = (_get_setting(conn, "weekly_day", "sun") or "sun").lower()
+    if day != "daily" and now.weekday() != _WEEKDAY_NUM.get(day, 6):
+        return False
+    h, m = _parse_hhmm(_get_setting(conn, "weekly_time", "18:00"), 18, 0)
+    if (now.hour, now.minute) < (h, m):
+        return False
+    if _get_setting(conn, "weekly_last_sent") == today:
+        return False
+    try:
+        text = proactive.weekly_review(conn, today, now)
+    except Exception as e:
+        _log(f"scheduled weekly review failed: {e}")
+        return False
+    tg.send_message(chat_id, text)
+    _set_setting(conn, "weekly_last_sent", today)
+    _log("weekly review sent")
+    return True
+
+
 # ── triage (debounced) ────────────────────────────────────────────────────────
 def run_triage_now(conn, tg=None, chat_id=None):
     """Invoke the triage runner and report anything it reclassified back to Kelvin."""
@@ -295,12 +325,19 @@ def main() -> int:
                 reloader.reexec(conn.close)
             updates = tg.get_updates(offset)
             for upd in updates:
-                offset = upd["update_id"] + 1
-                _set_setting(conn, "telegram_offset", offset)
                 if "callback_query" in upd:
                     _process_callback(conn, tg, allowed, upd)
                 else:
                     sweep_due_at = _process_update(conn, tg, allowed, upd, sweep_due_at)
+                # Advance the cursor only AFTER the update is handled. Persisting it first
+                # was at-most-once: a hard death (OOM / Synology-triggered reexec / kill) in
+                # the window between the persist and the save dropped the update forever —
+                # it's what ate the second of two Instagram links. Both handlers swallow
+                # their own exceptions, so reaching here means the message is durably filed
+                # (or safety-logged); at-least-once from here on — a re-delivered link is
+                # deduped by normalized URL, so the worst case is a touch, never a lost note.
+                offset = upd["update_id"] + 1
+                _set_setting(conn, "telegram_offset", offset)
 
             _stamp_heartbeat(conn)
 
@@ -332,6 +369,10 @@ def main() -> int:
                     maybe_send_backlog_triage(conn, tg, allowed)
                 except Exception as e:
                     _log(f"triage schedule failed: {e}")
+                try:
+                    maybe_send_weekly_review(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"weekly review failed: {e}")
 
         except Exception as e:                       # never crash the loop
             _log(f"poll error: {e}")
@@ -418,7 +459,22 @@ def _process_update(conn, tg, allowed, upd, sweep_due_at):
 
 
 def _handle_text(conn, tg, chat_id, text) -> bool:
-    """Route one text message. Fast paths (prefix/URL, instant deterministic query)
+    """Route one text message. A multi-item message (several URLs/prefixed items, one per
+    line) is split so each line is captured separately — otherwise line 2+ vanished into
+    the first note's body. A single capture (or prose/link-with-caption) routes as-is.
+    Returns True if any router fallback fired (so the caller schedules a sweep)."""
+    from domain.capture import split_capture_lines
+    items = split_capture_lines(text)
+    if items:
+        fell_back = False
+        for item in items:
+            fell_back = _handle_text_single(conn, tg, chat_id, item) or fell_back
+        return fell_back
+    return _handle_text_single(conn, tg, chat_id, text)
+
+
+def _handle_text_single(conn, tg, chat_id, text) -> bool:
+    """Route ONE capturable item. Fast paths (prefix/URL, instant deterministic query)
     skip Claude; everything else goes through the agentic router. Returns True if a
     router fallback fired (so the caller schedules a sweep)."""
     low = text.strip().lower()

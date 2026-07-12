@@ -154,6 +154,50 @@ def test_triage_three_way_note_and_journal(client):
     assert "unsorted" not in retagged["tags"] and "idea" in retagged["tags"]
 
 
+# ── multi-item messages (one message, several lines → several captures) ───────
+def test_split_capture_lines_heuristic():
+    """Split ONLY when every non-empty line is a standalone capturable unit; a link with
+    a caption or a prose note keeps its line breaks and stays one capture."""
+    from domain.capture import split_capture_lines
+    # 2 links + natural prefixes → split, natural prefixes normalized to short forms
+    assert split_capture_lines(
+        "https://insta.com/reel/A/\nhttps://insta.com/p/B/\nnote: keep this\ntask: call bob"
+    ) == ["https://insta.com/reel/A/", "https://insta.com/p/B/", "n: keep this", "t: call bob"]
+    # short prefixes split too
+    assert split_capture_lines("t: milk\nn: idea\nj: felt good") == ["t: milk", "n: idea", "j: felt good"]
+    # link with a caption → NOT split (caption line isn't a unit)
+    assert split_capture_lines("great video\nhttps://youtu.be/x") is None
+    # prose note with line breaks → NOT split
+    assert split_capture_lines("Shopping list:\nmilk\neggs") is None
+    # a single line is never split
+    assert split_capture_lines("https://insta.com/reel/A/") is None
+
+
+def test_daemon_splits_multiline_message(client, monkeypatch):
+    """A single message of several prefixed items becomes SEPARATE notes — not one note
+    that swallows lines 2+ (the 'recorded only 1' bug)."""
+    conn = _db()
+    tg = FakeTelegram()
+    cd._handle_text(conn, tg, 12345678, "note: alpha\nnote: bravo\nnote: charlie")
+    conn.close()
+    titles = {n["title"] for n in vault_store.list_notes()}
+    assert {"alpha", "bravo", "charlie"} <= titles          # all three captured separately
+    assert len(tg.sent) == 3                                 # one confirmation per item
+
+
+def test_daemon_multiline_links_route_each(client, monkeypatch):
+    """Several links in one message each go through the link handler (own ack+enrichment),
+    instead of collapsing into a single link note."""
+    seen = []
+    monkeypatch.setattr(cd, "_handle_link", lambda conn, tg, cid, text: seen.append(text))
+    conn = _db()
+    tg = FakeTelegram()
+    cd._handle_text(conn, tg, 12345678,
+                    "https://www.instagram.com/reel/AAA/\nhttps://www.instagram.com/p/BBB/")
+    conn.close()
+    assert seen == ["https://www.instagram.com/reel/AAA/", "https://www.instagram.com/p/BBB/"]
+
+
 # ── v2: the daemon routes text through the agentic router ─────────────────────
 def test_daemon_routes_text_through_router(client, monkeypatch):
     """An instruction goes through router.route (ONE claude call); the daemon shows
