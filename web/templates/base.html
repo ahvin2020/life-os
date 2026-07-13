@@ -79,9 +79,8 @@
   <a class="{{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
   <a class="{{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
   <a class="{{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+  <a class="{{ 'active' if active=='settings' else '' }}" href="/settings">{% if nav_alerts %}<span class="bn-badge" aria-label="{{ nav_alerts }} issues">{{ nav_alerts }}</span>{% endif %}<span class="ico">⚙</span>Settings</a>
 </nav>
-
-<a class="gearlink" href="/settings" aria-label="Settings">⚙</a>
 
 <a class="fab" href="/#qin" aria-label="Quick add">＋</a>
 
