@@ -389,3 +389,106 @@ def test_reflection_guard_time_and_once(client, monkeypatch):
     assert cd.maybe_send_reflection(conn, tg, "chat", now=at) is False   # once per day
     conn.close()
     assert tg.sent[-1][1] == "REFLECT"
+
+
+# ── FEATURE 1b: note resurfacing (write-only-archive antidote) ─────────────────
+def test_brief_resurfaces_old_note_by_rotation(client):
+    """With no anniversary hit, the brief rotates in a note older than 14 days."""
+    conn = _db()
+    day = "2026-07-09"
+    # created 2026-05-30 (40d ago, day-of-month 30 ≠ 9 → no anniversary) ⇒ rotation path
+    vault_store.write_note("old-idea", "Old idea worth revisiting", ["unsorted"],
+                           "a body about REITs strategy", False,
+                           created="2026-05-30T10:00:00+08:00")
+    ctx = proactive.build_brief_context(conn, day, now=datetime(2026, 7, 9, 7, 0, tzinfo=TZ))
+    conn.close()
+    assert ctx["resurfaced"] and ctx["resurfaced"]["title"] == "Old idea worth revisiting"
+    assert ctx["resurfaced"]["span"] == "40d ago"
+    assert "RESURFACED NOTE" in ctx["text"] and "Old idea worth revisiting" in ctx["text"]
+    # the prompt tells claude to gate it (only if it connects), never force it
+    assert "Worth revisiting" in proactive.brief_prompt(ctx)
+
+
+def test_brief_resurface_prefers_anniversary(client):
+    """An exact 1-month-ago note wins over rotation and is labelled as an anniversary."""
+    conn = _db()
+    day = "2026-07-09"
+    vault_store.write_note("one-month", "Anniversary note", ["unsorted"], "body",
+                           False, created="2026-06-09T10:00:00+08:00")   # 1 month ago today
+    ctx = proactive.build_brief_context(conn, day, now=datetime(2026, 7, 9, 7, 0, tzinfo=TZ))
+    conn.close()
+    assert ctx["resurfaced"]["span"] == "1 month ago"
+    assert ctx["resurfaced"]["title"] == "Anniversary note"
+
+
+def test_brief_no_notes_no_resurface(client):
+    conn = _db()
+    ctx = proactive.build_brief_context(conn, "2026-07-09",
+                                        now=datetime(2026, 7, 9, 7, 0, tzinfo=TZ))
+    conn.close()
+    assert ctx["resurfaced"] is None
+    assert "(none)" in ctx["text"]
+
+
+# ── FEATURE 4: weekly review ──────────────────────────────────────────────────
+def test_weekly_context_counts_postpones_and_window(client):
+    conn = _db()
+    day = "2026-07-12"                                    # a Sunday; window from 2026-07-06
+    with conn:
+        a = create_task(conn, "Ship invoice", category="business")
+        conn.execute("UPDATE tasks SET done=1, completed_at=?, created=? WHERE id=?",
+                     ("2026-07-08", "2026-07-08T00:00:00Z", a))
+        b = create_task(conn, "Edit REITs video", category="content")
+        conn.execute("UPDATE tasks SET done=1, completed_at=?, created=? WHERE id=?",
+                     ("2026-07-10", "2026-07-10T00:00:00Z", b))
+        old = create_task(conn, "Old done", category="business")
+        conn.execute("UPDATE tasks SET done=1, completed_at=?, created=? WHERE id=?",
+                     ("2026-07-01", "2026-07-01T00:00:00Z", old))        # before window
+        slip = create_task(conn, "GIRO setup")
+        conn.execute("UPDATE tasks SET reschedule_count=3, created=? WHERE id=?",
+                     ("2026-07-07T00:00:00Z", slip))
+    vault_store.append_journal_entry("2026-07-08", "midweek")
+    vault_store.append_journal_entry("2026-07-11", "friday")
+    vault_store.create_note(title="a note this week", body="x", tags=["unsorted"])
+    ctx = proactive.build_weekly_context(conn, day, now=datetime(2026, 7, 12, 18, 0, tzinfo=TZ))
+    conn.close()
+    assert len(ctx["done"]) == 2                          # 2026-07-01 completion excluded
+    assert ctx["by_cat"] == {"business": 1, "content": 1}
+    assert ctx["created_count"] == 3                      # a, b, slip (old created 07-01 excluded)
+    assert ctx["open_count"] == 1                         # only GIRO still open
+    assert ctx["postponed"] and ctx["postponed"][0]["title"] == "GIRO setup"
+    assert ctx["postponed"][0]["n"] == 3
+    assert ctx["journal_days"] == 2 and ctx["notes_count"] == 1
+    assert "Ship invoice" in ctx["text"] and "GIRO setup" in ctx["text"]
+
+
+def test_weekly_review_mocked_and_fallback(client):
+    conn = _db()
+    day = "2026-07-12"
+    now = datetime(2026, 7, 12, 18, 0, tzinfo=TZ)
+    with conn:
+        t = create_task(conn, "Ship invoice", category="business")
+        conn.execute("UPDATE tasks SET done=1, completed_at=? WHERE id=?", ("2026-07-10", t))
+    out = proactive.weekly_review(conn, day, now,
+                                  claude_fn=lambda p: "Strong week — you shipped the invoice.")
+    assert "Weekly review" in out and "shipped the invoice" in out
+    fb = proactive.weekly_review(conn, day, now, claude_fn=lambda p: "")
+    conn.close()
+    assert "Completed 1 tasks" in fb and "Set next week's goals" in fb
+
+
+def test_weekly_guard_day_time_and_once(client, monkeypatch):
+    from core.db import delete_setting
+    monkeypatch.setattr(proactive, "weekly_review", lambda c, d, n: "WEEKLY-MSG")
+    conn = _db()
+    tg = FakeTelegram()
+    sun_5 = datetime(2026, 7, 12, 17, 0, tzinfo=TZ)                      # before 18:00 default
+    assert cd.maybe_send_weekly_review(conn, tg, "chat", now=sun_5) is False
+    sun_6 = datetime(2026, 7, 12, 18, 0, tzinfo=TZ)                      # Sunday 18:00
+    assert cd.maybe_send_weekly_review(conn, tg, "chat", now=sun_6) is True
+    assert tg.sent[-1][1] == "WEEKLY-MSG"
+    assert cd.maybe_send_weekly_review(conn, tg, "chat", now=sun_6) is False   # once/day
+    delete_setting(conn, "weekly_last_sent")
+    mon_6 = datetime(2026, 7, 13, 18, 0, tzinfo=TZ)                      # wrong day
+    assert cd.maybe_send_weekly_review(conn, tg, "chat", now=mon_6) is False
+    conn.close()

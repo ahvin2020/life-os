@@ -137,34 +137,6 @@ def note_new():
     return respond(True, "Note created", to="/notes")
 
 
-@bp.route("/notes/ask", methods=["POST"])
-def notes_ask():
-    """Semantic library question over the saved idea notes (the same engine the bot
-    uses). READ-ONLY. Renders the ranked 3–5 picks as REAL note cards (same `note_card`
-    macro as the grid, so Ask results look identical to browsing), each carrying Claude's
-    one-line `why`. `fallback` flags the deterministic recency answer used when Claude
-    is unavailable."""
-    from domain import library
-    q = (request.form.get("q") or "").strip()
-    if not q:
-        return jsonify({"status": "ok", "q": q, "html": "", "count": 0, "fallback": False})
-    results, fallback = library.rank_notes(q)
-    by_slug = {n["slug"]: n for n in vault_store.list_notes()}
-    cards = []
-    for r in results:                     # rehydrate full note dicts for the card macro
-        n = by_slug.get(r["slug"])
-        if not n:
-            continue
-        n = dict(n)
-        n["kind"] = thumbs.note_kind(n)
-        n["spaces"] = _note_spaces(n["tags"])
-        n["why"] = r["why"]
-        cards.append(n)
-    html = render_template("_ask_cards.html", cards=cards) if cards else ""
-    return jsonify({"status": "ok", "q": q, "html": html, "count": len(cards),
-                    "fallback": fallback})
-
-
 @bp.route("/notes/<slug>")
 def note_get(slug):
     note = vault_store.read_note(slug)

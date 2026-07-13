@@ -157,29 +157,46 @@ a:hover { text-decoration: underline; }
 .ringwrap.full .check { opacity: 1; transform: scale(1); }
 
 /* tasks (simple rows) */
-.task { display: flex; align-items: center; gap: 10px; padding: 6px 0; transition: opacity var(--dur) var(--ease); }
+/* Row = [dot] [checkbox] [tmain]. Title + sub-line stack inside .tmain, so the
+   sub-line aligns UNDER the title with no magic indent. The dot + checkbox sit
+   left and are centered on the title's FIRST line: their box height equals the
+   title line-height (1.35em), and the row top-aligns them. */
+.task { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; transition: opacity var(--dur) var(--ease); }
 .task input { accent-color: var(--accent); width: 16px; height: 16px; flex: 0 0 auto; }
-.task label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
-  transition: color var(--dur) var(--ease); }
+.tmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.task label.taskedit, .ptask .head .t {
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; line-height: 1.35; transition: color var(--dur) var(--ease); }
 .task.done label { color: var(--muted); }
-/* animated strikethrough lives on the inner .tt span so the line spans the TEXT,
-   not the label's full flex width (it used to shoot past short titles into the
-   empty middle of wide rows) — vertically CENTERED through the text */
+/* animated strikethrough lives on the inner .tt span so the line spans the TEXT */
 .task label .tt, .sub label .tt {
   background-image: linear-gradient(currentColor, currentColor); background-repeat: no-repeat;
   background-position: 0 50%; background-size: 0% 1.4px;
   transition: background-size var(--dur) var(--ease); }
 .task.done label .tt, .sub.done label .tt { background-size: 100% 1.4px; }
-/* trailing chips (category, plan pill, due). display:contents = invisible wrapper on
-   desktop (row unchanged); on narrow widths it becomes a full-width SECOND row so the
-   title keeps the whole first row instead of being squeezed to a few characters. */
-.trow { display: contents; }
+/* sub-line: quiet "category · due" under the title — smaller and lighter than it */
+.tsub { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; min-width: 0; }
+.tsub > * + *::before { content: "·"; margin-right: 7px; color: var(--muted); opacity: .55; }
+.tsub .cat { font-size: 10.5px; letter-spacing: normal; text-transform: capitalize; }
+.tsub .due { font-size: 10.5px; }
 .due { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
 .due.today { color: var(--accent); }
 .due.over { color: var(--bad); }
 .due.planned { color: var(--good); }
+/* fixed-width gutter for the priority dot — reserves its slot on every row so an
+   empty (low/no-priority) row keeps its checkbox aligned with dotted rows */
+.prislot { width: 6px; height: 1.35em; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
 .pri { width: 6px; height: 6px; border-radius: 99px; flex: 0 0 auto; }
 .pri.h, .pri.high { background: var(--bad); } .pri.m, .pri.med { background: var(--accent); } .pri.l, .pri.low { background: var(--muted); opacity: .5; }
+/* done-today fold — completed work stays on Today (undoable) but collapses so it
+   can't bury the open tasks; native <details>, styled marker, no JS */
+.donefold { margin-top: 4px; }
+.donefold > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 8px 0; transition: color var(--dur-fast) var(--ease); }
+.donefold > summary::-webkit-details-marker { display: none; }
+.donefold > summary::before { content: "▸"; font-size: 10px; transition: transform var(--dur-fast) var(--ease); }
+.donefold[open] > summary::before { transform: rotate(90deg); }
+.donefold > summary:hover { color: var(--text); }
 .rec { font-size: 11.5px; color: var(--muted); }
 .subcount { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 /* "Do today" plan pill — compact labelled control; amber when on (needs-attention) */
@@ -191,20 +208,21 @@ a:hover { text-decoration: underline; }
    columns into the middle of wide rows). Opaque backing covers the meta beneath;
    the ON tint composites accent-dim OVER the surface so nothing shows through. */
 .card.hero .task, .card.hero .ptask .head, .weekpool .task { position: relative; }
-/* right:180px parks it over the row's empty middle, clear of the cat/due columns */
-.card.hero .planbtn, .weekpool .planbtn { position: absolute; right: 180px; top: 50%; translate: 0 -50%; background: var(--surface); z-index: 1; }
+/* two-line rows leave the right edge empty — park the hover pill there, vertically
+   centered on the row; its opaque backing covers the title end beneath it */
+.card.hero .planbtn, .weekpool .planbtn { position: absolute; right: 4px; top: 50%; translate: 0 -50%; background: var(--surface); z-index: 1; }
 .card.hero .planbtn.on, .weekpool .planbtn.on {
   background-color: var(--surface);
   background-image: linear-gradient(var(--accent-dim), var(--accent-dim));
 }
 /* checkbox hit-area wrapper — visible box stays small, tap area grows on phones.
    Must NOT inherit the `.task label` title styles (flex:1 + strikethrough bg). */
-.task label.tcheck-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; cursor: pointer; background-image: none; overflow: visible; }
+.task label.tcheck-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; height: 1.35em; cursor: pointer; background-image: none; overflow: visible; }
 
 /* parent task w/ subtasks */
 .ptask { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.ptask .head { display: flex; align-items: center; gap: 10px; }
-.ptask .head .t { font-weight: 500; flex: 1; cursor: pointer; }
+.ptask .head { display: flex; align-items: flex-start; gap: 10px; }
+.ptask .head .t { font-weight: 500; cursor: pointer; }
 .subs { margin-left: 34px; display: flex; flex-direction: column; gap: 2px; }
 .sub { display: flex; align-items: center; gap: 9px; padding: 3px 0; color: var(--muted); }
 .sub input { accent-color: var(--good); width: 15px; height: 15px; }
@@ -279,9 +297,8 @@ a:hover { text-decoration: underline; }
 .kcard .t .pri { display: inline-block; vertical-align: middle; margin-right: 2px; }
 .kcard.done { opacity: .55; }
 .kcard.done .t { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--muted); }
-/* pinned (on-today) cards read as a group at a glance — a slim amber edge
-   (amber = needs-attention-now, and Today IS the attention set) */
-.kcard.pinned { border-left: 2px solid var(--accent); padding-left: 11px; }
+/* pinned (on-today) cards are marked by their "On today" pill, not a coloured
+   edge — one affordance, not two. */
 /* week-column staleness confession ("8d · 2× moved") — data, so mono; muted,
    never amber (amber = needs-attention-now, and staleness is information) */
 .kstale { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
@@ -307,7 +324,7 @@ a:hover { text-decoration: underline; }
 /* filter chips match the tasks board's .tagbtn — one language across all pages */
 .sp { font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 .sp:hover { color: var(--text); border-color: var(--border2); }
-.sp.active { color: var(--text); background: var(--surface2); border-color: var(--border2); }
+.sp.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
 .sp .cnt { font-family: var(--mono); font-size: 11px; opacity: .7; }
 
 /* ---------- notes: card grid (4-col masonry) ---------- */
@@ -425,42 +442,22 @@ a:hover { text-decoration: underline; }
   transform: translate(-50%, -60%) rotate(45deg); }
 .ghtip.on { opacity: 1; }
 
-/* ---------- tasks: life-area shown as a colour tag chip (like note tags) ---------- */
-.kcard .cat { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
-.kcard[data-cat="content"]  .cat { color: var(--cat-content);  background: color-mix(in srgb, var(--cat-content) 16%, transparent); }
-.kcard[data-cat="business"] .cat { color: var(--cat-business); background: color-mix(in srgb, var(--cat-business) 16%, transparent); }
-.kcard[data-cat="personal"] .cat { color: var(--cat-personal); background: color-mix(in srgb, var(--cat-personal) 16%, transparent); }
+/* Category is not shown on board cards (no chip, no rail) — the top filter chips
+   carry life-area; the cards stay clean. data-cat is kept for filtering only. */
 /* task category filter chips — also the colour legend for the card bands */
 .tagbtn { font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); display: inline-flex; align-items: center; gap: 7px; transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 .tagbtn:hover { color: var(--text); border-color: var(--border2); }
-.tagbtn.active { color: var(--text); background: var(--surface2); border-color: var(--border2); }
+.tagbtn.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
 .tagbtn[data-cat="content"]::before, .tagbtn[data-cat="business"]::before, .tagbtn[data-cat="personal"]::before { content: ""; width: 8px; height: 8px; border-radius: 99px; background: var(--catc); flex: 0 0 auto; }
 .tagbtn[data-cat="content"]  { --catc: var(--cat-content); }
 .tagbtn[data-cat="business"] { --catc: var(--cat-business); }
 .tagbtn[data-cat="personal"] { --catc: var(--cat-personal); }
 .tasksearch { flex: 0 1 200px; min-width: 120px; padding: 6px 12px; font-size: 13px; }
 @media (max-width: 760px) { .tasksearch { flex-basis: 100%; order: 3; } }
-/* ---------- notes: Ask (semantic library question) ---------- */
+/* ---------- notes: search box ---------- */
 .askrow { display: flex; gap: 8px; align-items: center; flex: 1 0 100%; max-width: 400px; }
 .askrow .search { flex: 1 1 auto; max-width: none; min-width: 0; }
-.askbtn { flex: 0 0 auto; color: var(--accent); border-color: rgba(var(--accent-rgb),.4); display: inline-flex; align-items: center; gap: 6px; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
-.askbtn .aiglyph { width: 14px; height: 14px; fill: currentColor; flex: 0 0 auto; }
-/* nudge: the query is question-shaped — Ask is the path it wants */
-.askbtn.nudge { background: var(--accent-dim); border-color: var(--accent); }
 @media (max-width: 640px) { .askrow { max-width: none; } }
-/* live hint under the box: teaches filter-vs-Ask, doubles as the zero-match exit.
-   Inner content flows as inline text (NOT flex) so the spaces around "Ask" render. */
-.askhint { flex: 1 0 100%; margin: 4px 2px 0; font-size: 12px; line-height: 1.5; color: var(--muted); animation: fade-in var(--dur) var(--ease) both; }
-.askhint.hide { display: none; }
-.askhint .hintnum { font-family: var(--mono); color: var(--text); }
-.hintask { color: var(--accent); background: none; border: none; padding: 0; font: inherit; vertical-align: baseline; cursor: pointer; }
-.hintask:hover { text-decoration: underline; }
-#ask-panel { margin-bottom: 4px; animation: fade-in var(--dur-slow) var(--ease) both; }
-.askhead { display: flex; align-items: center; gap: 10px; margin: 6px 2px 12px; }
-.askfor { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
-.askfor.asking { color: var(--accent); animation: ask-pulse 1.1s var(--ease) infinite; }
-@keyframes ask-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
-.note .why { font-size: 13px; color: var(--text); line-height: 1.5; opacity: .85; }
 
 /* ---------- stats ---------- */
 .statrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -562,18 +559,10 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 .weekpool .task { padding: 6px 0; font-size: 14.5px; }
 .weekpool .task label.taskedit { color: var(--muted); }
 .weekpool .task:hover label.taskedit, .weekpool .task:focus-within label.taskedit { color: var(--text); }
-/* category is glance-context, not a badge — bare muted caps, no box (a bordered
-   chip had nearly the same visual weight as the task title) */
-.cat { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; color: var(--muted); white-space: nowrap; text-transform: uppercase; }
+/* category is glance-context, not a badge — bare muted label, no box. Sentence-case
+   (capitalize) is the app-wide convention for category (filter chips + editor too). */
+.cat { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; text-transform: capitalize; }
 .mono { font-family: var(--mono); }
-/* desktop task rows: the trailing data forms ALIGNED COLUMNS (category chip ·
-   plan pill · due) — fixed slot widths so chips line up vertically across rows
-   instead of trailing each title at a different x. Phone keeps natural flow
-   (the .trow wraps to its own line there). */
-@media (min-width: 761px) {
-  .task .trow .cat, .ptask .trow .cat { display: inline-block; min-width: 82px; text-align: center; }
-  .task .trow .due, .ptask .trow .due { display: inline-block; min-width: 78px; text-align: right; }
-}
 
 /* ---------- day agenda ---------- */
 .agrow { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 13px; }
@@ -676,18 +665,24 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
    column with one-tap chips (phone-first). Selection uses the dark elevation language
    (lighter surface + brighter border), never a shadow. */
 .editor .seg { display: flex; flex-wrap: wrap; gap: 6px; }
-.editor .segbtn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; min-height: 34px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); color: var(--muted); font-size: 13px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+/* round-pill chips with an amber selected state — one language with .qt/.tagbtn/.sp */
+.editor .segbtn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; min-height: 34px; border: 1px solid var(--border); border-radius: 99px; background: transparent; color: var(--muted); font-size: 13px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .editor .segbtn:hover { color: var(--text); border-color: var(--muted); }
-.editor .segbtn.on { background: var(--surface3); border-color: var(--border2); color: var(--text); font-weight: 600; }
+.editor .segbtn.on { background: var(--accent-dim); border-color: transparent; color: var(--accent); font-weight: 600; }
+/* editor chips read sentence-case (capitalize) so priority + category + column all
+   match — and match the filter chips + list sub-line convention app-wide */
+#te-category-seg .segbtn, #te-priority-seg .segbtn { text-transform: capitalize; }
 /* category identity dots + a colored SELECTED state — restrained hues chosen to dodge
    the reserved semantics (amber=attention, green=done, red=overdue, never purple). */
 .editor .cdot { width: 8px; height: 8px; border-radius: 99px; background: var(--muted); flex: 0 0 auto; }
 .editor .cdot.content  { background: var(--cat-content); }
 .editor .cdot.business { background: var(--cat-business); }
 .editor .cdot.personal { background: var(--cat-personal); }
-#te-category-seg .segbtn.on[data-val="content"]  { border-color: var(--cat-content);  background: color-mix(in srgb, var(--cat-content) 14%, transparent); }
-#te-category-seg .segbtn.on[data-val="business"] { border-color: var(--cat-business); background: color-mix(in srgb, var(--cat-business) 14%, transparent); }
-#te-category-seg .segbtn.on[data-val="personal"] { border-color: var(--cat-personal); background: color-mix(in srgb, var(--cat-personal) 14%, transparent); }
+/* category segment keeps its category-colour selected state (deliberate), overriding
+   the amber default so each category reads in its own hue */
+#te-category-seg .segbtn.on[data-val="content"]  { color: var(--cat-content);  border-color: var(--cat-content);  background: color-mix(in srgb, var(--cat-content) 14%, transparent); }
+#te-category-seg .segbtn.on[data-val="business"] { color: var(--cat-business); border-color: var(--cat-business); background: color-mix(in srgb, var(--cat-business) 14%, transparent); }
+#te-category-seg .segbtn.on[data-val="personal"] { color: var(--cat-personal); border-color: var(--cat-personal); background: color-mix(in srgb, var(--cat-personal) 14%, transparent); }
 /* structured recurrence: a type picker + a conditional weekday / day-of-month select,
    so recurrence can only ever be a valid rule (no free-typed "fdfd"). */
 .editor .recur { display: flex; gap: 6px; }
@@ -754,15 +749,11 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
   .qtypes { display: none; }
   .task input, .sub input { width: 20px; height: 20px; }
   .task, .sub { padding-top: 8px; padding-bottom: 8px; }
-  /* narrow: title owns the full first row (wraps ≤2 lines); chips + plan pill drop to
-     a compact second row (.trow) instead of truncating the title to ~6 chars. */
-  .task, .ptask .head { flex-wrap: wrap; align-items: flex-start; row-gap: 5px; }
-  .task > label.taskedit, .ptask .head > .t {
+  /* narrow: let the title wrap to ≤2 lines (the sub-line already sits below it via
+     the base two-line layout — no per-width trow rules needed anymore). */
+  .task .taskedit, .ptask .head .t {
     white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
     -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35;
-  }
-  .task .trow, .ptask .head .trow {
-    display: flex; flex: 1 1 100%; align-items: center; gap: 8px; flex-wrap: wrap;
   }
   /* ≥44px effective hit areas on phones (CLAUDE.md UX). Visible controls stay
      compact; the tap zone is grown with a transparent ::after overlay, or a
@@ -806,6 +797,8 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
 .flashes li.success { background: var(--good-dim); color: var(--good); }
 .flashes li.error { background: rgba(var(--bad-rgb),.14); color: var(--bad); }
 .empty { color: var(--muted); font-size: 13.5px; padding: 8px 0; animation: fade-in var(--dur-slow) var(--ease) both; }
+/* the compact right-rail (sub2) cards use a smaller empty-state, once — not per-card inline */
+.card.sub2 .empty { font-size: 12px; }
 .hide { display: none !important; }
 
 /* ---------- motion system (additive; keyframes + press-scale) ---------- */

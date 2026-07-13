@@ -97,6 +97,29 @@ def _period_end(timeframe: str, g, day: str):
 
 
 # ── FEATURE 1: AI morning brief ───────────────────────────────────────────────
+def _resurface_note(day: str) -> dict | None:
+    """One older note worth a second look today — the antidote to a write-only vault.
+    Prefer an anniversary hit (vault_store.notes_on_this_day: 1mo/6mo/1yr ago today),
+    else deterministically rotate through notes older than 14 days (day-ordinal index,
+    so a fresh candidate surfaces daily and never repeats two days running). Returns
+    {span, title, slug, snippet} or None. The brief PROMPT decides whether it earns a
+    line — this only offers a candidate, never forces one."""
+    flash = vault_store.notes_on_this_day(day)
+    if flash:
+        n = flash[0]["note"]
+        return {"span": flash[0]["span"], "title": n["title"],
+                "slug": n["slug"], "snippet": n["snippet"]}
+    cutoff = (_d(day) - timedelta(days=14)).isoformat()
+    olds = [n for n in vault_store.list_notes()
+            if not n.get("archived") and not n.get("pinned")
+            and (n.get("created") or "")[:10] < cutoff]
+    if not olds:
+        return None
+    n = olds[_d(day).toordinal() % len(olds)]
+    return {"span": f"{_age(day, n['created'])}d ago", "title": n["title"],
+            "slug": n["slug"], "snippet": n["snippet"]}
+
+
 def build_brief_context(conn, day: str = None, now=None) -> dict:
     """Pure snapshot for the morning brief: today's tasks (with ages/postpones), goal
     progress + period-end + pace math, yesterday's journal, stale-backlog count."""
@@ -156,6 +179,8 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
     sd = _stale_days(conn)
     stale_count = len(_stale_rows(conn, day, sd))
 
+    resurfaced = _resurface_note(day)
+
     # ── prompt-ready text block ──
     tlines = [f"- {t['title']} [{t['marker']}, {_meta_bits(t)}]" for t in tasks]
     glines = []
@@ -182,10 +207,14 @@ def build_brief_context(conn, day: str = None, now=None) -> dict:
         "\n".join("  " + j for j in yesterday_journal) or "  (nothing written)",
         "",
         f"STALE BACKLOG: {stale_count} tasks untouched {sd}+ days.",
+        "",
+        "RESURFACED NOTE (an old note from the vault — mention ONLY if it connects to today):",
+        (f"  \"{resurfaced['title']}\" ({resurfaced['span']}): {resurfaced['snippet']}"
+         if resurfaced else "  (none)"),
     ])
     return {"day": day, "is_sunday": now.weekday() == 6, "tasks": tasks,
             "goals": goals, "yesterday_journal": yesterday_journal,
-            "stale_count": stale_count, "text": text}
+            "stale_count": stale_count, "resurfaced": resurfaced, "text": text}
 
 
 def brief_prompt(ctx: dict, backlog_summary: str | None = None) -> str:
@@ -213,6 +242,9 @@ def brief_prompt(ctx: dict, backlog_summary: str | None = None) -> str:
         "it depends on.\n"
         "- If a goal is behind pace AND has no linked open task pulling it forward, add "
         "ONE goal-pace alert line naming the number and the daily rate needed.\n"
+        "- If the RESURFACED NOTE genuinely connects to today's work or is clearly worth "
+        "revisiting, END with one line: 'Worth revisiting: <note title> — <one-line why>'. "
+        "If it doesn't connect, OMIT it entirely — never force a stale note in.\n"
         "- Plain text for Telegram: no markdown, no headers, no tables. Tight — he "
         "reads this on his phone. Use a simple '-' for list items.\n"
         f"{weave}\n\n"
@@ -558,3 +590,138 @@ def evening_reflection(conn, day: str = None, now=None, claude_fn=None) -> str:
     if not out:
         return fallback_reflection(conn, day)
     return "✦ Evening reflection\n\n" + out
+
+
+# ── FEATURE 4: weekly review ──────────────────────────────────────────────────
+def build_weekly_context(conn, day: str = None, now=None) -> dict:
+    """Pure snapshot for the Sunday weekly review over the last 7 days (inclusive):
+    tasks completed (count + by-category + titles), new tasks created, current open
+    backlog, chronic postpones (open, moved 2+×), goal progress + period pace, and
+    notes/journal captured. Everything needed to celebrate the week, name what slipped,
+    and tee up next week — all deterministic so it unit-tests without claude."""
+    day = day or today_iso()
+    now = now or now_sg()
+    start = (_d(day) - timedelta(days=6)).isoformat()      # inclusive 7-day window
+
+    done_rows = conn.execute(
+        "SELECT title, category FROM tasks WHERE parent_id IS NULL AND done=1 "
+        "AND deleted_at IS NULL AND completed_at >= ? ORDER BY completed_at", (start,)).fetchall()
+    done = [{"title": r["title"], "category": r["category"]} for r in done_rows]
+    by_cat = {}
+    for d0 in done:
+        k = d0["category"] or "uncategorised"
+        by_cat[k] = by_cat.get(k, 0) + 1
+
+    created_count = conn.execute(
+        "SELECT COUNT(*) c FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
+        "AND substr(created,1,10) >= ?", (start,)).fetchone()["c"]
+    open_count = conn.execute(
+        "SELECT COUNT(*) c FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
+        "AND deleted_at IS NULL AND done=0").fetchone()["c"]
+    postponed = [{"title": r["title"], "n": r["reschedule_count"]} for r in conn.execute(
+        "SELECT title, reschedule_count FROM tasks WHERE parent_id IS NULL AND archived_at IS NULL "
+        "AND deleted_at IS NULL AND done=0 AND reschedule_count >= 2 "
+        "ORDER BY reschedule_count DESC, updated LIMIT 5").fetchall()]
+
+    goals = []
+    for g in conn.execute(
+            "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY period, created").fetchall():
+        tf = g["timeframe"] or g["period"]
+        end = _period_end(tf, g, day)
+        goals.append({"title": g["title"], "timeframe": tf,
+                      "prog_str": format_goal_progress(goal_progress(conn, g)),
+                      "days_left": (end - _d(day)).days if end else None})
+
+    notes_count = sum(1 for n in vault_store.list_notes()
+                      if (n.get("created") or "")[:10] >= start)
+    journal_days = sum(1 for dd in vault_store.list_journal_days() if start <= dd["day"] <= day)
+
+    # ── prompt-ready text block ──
+    done_titles = [f"- {d0['title']}" + (f" [{d0['category']}]" if d0["category"] else "")
+                   for d0 in done[:20]]
+    cat_str = ", ".join(f"{k} {v}" for k, v in sorted(by_cat.items())) or "(none)"
+    glines = []
+    for gd in goals:
+        parts = [f"- {gd['title']} ({gd['timeframe']}): {gd['prog_str']}"]
+        if gd["days_left"] is not None:
+            parts.append(f"{gd['days_left']}d left in period")
+        glines.append(", ".join(parts))
+    plines = [f"- {p['title']} (postponed {p['n']}×)" for p in postponed]
+
+    text = "\n".join([
+        f"WEEK ENDING {day} ({now.strftime('%A')}) — last 7 days from {start}:",
+        "",
+        f"COMPLETED: {len(done)} tasks (by category: {cat_str})",
+        "\n".join(done_titles) or "(nothing completed)",
+        "",
+        f"NEW TASKS CREATED: {created_count}   ·   OPEN BACKLOG NOW: {open_count}",
+        f"NOTES CAPTURED: {notes_count}   ·   DAYS JOURNALED: {journal_days}/7",
+        "",
+        "CHRONIC POSTPONES (open, moved 2+ times):",
+        "\n".join(plines) or "(none)",
+        "",
+        "GOALS (progress · period):",
+        "\n".join(glines) or "(no active goals)",
+    ])
+    return {"day": day, "start": start, "done": done, "by_cat": by_cat,
+            "created_count": created_count, "open_count": open_count,
+            "postponed": postponed, "goals": goals, "notes_count": notes_count,
+            "journal_days": journal_days, "text": text}
+
+
+def weekly_prompt(ctx: dict) -> str:
+    return (
+        "=== vault/profile.md (who Kelvin is — voice + context) ===\n"
+        f"{vault_store.read_profile()}\n\n"
+        "=== TASK ===\n"
+        "You are Kelvin's Life OS assistant writing his WEEKLY REVIEW (it's Sunday). Read "
+        "the week's data below and write a short, honest review in his own plain voice. Do "
+        "exactly four things:\n"
+        "1. Open with ONE line naming the week's biggest win, grounded in the data — a hard "
+        "task shipped, a category he cleared out, a goal that moved.\n"
+        "2. A 2-3 line honest read of the week's momentum: what he finished vs. what he "
+        "created, and whether he kept journaling.\n"
+        "3. Name what SLIPPED — the chronic postpones by title, or a goal behind pace with "
+        "days left in its period. Be specific; don't sugar-coat.\n"
+        "4. End with ONE forward line: the single most important focus for next week, and "
+        "invite him to set next week's goals.\n"
+        "Warm but honest — a trusted friend reviewing the week, not a cheerleader. Plain "
+        "text for Telegram: no markdown, no headers, no tables. Tight — he reads it on his "
+        "phone. Write ONLY the review.\n\n"
+        "=== LIVE CONTEXT ===\n"
+        f"{ctx['text']}\n\n"
+        "=== WEEKLY REVIEW ===\n")
+
+
+def fallback_weekly(ctx: dict) -> str:
+    """Deterministic weekly-review stats — used when claude fails, so the Sunday send is
+    never dropped."""
+    lines = [f"✅ Completed {len(ctx['done'])} tasks this week."]
+    if ctx["by_cat"]:
+        lines.append("   " + ", ".join(f"{k} {v}" for k, v in sorted(ctx["by_cat"].items())))
+    lines.append(f"📝 {ctx['notes_count']} notes captured · journaled {ctx['journal_days']}/7 days")
+    lines.append(f"📋 {ctx['open_count']} tasks still open ({ctx['created_count']} new this week).")
+    if ctx["postponed"]:
+        lines.append("")
+        lines.append("Kept slipping:")
+        lines += [f"  • {p['title']} (moved {p['n']}×)" for p in ctx["postponed"]]
+    lines.append("")
+    lines.append("🗓 Set next week's goals.")
+    return "\n".join(lines)
+
+
+def weekly_review(conn, day: str = None, now=None, claude_fn=None) -> str:
+    """The Sunday weekly review. Returns Telegram-ready text; falls back to a deterministic
+    stats summary on any claude failure."""
+    day = day or today_iso()
+    now = now or now_sg()
+    ctx = build_weekly_context(conn, day, now)
+    prompt = weekly_prompt(ctx)
+    runner = claude_fn or (lambda p: call_claude(p, timeout=120))
+    try:
+        out = (runner(prompt) or "").strip()
+    except Exception:
+        out = ""
+    if not out:
+        out = fallback_weekly(ctx)
+    return f"🗓 Weekly review — week ending {now.strftime('%-d %b')}\n\n{out}"

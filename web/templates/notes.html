@@ -7,10 +7,8 @@
 
 <div class="ntools">
   <div class="askrow">
-    <input class="search" id="nsearch" type="search" placeholder="Search or ask your notes…" aria-label="Search or ask your notes">
-    <button class="mini askbtn" id="note-ask" type="button" title="Ask your library a question (Enter)"><svg class="aiglyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z"/></svg>Ask</button>
+    <input class="search" id="nsearch" type="search" placeholder="Search your notes…" aria-label="Search your notes">
   </div>
-  <div class="askhint hide" id="ask-hint" aria-live="polite"></div>
   <div class="spaces" role="tablist" aria-label="Note spaces">
     <button class="sp active" data-space="all" type="button">All <span class="cnt">{{ count }}</span></button>
     {% for key, label, c in spaces %}<button class="sp" data-space="{{ key }}" type="button">{{ label }} <span class="cnt">{{ c }}</span></button>{% endfor %}
@@ -28,8 +26,6 @@
 </div>
 {% endif %}
 {% endif %}
-
-<div id="ask-panel" class="hide" aria-live="polite"></div>
 
 <div id="notes-grid">
 <div class="nsec"><span>Recent</span><span class="rule"></span></div>

@@ -33,7 +33,7 @@ def _section_labels(today: str) -> dict:
     week_end = week_start + timedelta(days=6)
     quarter = (d.month - 1) // 3 + 1
     return {
-        "week": f"This week · {week_start.strftime('%b %-d')} – {week_end.strftime('%-d')}",
+        "week": f"This week · {week_start.strftime('%-d %b')} – {week_end.strftime('%-d')}",
         "month": f"This month · {d.strftime('%B')}",
         "quarter": f"This quarter · Q{quarter} {d.year}",
         "year": f"This year · {d.year}",

@@ -26,6 +26,45 @@
       else if (/^https?:\/\//.test(v) || v.includes("instagram.com") || v.includes("youtube.com") || v.includes("youtu.be")) t = "note";
       setActive(t);
     });
+    function flashIn(el) {
+      el.style.transition = "opacity var(--dur-fast) var(--ease)";
+      el.style.opacity = "0";
+      requestAnimationFrame(function () { el.style.opacity = "1"; });
+    }
+    function htmlToNode(html) {
+      var tmp = document.createElement("div");
+      tmp.innerHTML = (html || "").trim();
+      return tmp.firstElementChild;
+    }
+    // Splice the new capture into its home surfaces in place. Returns true if it
+    // was fully handled (so the composer can skip the reload); false → reload, to
+    // cover kinds/edge-states with no partial (journal) or a missing container.
+    function insertCapture(d) {
+      var inserted = false, failed = false;
+      if (d.cap_html) {
+        var feed = document.getElementById("capfeed");
+        if (feed) {
+          var empty = feed.querySelector(".empty");
+          if (empty) empty.remove();
+          var cap = htmlToNode(d.cap_html);
+          var head = feed.querySelector(".chead");
+          feed.insertBefore(cap, head ? head.nextSibling : feed.firstChild);
+          if (window.LifeOS && window.LifeOS.wireCap) window.LifeOS.wireCap(cap);
+          flashIn(cap); inserted = true;
+        } else { failed = true; }
+      }
+      if (d.week_html) {
+        var week = document.querySelector(".weekpool");
+        if (week) {
+          var row = htmlToNode(d.week_html);
+          var whead = week.querySelector(".chead");
+          week.insertBefore(row, whead ? whead.nextSibling : week.firstChild);
+          if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(row);
+          flashIn(row); inserted = true;
+        } else { failed = true; }   // no week-pool card yet → reload to render one
+      }
+      return inserted && !failed;
+    }
     function add() {
       var text = qin.value.trim();
       if (!text) { qin.focus(); return; }
@@ -36,7 +75,11 @@
         qgo.textContent = "✓ Added"; qgo.classList.add("did");
         qin.value = ""; manual = null; setActive("auto");
         toast("Added → " + (res.data.label || "filed"));
-        setTimeout(function () { qgo.textContent = "Add"; qgo.classList.remove("did"); reloadSoon(); }, 900);
+        var handled = insertCapture(res.data || {});
+        setTimeout(function () {
+          qgo.textContent = "Add"; qgo.classList.remove("did");
+          if (!handled) reloadSoon();
+        }, 900);
       });
     }
     if (qgo) qgo.addEventListener("click", add);
@@ -62,7 +105,7 @@
       post("/settings/run/" + b.dataset.run).then(function (res) {
         b.disabled = false; b.textContent = label;
         var ok = res.ok && res.data && res.data.status === "ok";
-        toast((res.data && res.data.message) || (ok ? "Started" : "Couldn't run"));
+        toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
       });
     });
   });
@@ -81,7 +124,7 @@
     function autosave() {
       post("/settings/save", new FormData(form)).then(function (res) {
         if (res.ok) flash();                                   // 200 = saved (atomic)
-        else toast((res.data && res.data.message) || "Couldn't save");   // 400 = validation error
+        else toast((res.data && res.data.message) || "Could not save");   // 400 = validation error
       });
     }
     // toggles/selects fire on flip; text/number/time fire on blur/commit — all via change
@@ -89,39 +132,43 @@
     form.addEventListener("submit", function (e) { e.preventDefault(); autosave(); });
   })();
 
-  // ---- captured-today feed: Change / refile (task ↔ note ↔ journal) -----------
-  document.querySelectorAll(".cap .chg-toggle").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var cap = btn.closest(".cap");
+  // ---- captured-today feed: wire ONE row's actions (Change/refile, Delete, ⋯) so
+  // a just-captured item spliced in without a reload behaves like a page-load row.
+  function wireCap(cap) {
+    var toggle = cap.querySelector(".chg-toggle");
+    if (toggle) toggle.addEventListener("click", function () {
       var box = cap.querySelector(".refile");
       if (box) box.style.display = box.style.display === "none" ? "flex" : "none";
     });
-  });
-  document.querySelectorAll(".cap .refile .chg").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var cap = btn.closest(".cap");
-      var kind = cap.dataset.kind, ref = cap.dataset.ref, to = btn.dataset.to;
-      post("/capture/refile", { kind: kind, ref: ref, to: to }).then(function (res) {
-        if (!res.ok) { toast("Could not refile"); return; }
-        toast("Refiled → " + (res.data.label || to));
-        reloadSoon();
+    cap.querySelectorAll(".refile .chg").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var kind = cap.dataset.kind, ref = cap.dataset.ref, to = btn.dataset.to;
+        post("/capture/refile", { kind: kind, ref: ref, to: to }).then(function (res) {
+          if (!res.ok) { toast("Could not refile"); return; }
+          toast("Refiled → " + (res.data.label || to));
+          reloadSoon();
+        });
       });
     });
-  });
-  // Delete a captured item (soft-delete + undo). Dispatch by kind, remove the row
-  // in place with a fade — no full reload; only undo restores via a minimal reload.
-  document.querySelectorAll(".cap .cap-del").forEach(function (btn) {
-    confirmClick(btn, function () {
-      var cap = btn.closest(".cap");
+    // Delete (soft-delete + undo): remove the row in place with a fade — no full
+    // reload; only undo restores via a minimal reload.
+    var del = cap.querySelector(".cap-del");
+    if (del) confirmClick(del, function () {
       var kind = cap.dataset.kind, ref = cap.dataset.ref;
-      var del = kind === "task" ? "/tasks/" + ref + "/delete" : "/notes/" + ref + "/delete";
+      var delUrl = kind === "task" ? "/tasks/" + ref + "/delete" : "/notes/" + ref + "/delete";
       var restore = kind === "task" ? "/tasks/" + ref + "/restore" : "/notes/" + ref + "/restore";
-      post(del).then(function (res) {
+      post(delUrl).then(function (res) {
         if (!res.ok) { toast("Could not delete"); return; }
-        removeWithUndo(cap, { msg: "Deleted", restore: restore });
+        removeWithUndo(cap, { label: (kind === "task" ? "Task" : "Note"), restore: restore });
       });
     });
-  });
+    // ⋯ reveals row actions on touch (desktop reveals on hover via CSS)
+    var more = cap.querySelector(".cap-more");
+    if (more) more.addEventListener("click", function () { cap.classList.toggle("acts"); });
+  }
+  document.querySelectorAll(".cap").forEach(wireCap);
+  window.LifeOS = window.LifeOS || {};
+  window.LifeOS.wireCap = wireCap;
 
   // ---- goals: manual number inline edit (styled input in place — never the
   // native prompt, per the no-browser-default-controls rule) --------------------
@@ -143,7 +190,7 @@
         if (!saveIt || isNaN(n)) { el.textContent = prevText; return; }
         post("/goals/" + id + "/update", { current: n }).then(function () {
           el.dataset.current = n;
-          el.textContent = Math.round(n) + " / " + Math.round(target) + (unit ? " " + unit : "");
+          el.textContent = Math.round(n) + "/" + Math.round(target) + (unit ? " " + unit : "");
           var goal = el.closest(".goal");
           var bar = goal && goal.querySelector(".bar");
           if (bar) {                                          // fill sweeps in place
@@ -169,7 +216,7 @@
         if (!res.ok) { toast("Could not update"); return; }
         var on = res.data && res.data.achieved;
         el.classList.toggle("done", !!on);
-        el.textContent = on ? "✓ achieved" : "mark achieved";
+        el.textContent = on ? "✓ Achieved" : "Mark achieved";
         el.setAttribute("aria-pressed", on ? "true" : "false");
       });
     });
@@ -233,9 +280,7 @@
   });
 
   // ---- ⋯ reveals row actions on touch (desktop reveals on hover via CSS) -------
-  document.querySelectorAll(".cap .cap-more").forEach(function (btn) {
-    btn.addEventListener("click", function () { btn.closest(".cap").classList.toggle("acts"); });
-  });
+  // (.cap .cap-more is wired in wireCap; journal entries handled here)
   document.querySelectorAll(".jentry .jmore").forEach(function (btn) {
     btn.addEventListener("click", function () { btn.closest(".jentry").classList.toggle("acts"); });
   });

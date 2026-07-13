@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, render_template_string, request, jsonify
 
 from core.web_core import db, today_iso
 from core.db import now_sg
 from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal,
                      imported_task_ids)
-from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done
+from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done, task_dict
 from domain.goals_core import goal_progress
 from domain import vault_store
 
@@ -119,8 +119,27 @@ def capture():
         return jsonify({"status": "error", "message": "empty"}), 400
     conn = db()
     result = route_capture(conn, text, source="web", forced=forced)
+    # Server-rendered partials so the composer can splice the new item into the
+    # page in place (no full reload). Feed row for task/note; a This-week row too
+    # for a task (captures land at the top of the week pool). Same macros the home
+    # page uses, so the spliced markup is byte-identical to a reload.
+    extra = {}
+    kind = result.get("kind")
+    if kind in ("task", "note"):
+        c = {"source": kind.upper(), "kind": kind,
+             "ref": result.get("id") if kind == "task" else result.get("slug"),
+             "text": result.get("title") or text,
+             "dest": "→ " + (result.get("label") or "")}
+        extra["cap_html"] = render_template_string(
+            "{% import '_macros.html' as m %}{{ m.cap_item(c) }}", c=c)
+    if kind == "task" and result.get("id"):
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (result["id"],)).fetchone()
+        if row:
+            extra["week_html"] = render_template_string(
+                "{% import '_macros.html' as m %}{{ m.week_item(t, today) }}",
+                t=task_dict(conn, row), today=today_iso())
     conn.close()
-    return jsonify({"status": "ok", **result})
+    return jsonify({"status": "ok", **result, **extra})
 
 
 @bp.route("/capture/refile", methods=["POST"])

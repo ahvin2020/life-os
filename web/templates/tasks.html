@@ -21,7 +21,7 @@
       {% for t in board[col] %}{{ m.kcard(t, today) }}{% endfor %}
     </div>
     {# no explanatory footer under Done — the archive rule lives in the h3 tooltip #}
-    {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ add task</button>{% endif %}
+    {% if col != 'done' %}<button class="addrow" data-newtask="{{ col }}" type="button">＋ Add task</button>{% endif %}
   </div>
   {% endfor %}
 </div>

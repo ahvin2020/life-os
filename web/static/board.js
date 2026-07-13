@@ -18,9 +18,22 @@
     });
   }
 
+  // ---- per-row wiring hook: lets a freshly-inserted row (e.g. a just-captured
+  // task spliced in without a reload) get the same handlers as page-load rows.
+  // wireEditorRow is filled in by the editor IIFE below. ------------------------
+  var wireEditorRow = null;
+  function wireTaskRow(row) {
+    if (!row) return;
+    var c = row.querySelector("input.tcheck"); if (c) wireCheckbox(c);
+    var p = row.querySelector(".planbtn"); if (p) wirePlan(p);
+    if (wireEditorRow) wireEditorRow(row);
+  }
+  window.LifeOS = window.LifeOS || {};
+  window.LifeOS.wireTaskRow = wireTaskRow;
+
   // ---- task complete with undo (Today rows + week-pool rows; the BOARD has no
   // checkboxes — there, drag-to-Done is the completion gesture) ------------------
-  document.querySelectorAll(".task input.tcheck").forEach(function (c) {
+  function wireCheckbox(c) {
     c.addEventListener("change", function () {
       var row = c.closest(".task"); var id = c.dataset.taskId;
       row.classList.toggle("done", c.checked);
@@ -39,7 +52,8 @@
         post("/tasks/" + id + "/complete", { done: "0" });
       }
     });
-  });
+  }
+  document.querySelectorAll(".task input.tcheck").forEach(wireCheckbox);
 
   // ---- plan-state applier (shared by the pill and the task editor's ☀) ---------
   // Syncs EVERY on-page representation of a task's on-today state — all its pills,
@@ -82,8 +96,34 @@
     }
   }
 
+  // ---- home page: move a row between "This week" and "Today" in place ----------
+  // Planning from the week pool promotes the row into Today; unticking a Today row
+  // drops it back into the week pool. Same DOM node (keeps its listeners), a short
+  // fade across — no full-page reload.
+  function moveHomeRow(id, on) {
+    var hero = document.querySelector(".card.hero");
+    var week = document.querySelector(".weekpool");
+    if (!hero || !week) return;
+    var src = on ? week : hero;
+    var row = src.querySelector('.task[data-task-id="' + id + '"], .ptask[data-task-id="' + id + '"]');
+    if (!row) return;
+    row.style.transition = "opacity var(--dur-fast) var(--ease)";
+    row.style.opacity = "0";
+    setTimeout(function () {
+      if (on) {
+        var empty = hero.querySelector(".empty");
+        if (empty) empty.remove();
+        hero.insertBefore(row, hero.querySelector(".donefold"));   // null target → append
+      } else {
+        var head = week.querySelector(".chead");
+        week.insertBefore(row, head ? head.nextSibling : week.firstChild);
+      }
+      requestAnimationFrame(function () { row.style.opacity = "1"; });
+    }, 160);
+  }
+
   // ---- "Do today" plan pill ---------------------------------------------------
-  document.querySelectorAll(".planbtn").forEach(function (b) {
+  function wirePlan(b) {
     b.addEventListener("click", function (e) {
       e.stopPropagation();
       var id = b.dataset.taskId;
@@ -108,11 +148,12 @@
         // pool into Today, or un-ticking a Today row (it lands in the week pool —
         // not-today ≠ not-this-week).
         if ((inWeekPool && on) || (inHero && !on)) {
-          setTimeout(function () { location.reload(); }, 350);
+          moveHomeRow(id, on);
         }
       });
     });
-  });
+  }
+  document.querySelectorAll(".planbtn").forEach(wirePlan);
 
   // ---- kanban drag (SortableJS) -----------------------------------------------
   function initKanban() {
@@ -154,7 +195,7 @@
                 // a DATE holds it on Today — the drop can't unpin it; snap back
                 var wk = boardStack("week");
                 if (wk) { wk.insertBefore(item, wk.firstChild); recountBoard(); }
-                toast("Due today — change the due date to move it off Today");
+                toast("Due today — change the due date to move it off today");
               } else {
                 // dropping into Backlog = take it off Today AND re-home it there
                 post("/tasks/" + id + "/plan").then(function () {
@@ -484,21 +525,27 @@
     ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
 
-    document.querySelectorAll(".taskedit").forEach(function (el) {
-      el.addEventListener("click", function (e) { e.stopPropagation(); open(el.closest("[data-task-id]")); });
-    });
-
-    // The WHOLE card/row opens the editor — not just the title. A click anywhere
-    // in the panel (category, due, the empty krow band) opens it; clicks that land
-    // on a real control — the checkbox, the ☀ pill, a link — keep their own action
-    // (the title's .taskedit handler already fires + stops, so no double-open). A
-    // drag on the board moves the pointer, so no click fires — this can't hijack it.
-    document.querySelectorAll(".task[data-task-id], .ptask[data-task-id], .kcard[data-task-id]").forEach(function (card) {
-      card.addEventListener("click", function (e) {
-        if (e.target.closest("input, button, a, label, .planbtn")) return;
-        open(card);
+    // Wire editor-open for a subtree (document at load, or a single spliced-in
+    // row). Assigned to the outer wireEditorRow so wireTaskRow() can reuse it.
+    var CARD_SEL = ".task[data-task-id], .ptask[data-task-id], .kcard[data-task-id]";
+    wireEditorRow = function (root) {
+      root.querySelectorAll(".taskedit").forEach(function (el) {
+        el.addEventListener("click", function (e) { e.stopPropagation(); open(el.closest("[data-task-id]")); });
       });
-    });
+      // The WHOLE card/row opens the editor — not just the title. A click anywhere
+      // in the panel (category, due, the empty krow band) opens it; clicks that land
+      // on a real control — the checkbox, the ☀ pill, a link — keep their own action
+      // (the title's .taskedit handler already fires + stops, so no double-open). A
+      // drag on the board moves the pointer, so no click fires — this can't hijack it.
+      var cards = (root.matches && root.matches(CARD_SEL)) ? [root] : root.querySelectorAll(CARD_SEL);
+      cards.forEach(function (card) {
+        card.addEventListener("click", function (e) {
+          if (e.target.closest("input, button, a, label, .planbtn")) return;
+          open(card);
+        });
+      });
+    };
+    wireEditorRow(document);
 
     // ＋ New task / ＋ add task (per column) → blank editor; created on Save
     document.querySelectorAll("[data-newtask]").forEach(function (btn) {

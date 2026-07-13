@@ -10,11 +10,12 @@
     var search = document.getElementById("nsearch");
     if (!search && !document.querySelector(".sp[data-space]")) return;
     var activeSpace = "all";
-    var updateAskHint = function () {};   // wired up by the Ask block below
     function filterNotes() {
-      var raw = search ? search.value.trim() : "";
-      var q = raw.toLowerCase();
-      var vis = 0;
+      var q = (search ? search.value.trim() : "").toLowerCase();
+      // Split the query into words and require EACH to appear in the haystack, so
+      // multi-word searches ("retirement planning", "moomoo promo") match a note that
+      // contains both words in any order — a single whole-phrase substring wouldn't.
+      var terms = q ? q.split(/\s+/) : [];
       document.querySelectorAll(".note").forEach(function (n) {
         var spaces = (n.dataset.spaces || "").split(" ");
         var spaceOk = activeSpace === "all" || spaces.indexOf(activeSpace) !== -1;
@@ -22,12 +23,9 @@
         // body excerpt), so a note that's about "trading" — or merely tagged
         // options-trading — matches even though neither shows on the card.
         var hay = n.textContent.toLowerCase() + " " + (n.dataset.search || "");
-        var qOk = !q || hay.indexOf(q) !== -1;
-        var show = spaceOk && qOk;
-        n.classList.toggle("hide", !show);
-        if (show) vis++;
+        var qOk = terms.every(function (t) { return hay.indexOf(t) !== -1; });
+        n.classList.toggle("hide", !(spaceOk && qOk));
       });
-      updateAskHint(raw, vis);
     }
     document.querySelectorAll(".sp[data-space]").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -37,121 +35,6 @@
       });
     });
     if (search) search.addEventListener("input", filterNotes);
-
-    // ---- Ask: semantic library question (reuses the bot's library engine) ------
-    // Typing still live-filters (input handler above); Ask is the DELIBERATE action —
-    // a clicked button or Enter — because the answer costs a 5-15s Claude call and must
-    // not fire on every keystroke. Enter (not IME-composition) commits the query to Ask;
-    // live-filter already happened as you typed, so plain Enter had nothing else to do.
-    var askBtn = document.getElementById("note-ask");
-    var panel = document.getElementById("ask-panel");
-    var grid = document.getElementById("notes-grid");
-    if (askBtn && panel && grid && search) {
-      function askHead(caption, thinking) {
-        var head = document.createElement("div"); head.className = "askhead";
-        var lbl = document.createElement("span");
-        lbl.className = "askfor" + (thinking ? " asking" : "");
-        lbl.textContent = caption;
-        head.appendChild(lbl);
-        if (!thinking) {
-          var clr = document.createElement("button");
-          clr.className = "mini"; clr.type = "button"; clr.textContent = "Clear";
-          clr.addEventListener("click", clearAsk);
-          head.appendChild(clr);
-        }
-        return head;
-      }
-      function clearAsk() {
-        panel.classList.add("hide"); panel.innerHTML = "";
-        grid.classList.remove("hide");
-        filterNotes();   // answers gone → re-show the live hint if text remains
-      }
-
-      // ---- live hint (#2/#3): teach the two paths as you type, nudge Ask for
-      // question-shaped input, and on zero literal matches offer Ask as the exit.
-      var hint = document.getElementById("ask-hint");
-      var QSHAPE = /\?\s*$|^(what|how|why|who|whom|whose|where|when|which|find|should|is|are|was|were|can|could|would|do|does|did|any)\b/i;
-      updateAskHint = function (raw, vis) {
-        if (!hint) return;
-        // No hint when nothing typed, or when Ask answers already fill the panel.
-        if (!raw || !panel.classList.contains("hide")) {
-          hint.classList.add("hide"); hint.innerHTML = "";
-          askBtn.classList.remove("nudge");
-          return;
-        }
-        askBtn.classList.toggle("nudge", QSHAPE.test(raw));
-        hint.innerHTML = "";
-        var ask = document.createElement("button");
-        ask.type = "button"; ask.className = "hintask";
-        ask.textContent = "✦ Ask your library";
-        ask.addEventListener("click", askLibrary);
-        var lead = document.createElement("span"); lead.className = "hintlead";
-        if (vis === 0) {
-          lead.textContent = "No note contains that — ";
-          hint.appendChild(lead); hint.appendChild(ask);
-          var tail = document.createElement("span");
-          tail.className = "hintlead"; tail.textContent = " instead?";
-          hint.appendChild(tail);
-        } else {
-          var num = document.createElement("span");
-          num.className = "hintnum"; num.textContent = String(vis);
-          lead.appendChild(num);
-          lead.appendChild(document.createTextNode(" match" + (vis === 1 ? "" : "es") + " · "));
-          hint.appendChild(lead); hint.appendChild(ask);
-        }
-        hint.classList.remove("hide");
-      };
-
-      function askLibrary() {
-        var q = search.value.trim();
-        if (!q) { search.focus(); return; }
-        // Entering Ask mode: drop the hint + nudge, the panel takes over.
-        if (hint) { hint.classList.add("hide"); hint.innerHTML = ""; }
-        askBtn.classList.remove("nudge");
-        // Immediate thinking state (Doherty: instant feedback before the slow call).
-        panel.innerHTML = "";
-        panel.appendChild(askHead("Reading your library for “" + q + "”…", true));
-        panel.classList.remove("hide"); grid.classList.add("hide");
-        post("/notes/ask", { q: q }).then(function (res) {
-          var data = (res && res.data) || {};
-          panel.innerHTML = "";
-          if (!data.count) {
-            panel.appendChild(askHead("No matches for “" + q + "”", false));
-            var e = document.createElement("div"); e.className = "empty";
-            e.textContent = "Nothing in your saved library answers that yet — try a broader topic, or Clear to browse everything.";
-            panel.appendChild(e);
-            return;
-          }
-          var cap = data.fallback
-            ? "recent saves for “" + q + "”"
-            : "showing answers for “" + q + "”";
-          panel.appendChild(askHead(cap, false));
-          // Server-rendered with the SAME note_card macro as the grid → identical panels.
-          var g = document.createElement("div");
-          g.innerHTML = data.html;
-          var grid2 = g.firstElementChild;   // the .ngrid
-          if (grid2) {
-            grid2.querySelectorAll(".note[data-slug]").forEach(function (n) {
-              n.addEventListener("click", function (ev) {
-                if (ev.target.closest("a")) return;   // domain/source link navigates itself
-                if (window.openNote) window.openNote(n.dataset.slug);
-              });
-            });
-            panel.appendChild(grid2);
-          }
-        });
-      }
-      askBtn.addEventListener("click", askLibrary);
-      search.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); askLibrary(); }
-      });
-      document.addEventListener("keydown", function (e) {
-        // Esc clears the answers — but never steal Esc from the note editor overlay.
-        var ov = document.getElementById("noteoverlay");
-        if (e.key === "Escape" && !panel.classList.contains("hide") &&
-            !(ov && ov.classList.contains("on"))) clearAsk();
-      });
-    }
   })();
 
   // ---- note editor modal ------------------------------------------------------

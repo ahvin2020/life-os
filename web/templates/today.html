@@ -16,10 +16,10 @@
   {# short enough to survive mid widths uncropped; bare-URL capture still works #}
   <input type="text" id="qin" placeholder="Add a task, note, or journal entry…" aria-label="Quick add">
   <div class="qtypes" id="qtypes">
-    <button class="qt active" data-t="auto" type="button">auto</button>
-    <button class="qt" data-t="task" type="button">task</button>
-    <button class="qt" data-t="note" type="button">note</button>
-    <button class="qt" data-t="journal" type="button">journal</button>
+    <button class="qt active" data-t="auto" type="button">Auto</button>
+    <button class="qt" data-t="task" type="button">Task</button>
+    <button class="qt" data-t="note" type="button">Note</button>
+    <button class="qt" data-t="journal" type="button">Journal</button>
   </div>
   <button class="qgo" id="qgo" type="button">Add</button>
 </div>
@@ -43,7 +43,15 @@
         <div class="allclear"><div class="ac-big">You’re clear for today.</div><div class="ac-sub">Everything’s checked off — have a good one.</div></div>
         {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
       {% elif tasks %}
-        {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
+        {# open tasks lead; done-today folds away so it can't bury what's left #}
+        {% set done_tasks = tasks | selectattr('done') | list %}
+        {% for t in tasks if not t.done %}{{ m.today_item(t, today) }}{% endfor %}
+        {% if done_tasks %}
+        <details class="donefold">
+          <summary>{{ done_tasks | length }} done today</summary>
+          {% for t in done_tasks %}{{ m.today_item(t, today) }}{% endfor %}
+        </details>
+        {% endif %}
       {% else %}
         <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>
       {% endif %}
@@ -77,35 +85,23 @@
         {% endif %}
         {% endfor %}
       {% else %}
-        <div class="empty" style="font-size:12px">No goals yet — <a href="/goals">add one</a>.</div>
+        <div class="empty">No goals yet — <a href="/goals">add one</a>.</div>
       {% endif %}
     </div>
 
-    <div class="card sub2">
+    <div class="card sub2" id="capfeed">
       <div class="chead"><h2>Captured today</h2><a href="/notes">→</a></div>
       {% if feed %}
-        {% for c in feed %}
-        <div class="cap" data-kind="{{ c.kind }}" data-ref="{{ c.ref }}"><span class="src">{{ c.source }}</span>
-          <div class="txt">{{ c.text }}<div class="meta"><span class="filed">{{ c.dest }}</span></div>
-            <div class="refile" style="display:none;margin-top:4px">
-              {% if c.kind != 'task' %}<button class="chg" data-to="task" type="button">→ Task</button>{% endif %}
-              {% if c.kind != 'note' %}<button class="chg" data-to="note" type="button">→ Note</button>{% endif %}
-              {% if c.kind != 'journal' %}<button class="chg" data-to="journal" type="button">→ Journal</button>{% endif %}
-            </div>
-          </div>
-          <button class="chg cap-more" type="button" aria-label="Actions">⋯</button>
-          <button class="chg chg-toggle" type="button" title="Refile this">Change</button>
-          <button class="chg cap-del" type="button" title="Delete this">Delete</button></div>
-        {% endfor %}
+        {% for c in feed %}{{ m.cap_item(c) }}{% endfor %}
       {% else %}
-        <div class="empty" style="font-size:12px">Nothing captured today yet.</div>
+        <div class="empty">Nothing captured today yet.</div>
       {% endif %}
     </div>
 
     {% if journal_empty %}
     <div class="card sub2">
       <div class="chead"><h2>Journal</h2><a href="/journal">→</a></div>
-      <div class="empty" style="font-size:12px">No entry today — <a href="/journal">write today's page</a>.</div>
+      <div class="empty">No entry today — <a href="/journal">write today's page</a>.</div>
     </div>
     {% endif %}
   </div>

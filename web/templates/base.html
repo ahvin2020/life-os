@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <title>{% block title %}Life OS{% endblock %} · Life OS</title>
   <script>
     // CSRF: expose the session token and auto-attach it to same-origin mutating
@@ -99,7 +100,7 @@
       <button class="mini" id="ed-close" type="button">✕</button>
     </div>
     <div class="erow">
-      <label class="fld" style="flex:1">Title<input class="txt" id="ed-title" placeholder="Note title"></label>
+      <label class="fld" style="flex:1">title<input class="txt" id="ed-title" placeholder="Note title"></label>
     </div>
     <div class="erow">
       <label class="fld" style="flex:1">tags<input class="txt" id="ed-tags" placeholder="idea, link"></label>

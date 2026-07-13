@@ -340,34 +340,6 @@ def pull_ideas(conn, topic: str, count=None, claude_fn=None) -> tuple:
     return (_format_reply(topic, picks), _format_memory(topic, picks))
 
 
-def rank_notes(topic: str, count=None, claude_fn=None) -> tuple:
-    """Web sibling of pull_ideas: same pool builder + same Claude ranking, but returns
-    (results, fallback) where results is a list of {slug,title,why,url,cluster} dicts —
-    structured for a JSON endpoint instead of a Telegram string. READ-ONLY. `fallback`
-    is True when the deterministic recency fallback was used (Claude down/invalid).
-    Empty list when nothing in the library matches the topic."""
-    topic = (topic or "").strip()
-    notes = imported_notes()
-    pool = build_pool(topic, notes)
-    if not pool:
-        return [], False
-    try:
-        want = _DEFAULT_COUNT if count is None else max(1, int(count))
-    except (TypeError, ValueError):
-        want = _DEFAULT_COUNT
-    n = min(want, len(pool))
-    fallback = False
-    picks = _select(topic, topic, n, pool, claude_fn)
-    if not picks:
-        picks = _fallback_picks(topic, pool, notes, n)
-        fallback = True
-    results = [{
-        "slug": nt["slug"], "title": nt["title"], "why": why,
-        "url": nt.get("url") or "", "cluster": _cluster_of(nt) or "",
-    } for nt, why in picks]
-    return results, fallback
-
-
 def _select(raw_message: str, topic: str, n: int, pool: list, claude_fn) -> list:
     """The ONE Claude ranking call (one retry). Returns [(note, why), …] or [] on
     failure so the caller can fall back."""

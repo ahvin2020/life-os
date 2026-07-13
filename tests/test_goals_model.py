@@ -211,9 +211,9 @@ def test_goals_page_renders_all_shapes(client):
     _mkgoal(conn, "Ongoing goal", timeframe="ongoing", period="month")
     conn.close()
     html = client.get("/goals").data.decode()
-    assert html and "Subs measure" in html and "460 / 500 subs" in html
+    assert html and "Subs measure" in html and "460/500 subs" in html
     assert "Videos rollup" in html and "Launch milestone" in html
-    assert "mark achieved" in html                          # milestone toggle
+    assert "Mark achieved" in html                          # milestone toggle
     assert "This quarter" in html and "By date" in html and "Ongoing" in html
     assert "gform" in html and 'id="gtimeframe"' in html          # styled new-goal form
 

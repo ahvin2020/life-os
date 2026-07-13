@@ -5,12 +5,12 @@
 
 <form id="goalform" class="card gform hide" method="post" action="/goals/new" style="margin-bottom:16px">
   <label class="gfield">
-    <span class="glabel">Goal</span>
+    <span class="glabel">goal</span>
     <input class="txt" name="title" placeholder="e.g. Publish 2 long-form videos" required autocomplete="off">
   </label>
 
   <div class="gfield">
-    <span class="glabel">Timeframe</span>
+    <span class="glabel">timeframe</span>
     <div class="gchips" id="gtimeframe">
       <button type="button" class="qt active" data-tf="week">Week</button>
       <button type="button" class="qt" data-tf="month">Month</button>
@@ -23,15 +23,15 @@
   </div>
 
   <label class="gfield hide" id="gdatefield">
-    <span class="glabel">Target date</span>
+    <span class="glabel">target date</span>
     <input class="txt" type="date" name="end_date" id="gend-date">
   </label>
 
   <button type="button" class="addrow" id="gmeasure-toggle">＋ add a measurable target</button>
   <div class="gmeasure hide" id="gmeasure">
-    <label class="gfield"><span class="glabel">Current</span><input class="txt" type="number" step="any" name="current" placeholder="0"></label>
-    <label class="gfield"><span class="glabel">Target</span><input class="txt" type="number" step="any" name="target" placeholder="500"></label>
-    <label class="gfield"><span class="glabel">Unit</span><input class="txt" name="unit" placeholder="subs, videos, kg…"></label>
+    <label class="gfield"><span class="glabel">current</span><input class="txt" type="number" step="any" name="current" placeholder="0"></label>
+    <label class="gfield"><span class="glabel">target</span><input class="txt" type="number" step="any" name="target" placeholder="500"></label>
+    <label class="gfield"><span class="glabel">unit</span><input class="txt" name="unit" placeholder="subs, videos, kg…"></label>
   </div>
 
   <p class="hint">Link tasks to any goal from the task editor — progress can come from tasks, a number, or just you marking it done.</p>
@@ -44,18 +44,18 @@
 <div class="goal{{ ' achieved' if gdone else '' }}" data-goal-id="{{ g.id }}">
   <div class="ghead"><span class="t">{{ g.title }}</span>
     {% if p.shape in ['measure', 'both'] %}
-      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}" data-target="{{ p.target|int }}" data-unit="{{ p.unit }}" tabindex="0" role="button" title="update number">{{ p.current|int }} / {{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
+      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}" data-target="{{ p.target|int }}" data-unit="{{ p.unit }}" tabindex="0" role="button" title="update number">{{ p.current|int }}/{{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
     {% elif p.shape == 'rollup' %}
-      <span class="gnum">{{ p.done }} / {{ p.total }}</span>
+      <span class="gnum">{{ p.done }}/{{ p.total }}</span>
     {% else %}
-      <button class="gachieve {{ 'done' if p.achieved else '' }}" type="button" data-goal-id="{{ g.id }}" aria-pressed="{{ 'true' if p.achieved else 'false' }}">{{ '✓ achieved' if p.achieved else 'mark achieved' }}</button>
+      <button class="gachieve {{ 'done' if p.achieved else '' }}" type="button" data-goal-id="{{ g.id }}" aria-pressed="{{ 'true' if p.achieved else 'false' }}">{{ '✓ Achieved' if p.achieved else 'Mark achieved' }}</button>
     {% endif %}
   </div>
   {% if p.shape != 'milestone' %}
   <div class="bar {{ 'full' if p.pct >= 100 else '' }}"><i style="width:{{ p.pct if p.pct <= 100 else 100 }}%"></i></div>
   {% endif %}
   {% if p.shape == 'both' %}
-  <div class="gsrc">{{ p.done }} / {{ p.total }} linked tasks done</div>
+  <div class="gsrc">{{ p.done }}/{{ p.total }} linked tasks done</div>
   {% endif %}
   {% if g.end_date %}
   <div class="gsrc">by {{ g.end_date | fdate }}</div>
@@ -71,12 +71,12 @@
     <div class="gsrc">link tasks to this goal via the task editor (◎)</div>
     {% endif %}
   {% endif %}
-  <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini danger gdel" type="button" data-goal-id="{{ g.id }}">delete</button></div>
+  <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini danger gdel" type="button" data-goal-id="{{ g.id }}">Delete</button></div>
 </div>
 {%- endmacro %}
 
 {% for sec in sections %}
-<div class="nsec">{{ sec.label }}</div>
+<div class="nsec"><span>{{ sec.label }}</span><span class="rule"></span></div>
 <div class="goalgrid">{% for g in sec.goals %}{{ goal_card(g) }}{% endfor %}</div>
 {% endfor %}
 {% if not sections %}<div class="empty">No goals yet — create your first one.</div>{% endif %}
