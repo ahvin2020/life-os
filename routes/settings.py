@@ -19,7 +19,7 @@ from flask import Blueprint, render_template, request, jsonify
 
 from datetime import timedelta
 
-from core.web_core import db, respond, health_status, ai_health
+from core.web_core import db, respond, health_status, ai_health, health_reasons
 from core.db import (get_setting, set_setting, delete_setting, machine_tz_name,
                 reload_tz, now_sg, get_tz)
 
@@ -52,6 +52,31 @@ DEFAULTS = {
     "weekly_time": "18:00",
 }
 TOGGLES = ("brief_enabled", "triage_enabled", "reflection_enabled", "weekly_enabled")
+
+# AI providers — authenticated by SUBSCRIPTION OAuth (e.g. `claude setup-token`), NOT
+# pay-per-use API keys (that stays out per CLAUDE.md). Only a 'wired' provider actually
+# executes; the rest show in the picker as the roadmap (disabled) so it's an honest
+# chooser. Adding a real provider = flip wired + fill oauth_cmd/manage_url here, then
+# teach ai/claude_cli (or the router) to invoke its CLI. The active choice lives in
+# settings.ai_provider; each token in settings.<id>_oauth_token.
+AI_PROVIDERS = [
+    {"id": "claude", "label": "Claude", "wired": True,
+     "oauth_cmd": "claude setup-token", "manage_url": "https://claude.ai/settings"},
+    {"id": "gemini", "label": "Gemini", "wired": False, "oauth_cmd": "", "manage_url": ""},
+    {"id": "codex", "label": "ChatGPT / Codex", "wired": False, "oauth_cmd": "", "manage_url": ""},
+]
+_AI_DEFAULT = "claude"
+_AI_WIRED = {p["id"] for p in AI_PROVIDERS if p["wired"]}
+
+
+def _active_provider(conn):
+    """The chosen provider dict, falling back to the default if the stored id is unknown
+    or has since been un-wired."""
+    pid = get_setting(conn, "ai_provider") or _AI_DEFAULT
+    for p in AI_PROVIDERS:
+        if p["id"] == pid and p["wired"]:
+            return p
+    return AI_PROVIDERS[0]
 _TRIAGE_DAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "daily")
 
 _DAYS_LABELS = {
@@ -59,16 +84,6 @@ _DAYS_LABELS = {
     "purge_deleted_days": "Purge-deleted days",
     "stale_backlog_days": "Stale-backlog days",
 }
-
-
-def _hhmm(val, dh, dm):
-    """Parse an 'HH:MM' (or bare 'HH') setting into (hour, minute)."""
-    try:
-        s = str(val)
-        h, m = (s.split(":", 1) + ["0"])[:2] if ":" in s else (s, "0")
-        return int(h), int(m)
-    except (TypeError, ValueError):
-        return dh, dm
 
 
 def _next_label(now, h, m, ran_today):
@@ -122,27 +137,22 @@ def settings_page():
     tz_options = list(dict.fromkeys(_COMMON_TZS + [machine_tz, tz_current]))
     status = {
         "health": health_status(conn),
-        "digest_last_sent": get_setting(conn, "digest_last_sent"),
-        "reflection_last_sent": get_setting(conn, "reflection_last_sent"),
         "capture_last_ran": get_setting(conn, "capture_last_ran"),
         "triage_last_ran": get_setting(conn, "triage_last_ran"),
         "backup_last_ran": get_setting(conn, "backup_last_ran"),
         "claude_last_ok": get_setting(conn, "claude_last_ok"),
     }
     ai = ai_health(conn)
-    ai["token_set"] = bool(get_setting(conn, "claude_oauth_token")) or bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    active_provider = _active_provider(conn)
+    ai["token_set"] = (bool(get_setting(conn, f"{active_provider['id']}_oauth_token"))
+                       or bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")))
     status["health"]["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
+    health_why = health_reasons(conn)          # why each red dot is red (computed before close)
     # Next scheduled fire per job (app tz), honouring the once-per-day guards + toggles.
     now = now_sg()
     nextrun = {"capture": "live",
                "triage": _next_label(now, 0, 0, _ran_today(conn, "sweep_last_day", now)),
                "backup": _next_label(now, 3, 0, _ran_today(conn, "backup_last_ran", now))}
-    if toggles.get("brief_enabled", True):
-        dh, dm = _hhmm(values.get("digest_hour"), 7, 0)
-        nextrun["brief"] = _next_label(now, dh, dm, _ran_today(conn, "digest_last_sent", now))
-    if toggles.get("reflection_enabled", True):
-        rh, rm = _hhmm(values.get("reflection_hour"), 21, 30)
-        nextrun["reflection"] = _next_label(now, rh, rm, _ran_today(conn, "reflection_last_sent", now))
     conn.close()
     return render_template("settings.html", active="settings",
                            values=values, defaults=DEFAULTS, toggles=toggles,
@@ -150,7 +160,9 @@ def settings_page():
                            machine_tz=machine_tz, tz_options=tz_options,
                            backup_location=backup_location, triage_day=triage_day,
                            weekly_day=weekly_day, backup_dir_default=backup_dir_default,
-                           triage_days=_TRIAGE_DAYS, ai=ai)
+                           triage_days=_TRIAGE_DAYS, ai=ai,
+                           ai_providers=AI_PROVIDERS, active_provider=active_provider,
+                           health_why=health_why)
 
 
 @bp.route("/settings/run/<job>", methods=["POST"])
@@ -197,23 +209,29 @@ def settings_run(job):
 
 @bp.route("/settings/claude-token", methods=["POST"])
 def settings_claude_token():
-    """Save (or clear) the Claude OAuth token from `claude setup-token`, WITHOUT going
-    through /settings/save — a password field renders blank, so folding it into the main
-    save would wipe the token on every unrelated save. Its own form + button: a value
-    sets it, an empty submit is an explicit clear. call_claude reads it live, so no
-    container restart is needed to rotate it."""
-    token = (request.form.get("claude_oauth_token") or "").strip()
+    """Save the active AI provider + its OAuth token, WITHOUT going through
+    /settings/save — a password field renders blank, so folding it into the main save
+    would wipe the token on every unrelated save. Its own form + button: a value sets
+    it, an empty submit is an explicit clear. Provider-aware (settings.ai_provider +
+    <id>_oauth_token) but only a WIRED provider is accepted. call_claude reads the token
+    live, so no container restart is needed to rotate it."""
+    provider = (request.form.get("ai_provider") or _AI_DEFAULT).strip()
+    if provider not in _AI_WIRED:
+        return respond(False, "That provider isn't wired up yet", fallback="/settings")
+    # accept the generic field name, or the legacy claude-specific one
+    token = (request.form.get("oauth_token") or request.form.get("claude_oauth_token") or "").strip()
     conn = db()
+    set_setting(conn, "ai_provider", provider)
     if token:
-        set_setting(conn, "claude_oauth_token", token)
+        set_setting(conn, f"{provider}_oauth_token", token)
         # a fresh token invalidates the old failure — clear the nudge guard so a later
         # recovery still notifies, and drop the stale error so the dot isn't stuck red.
         delete_setting(conn, "claude_last_err")
         delete_setting(conn, "claude_down_notified")
-        msg = "Claude token saved"
+        msg = "Token saved"
     else:
-        delete_setting(conn, "claude_oauth_token")
-        msg = "Claude token cleared"
+        delete_setting(conn, f"{provider}_oauth_token")
+        msg = "Token cleared"
     conn.close()
     return respond(True, msg, to="/settings")
 

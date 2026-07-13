@@ -274,6 +274,40 @@ def health_ages(conn, now=None) -> dict:
     return out
 
 
+# Human "why is this red" copy per job — {age}/{budget} filled in when stale.
+_HEALTH_WHY = {
+    "capture": ("No heartbeat for {age} — the capture daemon looks stopped",
+                "Capture daemon hasn't started yet"),
+    "triage": ("Hasn't run in {age} (expected within {budget})",
+               "Hasn't run yet"),
+    "backup": ("No backup in {age} (expected within {budget})",
+               "No backup has run yet"),
+}
+
+
+def health_reasons(conn, now=None) -> dict:
+    """Per-job explanation of a non-'ok' dot ('' when ok) — so the red dot can SAY why
+    it's red instead of just being red. Pairs the state with the last-seen age + the
+    staleness budget it blew. Pure/unit-testable."""
+    status = health_status(conn, now)
+    ages = health_ages(conn, now)
+    budgets = {name: b for name, _key, b in _HEALTH_CHECKS}
+    out = {}
+    for name in ("capture", "triage", "backup"):
+        st = status.get(name)
+        stale_msg, off_msg = _HEALTH_WHY[name]
+        if st == "off":
+            out[name] = off_msg
+        elif st == "stale":
+            b = budgets[name]
+            budget = f"{b} min" if b < 60 else f"{b // 60} h"
+            age = (ages.get(name) or "a while").replace(" ago", "")   # "3d ago" → "3d"
+            out[name] = stale_msg.format(age=age, budget=budget)
+        else:
+            out[name] = ""
+    return out
+
+
 def ai_health(conn) -> dict:
     """State of the Claude CLI / OAuth token from its call heartbeats:
       'ok'    — last call succeeded (and no newer failure)
@@ -312,24 +346,28 @@ def inject_health():
         pass
     # map AI 'error'→'stale' so it reuses the red dot styling; keep raw state under ai.
     status["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
-    return {"health": status, "health_age": ages, "ai_health": ai}
+    # nav badge: how many things need attention now. Background jobs count only when
+    # stale ('off'/never-run is setup-pending, they auto-start). AI counts whenever it's
+    # not 'ok' — i.e. no token yet (not connected) OR a failing token — because wiring up
+    # AI is itself an action the user needs to take. Drives the Settings nav count.
+    alerts = sum(1 for k in ("capture", "triage", "backup") if status.get(k) == "stale")
+    if ai["state"] != "ok":
+        alerts += 1
+    return {"health": status, "health_age": ages, "ai_health": ai, "nav_alerts": alerts}
 
 
 @app.context_processor
 def inject_nav():
-    """Sidebar/bottom-nav badge counts, available to every template."""
-    from domain import vault_store
-    counts = {"tasks": 0, "notes": 0}
+    """Sidebar/bottom-nav badge counts, available to every template. Only the Tasks
+    count remains — a Notes total is inventory, not a notification, so it's dropped
+    (and its vault scan with it)."""
+    counts = {"tasks": 0}
     try:
         conn = db()
         counts["tasks"] = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE parent_id IS NULL "
             "AND archived_at IS NULL AND deleted_at IS NULL AND done = 0").fetchone()[0]
         conn.close()
-    except Exception:
-        pass
-    try:
-        counts["notes"] = len(vault_store.list_notes())
     except Exception:
         pass
     return {"nav_counts": counts, "today": today_iso()}

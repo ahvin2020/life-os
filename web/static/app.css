@@ -505,6 +505,19 @@ a:hover { text-decoration: underline; }
 .setform { max-width: 760px; }
 .sect { font-family: var(--mono); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 12px; margin: 26px 2px 12px; max-width: 760px; }
 .sect .rule { flex: 1; height: 1px; background: var(--border); }
+/* click-to-copy command chip (how to fetch the token) */
+.cmdcopy { font-family: var(--mono); font-size: 12px; color: var(--link); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; cursor: pointer; transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.cmdcopy:hover { background: var(--surface3); }
+.cmdcopy:active { transform: scale(.96); }
+/* Settings nav badge = system issues needing attention (red, not the neutral count) */
+.count.alert { color: #fff; background: var(--bad); border-color: transparent; }
+.nav-btn.active .count.alert { color: #fff; background: var(--bad); }
+/* pulse whatever the Settings badge points at (a stale System-health row, or the AI
+   card when it's not connected). A box-shadow ring works on both a transparent row and
+   a surface card, unlike a background flash. NB: .attn, NOT .flash — a pre-existing
+   .flash paints a left border. */
+.attn { animation: attnpulse 1.6s var(--ease); border-radius: 10px; }
+@keyframes attnpulse { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 25% { box-shadow: 0 0 0 3px var(--accent-dim); } }
 .setgroup { max-width: 760px; background: var(--surface); border: 1px solid var(--border); border-radius: 13px; padding: 2px 18px; }
 .setrow { display: flex; align-items: center; gap: 16px; padding: 15px 0; border-top: 1px solid var(--border); }
 .setrow:first-child { border-top: none; }
@@ -519,7 +532,14 @@ a:hover { text-decoration: underline; }
 .sctrls .health { display: inline-flex; align-items: center; }
 .sctrls .health .dot { margin: 0; }
 .setsave { display: flex; justify-content: flex-end; align-items: center; min-height: 20px; margin-top: 14px; max-width: 760px; }
+/* autosave confirmation — keep its footprint tiny so it doesn't wedge a gap above
+   the next section (it's invisible until a save flashes it) */
+.setsave { min-height: 0; margin: 0; padding: 3px 2px 0; line-height: 1.1; }
 .setsaved { font-family: var(--mono); font-size: 13px; color: var(--good); opacity: 0; transition: opacity var(--dur) var(--ease); }
+/* "why is this red" reason on a stale System-health row — amber = needs attention now */
+.hwhy { color: var(--accent); }
+/* status dot leads the row label so it sits right above its reason line */
+.slabel .dot { vertical-align: middle; margin-right: 8px; }
 .setsaved.on { opacity: 1; }
 /* enable checkboxes rendered as toggle switches */
 .setrow input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 40px; height: 23px; border-radius: 99px; background: var(--surface3); border: 1px solid var(--border2); position: relative; flex: 0 0 auto; cursor: pointer; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }

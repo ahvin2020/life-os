@@ -226,19 +226,28 @@ def test_done_today_row_has_no_pill_and_no_done_text(client):
     assert '<span class="tt">Finished thing</span>' in row   # strike target wraps text
 
 
-def test_sidebar_health_silent_when_all_ok(client):
-    """Healthy systems are SILENT: fresh heartbeats → nothing in the footer;
-    a missing/stale heartbeat → the per-job detail rows appear."""
-    html = client.get("/").data.decode()          # no heartbeats seeded → detail rows
-    assert "capture ·" in html
+def test_sidebar_health_badge_flags_stale_and_silent_when_ok(client):
+    """The sidebar no longer lists per-job status rows — a stale job surfaces only as a
+    red count badge on the Settings nav, and all-healthy is fully silent (no badge)."""
+    # stale heartbeats → red states → the Settings nav badge appears
     conn = _db()
     with conn:
         for key in ("capture_last_ran", "triage_last_ran", "backup_last_ran"):
             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                         (key, "2020-01-01T00:00:00Z"))
+    conn.close()
+    html = client.get("/").data.decode()
+    assert "count alert" in html                   # badge present
+    assert "capture ·" not in html                 # the old per-job sidebar rows are gone
+    # fresh heartbeats AND a working AI call → no badge, silent (AI-not-connected counts too)
+    conn = _db()
+    with conn:
+        for key in ("capture_last_ran", "triage_last_ran", "backup_last_ran", "claude_last_ok"):
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
                          (key, now_iso()))
     conn.close()
     html = client.get("/").data.decode()
-    assert "capture ·" not in html and "all systems ok" not in html   # fully silent
+    assert "count alert" not in html
 
 
 def test_done_board_card_has_no_lit_pill_and_no_empty_meta_row(client):

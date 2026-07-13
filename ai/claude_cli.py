@@ -104,13 +104,18 @@ def _settings_conn():
 
 
 def token_from_settings() -> str:
-    """The OAuth token stored in settings (Settings page), or '' if none."""
+    """The OAuth token for the ACTIVE AI provider stored in settings (Settings page),
+    or '' if none. Reads settings.ai_provider then settings.<id>_oauth_token, falling
+    back to the legacy claude_oauth_token key so tokens saved before the provider picker
+    keep working."""
     conn = _settings_conn()
     if conn is None:
         return ""
     try:
         from core.db import get_setting
-        return (get_setting(conn, "claude_oauth_token") or "").strip()
+        provider = (get_setting(conn, "ai_provider") or "claude").strip()
+        return ((get_setting(conn, f"{provider}_oauth_token")
+                 or get_setting(conn, "claude_oauth_token") or "").strip())
     finally:
         conn.close()
 

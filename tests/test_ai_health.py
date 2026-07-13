@@ -7,8 +7,8 @@
 import os
 
 from ai.voice import _fw_model_name
-from core.web_core import ai_health
-from core.db import connect, set_setting, now_iso
+from core.web_core import ai_health, health_reasons
+from core.db import connect, set_setting, now_iso, get_setting
 from ai import claude_cli
 
 
@@ -24,6 +24,24 @@ def test_fw_model_name_passes_through_bare_size():
 def test_fw_model_name_defaults_when_blank():
     assert _fw_model_name(None) == "large-v3"
     assert _fw_model_name("") == "large-v3"
+
+
+# ── "why is this red" health reasons ──────────────────────────────────────────
+def test_health_reasons_explain_stale_and_off(client):
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    with conn:
+        set_setting(conn, "capture_last_ran", "2026-07-10T00:00:00Z")  # stale (budget 10 min)
+        # triage/backup never stamped → 'off'
+    why = health_reasons(conn)
+    conn.close()
+    assert "capture daemon looks stopped" in why["capture"].lower()
+    assert why["triage"] and why["backup"]           # off → a reason, not blank
+    # a healthy job has no reason
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    with conn:
+        set_setting(conn, "capture_last_ran", now_iso())
+    assert health_reasons(conn)["capture"] == ""
+    conn.close()
 
 
 # ── AI/Claude health state ────────────────────────────────────────────────────
@@ -80,3 +98,22 @@ def test_resolve_token_falls_back_to_settings(client, monkeypatch):
         set_setting(conn, "claude_oauth_token", "db-tok")
     conn.close()
     assert claude_cli._resolve_token() == "db-tok"
+
+
+# ── provider picker (OAuth, not API keys) ─────────────────────────────────────
+def test_token_endpoint_saves_provider_and_token(client, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    client.post("/settings/claude-token", data={"ai_provider": "claude", "oauth_token": "tok-1"})
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    assert get_setting(conn, "ai_provider") == "claude"
+    assert get_setting(conn, "claude_oauth_token") == "tok-1"
+    conn.close()
+    assert claude_cli.token_from_settings() == "tok-1"
+
+
+def test_token_endpoint_rejects_unwired_provider(client):
+    # a not-yet-wired provider must not be accepted (no token written under it)
+    client.post("/settings/claude-token", data={"ai_provider": "gemini", "oauth_token": "x"})
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    assert get_setting(conn, "gemini_oauth_token") is None
+    conn.close()

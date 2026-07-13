@@ -52,19 +52,13 @@
     <div class="brand"><b>Life OS</b><span>DS423+</span></div>
     <a class="nav-btn {{ 'active' if active=='home' else '' }}" href="/"><span class="ico">◈</span>Today</a>
     <a class="nav-btn {{ 'active' if active=='tasks' else '' }}" href="/tasks"><span class="ico">☑</span>Tasks<span class="count">{{ nav_counts.tasks }}</span></a>
-    <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes<span class="count">{{ nav_counts.notes }}</span></a>
+    <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
     <a class="nav-btn {{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
     <a class="nav-btn {{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
-    <a class="nav-btn setlink {{ 'active' if active=='settings' else '' }}" href="/settings"><span class="ico">⚙</span>Settings</a>
-    {# healthy systems are SILENT — the per-job rows only appear when something needs
-       attention; nothing renders when all three are ok #}
-    {% if not (health.capture == 'ok' and health.triage == 'ok' and health.backup == 'ok') %}
-    <div class="foot">
-      <div title="Telegram capture daemon heartbeat (red if idle &gt;10 min)"><span class="dot {{ health.capture }}"></span>capture · {{ health_age.capture or 'never' }}</div>
-      <div title="Claude triage last run (red if &gt;26 h)"><span class="dot {{ health.triage }}"></span>triage · {{ health_age.triage or 'never' }}</div>
-      <div title="Nightly DB backup (red if &gt;26 h)"><span class="dot {{ health.backup }}"></span>backup · {{ health_age.backup or 'never' }}</div>
-    </div>
-    {% endif %}
+    {# The Settings nav badge (red count) is now the at-a-glance health signal — click
+       through for the per-job detail + reasons. The old always-there sidebar status rows
+       were redundant with it, so they're gone. #}
+    <a class="nav-btn setlink {{ 'active' if active=='settings' else '' }}" href="/settings"><span class="ico">⚙</span>Settings{% if nav_alerts %}<span class="count alert" title="{{ nav_alerts }} system issue{{ 's' if nav_alerts > 1 }} need attention">{{ nav_alerts }}</span>{% endif %}</a>
   </nav>
 
   <main class="main">

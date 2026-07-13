@@ -78,12 +78,32 @@
   <div class="setsave"><span class="setsaved" id="setsaved" aria-live="polite">Saved ✓</span></div>
 </form>
 
-<div class="sect"><span>AI connection</span><span class="rule"></span></div>
-<form method="post" action="/settings/claude-token" class="setgroup">
+<div class="sect" style="margin-top:14px"><span>AI connection</span><span class="rule"></span></div>
+{% set aist = status.health.ai %}
+{% set ai_why = (ai.detail ~ (' — token may have expired' if ai.auth else '')) if aist == 'stale'
+                else ('Token saved but not verified — hit Test' if ai.token_set
+                      else 'Not connected — no token yet, so AI falls back to plain capture') %}
+<form method="post" action="/settings/claude-token" class="setgroup" id="aiform">
   <div class="setrow">
-    <div class="sinfo"><div class="slabel">Claude token</div><div class="sdesc">From <span class="mono">claude setup-token</span> on your Mac. Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. {% if ai.token_set %}A token is saved — paste a new one to rotate it.{% else %}No token set — AI features fall back to plain capture.{% endif %}</div></div>
+    <div class="sinfo">
+      <div class="slabel">Provider</div>
+      <div class="sdesc">Pick your AI engine and paste its <b>OAuth token</b> — a subscription sign-in, not a pay-per-use API key. More engines appear here as they're wired up.</div>
+    </div>
     <div class="sctrls">
-      <input class="ctrl" style="width:230px;font-family:var(--mono);font-size:12px" type="password" name="claude_oauth_token" autocomplete="off" placeholder="{% if ai.token_set %}•••••• paste to replace{% else %}paste token{% endif %}" aria-label="Claude OAuth token">
+      <select class="ctrl" name="ai_provider" style="min-width:170px" aria-label="AI provider">
+        {% for p in ai_providers %}<option value="{{ p.id }}"{% if p.id == active_provider.id %} selected{% endif %}{% if not p.wired %} disabled{% endif %}>{{ p.label }}{% if not p.wired %} — soon{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="slabel"><span class="dot {{ aist }}" title="{{ ai_why }}"></span>{{ active_provider.label }} token</div>
+      <div class="sdesc">Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. {% if aist == 'ok' %}<span class="mono">Connected · last ok {{ status.claude_last_ok | fstamp }}</span>.{% else %}<span class="hwhy">{{ ai_why }}.</span>{% endif %}</div>
+      <div class="sdesc" style="margin-top:7px">Get one: run <button type="button" class="cmdcopy" data-copy="{{ active_provider.oauth_cmd }}" title="Copy command">{{ active_provider.oauth_cmd }} ⧉</button> in your Mac terminal, sign in, then paste it here. <a href="{{ active_provider.manage_url }}" target="_blank" rel="noopener">Manage&nbsp;/&nbsp;revoke&nbsp;↗</a></div>
+    </div>
+    <div class="sctrls">
+      <input class="ctrl" style="width:210px;font-family:var(--mono);font-size:12px" type="password" name="oauth_token" autocomplete="off" placeholder="{% if ai.token_set %}•••••• paste to replace{% else %}paste token{% endif %}" aria-label="{{ active_provider.label }} OAuth token">
+      <button class="runbtn" type="button" data-run="claude"{% if not ai.token_set %} disabled title="Save a token first"{% endif %}>Test</button>
       <button class="runbtn" type="submit">Save</button>
     </div>
   </div>
@@ -92,23 +112,16 @@
 <div class="sect"><span>System health</span><span class="rule"></span></div>
 <div class="setgroup">
   <div class="setrow">
-    <div class="sinfo"><div class="slabel">Capture daemon</div><div class="sdesc"><span class="mono">{{ status.capture_last_ran | fstamp }}</span> · <span class="mono">{{ nextrun.capture }}</span></div></div>
-    <div class="sctrls"><span class="health"><span class="dot {{ status.health.capture }}"></span></span><button class="runbtn" type="button" data-run="capture">Restart</button></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.capture }}" title="{{ health_why.capture }}"></span>Capture daemon</div><div class="sdesc"><span class="mono">{{ status.capture_last_ran | fstamp }}</span>{% if status.health.capture == 'ok' %} · <span class="mono">{{ nextrun.capture }}</span>{% else %} · <span class="hwhy">{{ health_why.capture }}</span>{% endif %}</div></div>
+    <div class="sctrls"><button class="runbtn" type="button" data-run="capture">Restart</button></div>
   </div>
   <div class="setrow">
-    <div class="sinfo"><div class="slabel">#unsorted sweep</div><div class="sdesc"><span class="mono">{{ status.triage_last_ran | fstamp }}</span> · next <span class="mono">{{ nextrun.triage }}</span></div></div>
-    <div class="sctrls"><span class="health"><span class="dot {{ status.health.triage }}"></span></span><button class="runbtn" type="button" data-run="triage">Run now</button></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.triage }}" title="{{ health_why.triage }}"></span>#unsorted sweep</div><div class="sdesc"><span class="mono">{{ status.triage_last_ran | fstamp }}</span>{% if status.health.triage == 'ok' %} · next <span class="mono">{{ nextrun.triage }}</span>{% else %} · <span class="hwhy">{{ health_why.triage }}</span>{% endif %}</div></div>
+    <div class="sctrls"><button class="runbtn" type="button" data-run="triage">Run now</button></div>
   </div>
   <div class="setrow">
-    <div class="sinfo"><div class="slabel">Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span> · next <span class="mono">{{ nextrun.backup }}</span></div></div>
-    <div class="sctrls"><span class="health"><span class="dot {{ status.health.backup }}"></span></span><button class="runbtn" type="button" data-run="backup">Run now</button></div>
-  </div>
-  <div class="setrow">
-    <div class="sinfo"><div class="slabel">AI (Claude)</div><div class="sdesc">{% if status.health.ai == 'ok' %}<span class="mono">last ok {{ status.claude_last_ok | fstamp }}</span>{% elif status.health.ai == 'stale' %}{{ ai.detail or 'not responding' }}{% if ai.auth %} · token may be expired{% endif %}{% else %}not used yet{% endif %}</div></div>
-    <div class="sctrls"><span class="health"><span class="dot {{ status.health.ai }}"></span></span><button class="runbtn" type="button" data-run="claude">Test</button></div>
-  </div>
-  <div class="setrow">
-    <div class="sinfo"><div class="slabel">Proactive AI</div><div class="sdesc">brief <span class="mono">{{ status.digest_last_sent | fdate }}</span>{% if nextrun.brief %} → next <span class="mono">{{ nextrun.brief }}</span>{% endif %} · reflection <span class="mono">{{ status.reflection_last_sent | fdate }}</span>{% if nextrun.reflection %} → next <span class="mono">{{ nextrun.reflection }}</span>{% endif %}</div></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.backup }}" title="{{ health_why.backup }}"></span>Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span>{% if status.health.backup == 'ok' %} · next <span class="mono">{{ nextrun.backup }}</span>{% else %} · <span class="hwhy">{{ health_why.backup }}</span>{% endif %}</div></div>
+    <div class="sctrls"><button class="runbtn" type="button" data-run="backup">Run now</button></div>
   </div>
 </div>
 {% endblock %}

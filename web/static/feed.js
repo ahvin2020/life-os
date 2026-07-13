@@ -106,9 +106,49 @@
         b.disabled = false; b.textContent = label;
         var ok = res.ok && res.data && res.data.status === "ok";
         toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
+        // AI test: reload so the connection pill + status line reflect the probe result
+        if (b.dataset.run === "claude" && ok) setTimeout(function () { location.reload(); }, 700);
       });
     });
   });
+
+  // ---- settings: copy a shell command chip (e.g. `claude setup-token`) ---------
+  document.querySelectorAll(".cmdcopy[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var txt = b.dataset.copy;
+      var done = function () { toast("Copied  " + txt); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done, done);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+    });
+  });
+
+  // ---- settings: on arrival, pulse + scroll to whatever needs attention ---------
+  // (what the red Settings nav badge counts: the AI card if it's not connected, plus
+  // any stale System-health row). Targets are collected in DOM order so we scroll to
+  // the topmost issue.
+  (function () {
+    var targets = [];
+    // AI card: its token dot is not 'ok' (stale OR off/not-connected) → the badge counts
+    // it, so highlight it too. It sits above System health, so push it first.
+    var aiform = document.getElementById("aiform");
+    if (aiform && aiform.querySelector(".dot.stale, .dot.off")) targets.push(aiform);
+    // System-health rows: only stale (red) counts, matching the badge (never-run 'off' jobs
+    // auto-start and don't nag).
+    Array.prototype.slice.call(document.querySelectorAll(".setrow")).forEach(function (r) {
+      if (r.closest("#aiform")) return;                 // AI already handled above
+      if (r.querySelector(".dot.stale")) targets.push(r);
+    });
+    if (!targets.length) return;
+    targets.forEach(function (t) { t.classList.add("attn"); });
+    targets[0].scrollIntoView({ behavior: "smooth", block: "center" });
+  })();
 
   // ---- settings: auto-save on change (no Save button) -------------------------
   (function () {
