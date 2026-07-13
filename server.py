@@ -54,7 +54,10 @@ def main():
 
     print(f"Life OS running at http://localhost:{args.port}")
     print(f"Database: {args.db}")
-    app.run(port=args.port, debug=True, use_reloader=False)
+    # Bind 0.0.0.0 so the published port is reachable inside Docker (localhost-only
+    # binding = ERR_EMPTY_RESPONSE from outside the container). debug off in the served
+    # app — the Werkzeug debugger must never sit on a reachable port.
+    app.run(host="0.0.0.0", port=args.port, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":
