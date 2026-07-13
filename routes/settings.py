@@ -19,7 +19,7 @@ from flask import Blueprint, render_template, request, jsonify
 
 from datetime import timedelta
 
-from core.web_core import db, respond, health_status
+from core.web_core import db, respond, health_status, ai_health
 from core.db import (get_setting, set_setting, delete_setting, machine_tz_name,
                 reload_tz, now_sg, get_tz)
 
@@ -49,8 +49,9 @@ DEFAULTS = {
     "stale_backlog_days": "30",
     "backup_keep": "7",
     "triage_time": "09:00",
+    "weekly_time": "18:00",
 }
-TOGGLES = ("brief_enabled", "triage_enabled", "reflection_enabled")
+TOGGLES = ("brief_enabled", "triage_enabled", "reflection_enabled", "weekly_enabled")
 _TRIAGE_DAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "daily")
 
 _DAYS_LABELS = {
@@ -114,6 +115,7 @@ def settings_page():
     # across the Mac↔NAS sync — mirrors backup_db.synced_dir())
     backup_dir_default = os.path.join(_ROOT, "data-backups")
     triage_day = get_setting(conn, "triage_day") or "sun"
+    weekly_day = get_setting(conn, "weekly_day") or "sun"
     machine_tz = machine_tz_name()
     tz_current = get_setting(conn, "app_tz") or machine_tz    # what's active now
     # curated list + whatever's active + the machine zone, de-duped, order preserved
@@ -125,7 +127,11 @@ def settings_page():
         "capture_last_ran": get_setting(conn, "capture_last_ran"),
         "triage_last_ran": get_setting(conn, "triage_last_ran"),
         "backup_last_ran": get_setting(conn, "backup_last_ran"),
+        "claude_last_ok": get_setting(conn, "claude_last_ok"),
     }
+    ai = ai_health(conn)
+    ai["token_set"] = bool(get_setting(conn, "claude_oauth_token")) or bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    status["health"]["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
     # Next scheduled fire per job (app tz), honouring the once-per-day guards + toggles.
     now = now_sg()
     nextrun = {"capture": "live",
@@ -143,8 +149,8 @@ def settings_page():
                            status=status, tz_current=tz_current, nextrun=nextrun,
                            machine_tz=machine_tz, tz_options=tz_options,
                            backup_location=backup_location, triage_day=triage_day,
-                           backup_dir_default=backup_dir_default,
-                           triage_days=_TRIAGE_DAYS)
+                           weekly_day=weekly_day, backup_dir_default=backup_dir_default,
+                           triage_days=_TRIAGE_DAYS, ai=ai)
 
 
 @bp.route("/settings/run/<job>", methods=["POST"])
@@ -159,13 +165,27 @@ def settings_run(job):
                            check=True, capture_output=True, text=True, timeout=15)
             msg = "Capture daemon restarting"
         elif job == "backup":
-            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/com.kelvin.lifeos.backup"],
-                           check=True, capture_output=True, text=True, timeout=15)
+            # Run the backup job directly (portable) rather than via launchctl, which
+            # only exists on the Mac — in the NAS container we just invoke the script.
+            from core import web_core as _wc
+            env = {**os.environ, "LIFEOS_DB_PATH": _wc._DB_PATH}
+            subprocess.Popen([sys.executable, os.path.join(_ROOT, "scripts", "backup_db.py")],
+                             cwd=_ROOT, env=env)
             msg = "Backup started"
         elif job == "triage":
             subprocess.Popen([sys.executable, os.path.join(_ROOT, "triage", "run_triage.py"), "--sweep"],
                              cwd=_ROOT)
             msg = "Triage sweep started"
+        elif job == "claude":
+            # Probe the Claude CLI + token synchronously so the result is meaningful.
+            # call_claude stamps the health heartbeat, so the AI dot updates too.
+            from ai.claude_cli import call_claude
+            out = call_claude("Reply with exactly the word: ok", timeout=30)
+            if out and out.strip():
+                msg = "AI reachable ✓"
+            else:
+                return jsonify({"status": "error",
+                                "message": "AI unreachable — check the Claude token below"}), 502
         else:
             return jsonify({"status": "error", "message": "unknown job"}), 400
     except subprocess.CalledProcessError as e:
@@ -173,6 +193,29 @@ def settings_run(job):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)[:200]}), 500
     return jsonify({"status": "ok", "job": job, "message": msg})
+
+
+@bp.route("/settings/claude-token", methods=["POST"])
+def settings_claude_token():
+    """Save (or clear) the Claude OAuth token from `claude setup-token`, WITHOUT going
+    through /settings/save — a password field renders blank, so folding it into the main
+    save would wipe the token on every unrelated save. Its own form + button: a value
+    sets it, an empty submit is an explicit clear. call_claude reads it live, so no
+    container restart is needed to rotate it."""
+    token = (request.form.get("claude_oauth_token") or "").strip()
+    conn = db()
+    if token:
+        set_setting(conn, "claude_oauth_token", token)
+        # a fresh token invalidates the old failure — clear the nudge guard so a later
+        # recovery still notifies, and drop the stale error so the dot isn't stuck red.
+        delete_setting(conn, "claude_last_err")
+        delete_setting(conn, "claude_down_notified")
+        msg = "Claude token saved"
+    else:
+        delete_setting(conn, "claude_oauth_token")
+        msg = "Claude token cleared"
+    conn.close()
+    return respond(True, msg, to="/settings")
 
 
 def _parse_hhmm(raw):
@@ -282,6 +325,20 @@ def settings_save():
     # triage_day: one of mon..sun / daily; blank or unknown → reset to default (Sunday)
     raw = (f.get("triage_day") or "").strip().lower()
     staged["triage_day"] = raw if raw in _TRIAGE_DAYS else None
+
+    # weekly_time: blank OK, else HH:MM
+    raw = (f.get("weekly_time") or "").strip()
+    if not raw:
+        staged["weekly_time"] = None
+    else:
+        parsed = _parse_hhmm(raw)
+        if parsed is None:
+            return respond(False, "Weekly review time must be HH:MM", fallback="/settings")
+        staged["weekly_time"] = parsed
+
+    # weekly_day: one of mon..sun / daily; blank or unknown → reset to default (Sunday)
+    raw = (f.get("weekly_day") or "").strip().lower()
+    staged["weekly_day"] = raw if raw in _TRIAGE_DAYS else None
 
     # everything validated — now write atomically
     conn = db()

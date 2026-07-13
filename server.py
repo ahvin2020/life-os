@@ -11,6 +11,10 @@ Run: python3 server.py [--port 5070] [--db data/app.db]
 from __future__ import annotations
 
 import argparse
+import os
+import sys
+import time
+from datetime import datetime, timezone
 
 from core.web_core import app, DB_PATH
 from core import db_init
@@ -18,6 +22,44 @@ from routes import main, tasks, notes, journal, goals, settings
 
 for _bpmod in (main, tasks, notes, journal, goals, settings):
     app.register_blueprint(_bpmod.bp)
+
+
+# ── nightly backup scheduler (in-process) ─────────────────────────────────────
+# On the Mac a launchd plist runs scripts/backup_db.py; the NAS container has no
+# launchd, so the web process schedules the backup itself. It runs in the APP
+# container only (the capture container never imports server.py), so there is no
+# double-run on the shared DB. Fires once per app-tz day at/after 03:00, guarded by
+# the same settings.backup_last_ran heartbeat the sidebar dot reads.
+def _backup_ran_today(last_iso, now) -> bool:
+    """True if backup_last_ran (UTC ISO) falls on the app-tz 'today'."""
+    if not last_iso:
+        return False
+    try:
+        d = (datetime.strptime(str(last_iso)[:19], "%Y-%m-%dT%H:%M:%S")
+             .replace(tzinfo=timezone.utc).astimezone(now.tzinfo).date())
+    except ValueError:
+        return False
+    return d == now.date()
+
+
+def _backup_loop(db_path: str, log) -> None:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+    from core.db import connect, now_sg, get_setting
+    import backup_db
+    while True:
+        try:
+            now = now_sg()
+            if now.hour >= 3:                       # nightly window: 03:00 app-tz onward
+                conn = connect(db_path)
+                last = get_setting(conn, "backup_last_ran")
+                conn.close()
+                if not _backup_ran_today(last, now):
+                    res = backup_db.run_backup(db_path)
+                    log(f"backup written: {res.get('backup')}"
+                        + (f" (+offsite {res.get('synced')})" if res.get("synced") else ""))
+        except Exception as e:                       # never let the scheduler die
+            log(f"backup scheduler error: {e}")
+        time.sleep(1800)                             # re-check every 30 min
 
 
 def main():
@@ -49,6 +91,12 @@ def main():
         target=lambda: reloader.watch_loop(
             _code_baseline, lambda m: print(f"[web] {m}", flush=True), restart=reloader.exit_and_respawn
         ),
+        daemon=True,
+    ).start()
+
+    # Nightly SQLite backup — self-scheduled so the NAS container needs no launchd.
+    threading.Thread(
+        target=lambda: _backup_loop(args.db, lambda m: print(f"[web] {m}", flush=True)),
         daemon=True,
     ).start()
 

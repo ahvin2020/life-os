@@ -274,19 +274,45 @@ def health_ages(conn, now=None) -> dict:
     return out
 
 
+def ai_health(conn) -> dict:
+    """State of the Claude CLI / OAuth token from its call heartbeats:
+      'ok'    — last call succeeded (and no newer failure)
+      'error' — the most recent call failed; `detail` says why ('auth' ⇒ token lapsed)
+      'off'   — never called yet
+    Written by ai.claude_cli._stamp_health on every call. Pure/unit-testable."""
+    def _row(key):
+        r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else None
+    ok_raw, err_raw = _row("claude_last_ok"), _row("claude_last_err")
+    ok_ts = _parse_iso_utc(ok_raw)
+    # err value is "ISO | reason"
+    err_ts = _parse_iso_utc((err_raw or "").split("|", 1)[0].strip()) if err_raw else None
+    detail = (err_raw or "").split("|", 1)[1].strip() if (err_raw and "|" in err_raw) else ""
+    if err_ts and (ok_ts is None or err_ts > ok_ts):
+        return {"state": "error", "detail": detail or "call failed",
+                "auth": detail.lower().startswith("auth")}
+    if ok_ts is not None:
+        return {"state": "ok", "detail": "", "auth": False}
+    return {"state": "off", "detail": "", "auth": False}
+
+
 @app.context_processor
 def inject_health():
     """Make the health dots + last-ran ages available to every template."""
     status = {"capture": "off", "triage": "off", "backup": "off"}
     ages = {"capture": None, "triage": None, "backup": None}
+    ai = {"state": "off", "detail": "", "auth": False}
     try:
         conn = db()
         status = health_status(conn)
         ages = health_ages(conn)
+        ai = ai_health(conn)
         conn.close()
     except Exception:
         pass
-    return {"health": status, "health_age": ages}
+    # map AI 'error'→'stale' so it reuses the red dot styling; keep raw state under ai.
+    status["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
+    return {"health": status, "health_age": ages, "ai_health": ai}
 
 
 @app.context_processor

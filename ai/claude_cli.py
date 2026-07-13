@@ -86,6 +86,70 @@ def has_claude() -> bool:
     return _resolves(claude_bin())
 
 
+# ── auth token + health heartbeats ────────────────────────────────────────────
+# The CLI authenticates with CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`).
+# That token expires, so rather than force an SSH + container restart to rotate it,
+# we ALSO read it from the settings table (pasteable on the Settings page) and pass
+# it into the subprocess env. The env var, if already set, still wins. Every call
+# stamps a health heartbeat (claude_last_ok / claude_last_err) so the UI can show a
+# dot and the daemon can nudge over Telegram when the token has lapsed.
+def _settings_conn():
+    """A best-effort connection to the live DB (honours LIFEOS_DB_PATH). None on any
+    failure — callers must treat token/heartbeats as optional."""
+    try:
+        from core.db import connect
+        return connect()
+    except Exception:
+        return None
+
+
+def token_from_settings() -> str:
+    """The OAuth token stored in settings (Settings page), or '' if none."""
+    conn = _settings_conn()
+    if conn is None:
+        return ""
+    try:
+        from core.db import get_setting
+        return (get_setting(conn, "claude_oauth_token") or "").strip()
+    finally:
+        conn.close()
+
+
+def _resolve_token() -> str:
+    """Env var wins (compose/.env); else the pasted settings value."""
+    return (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip() or token_from_settings()
+
+
+def _stamp_health(ok: bool, reason: str = "") -> None:
+    """Record the outcome of a claude call so the UI health dot + Telegram nudge can
+    tell a lapsed token from a healthy one. Best-effort; never raises into the caller."""
+    conn = _settings_conn()
+    if conn is None:
+        return
+    try:
+        from core.db import now_iso, set_setting
+        with conn:
+            if ok:
+                set_setting(conn, "claude_last_ok", now_iso())
+            else:
+                set_setting(conn, "claude_last_err", f"{now_iso()} | {reason[:180]}")
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+# A lapsed / invalid token makes `claude -p` exit non-zero with a recognisable auth
+# signature — used to tag the heartbeat reason so the nudge can say "update your token".
+_AUTH_HINTS = ("oauth", "token", "unauthor", "authenticat", "401", "403", "invalid api key",
+               "expired", "log in", "login", "not logged in")
+
+
+def _looks_like_auth_error(text: str) -> bool:
+    low = (text or "").lower()
+    return any(h in low for h in _AUTH_HINTS)
+
+
 def call_claude(prompt: str, timeout: int = 60, tools: str = "") -> str:
     """Run `claude -p` headlessly (subscription auth, no API key) and return stdout.
 
@@ -104,27 +168,41 @@ def call_claude(prompt: str, timeout: int = 60, tools: str = "") -> str:
     The ONE caller that needs a tool is the router's image path, which passes
     tools="Read" so Claude can view the downloaded photo — Read only, never more. We
     never pass --dangerously-skip-permissions."""
+    # Inject the auth token (env var wins; else the pasteable settings value) into a
+    # COPY of the environment so the CLI authenticates without a container restart.
+    env = os.environ.copy()
+    tok = _resolve_token()
+    if tok:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
+
     last_out = ""
+    last_err = ""
     for attempt in range(2):
         binp = claude_bin()
         try:
             proc = subprocess.run(
                 [binp, "-p", "--tools", tools, "--append-system-prompt", _SYSTEM_PROMPT],
-                input=prompt, capture_output=True, text=True, timeout=timeout)
+                input=prompt, capture_output=True, text=True, timeout=timeout, env=env)
         except FileNotFoundError as e:
-            print(f"[claude_cli] binary '{binp}' not found ({e}); retrying", file=sys.stderr, flush=True)
+            last_err = f"binary '{binp}' not found ({e})"
+            print(f"[claude_cli] {last_err}; retrying", file=sys.stderr, flush=True)
             time.sleep(1.5)   # ride out a self-update swapping the symlink
             continue
         except subprocess.TimeoutExpired:
             print(f"[claude_cli] timed out after {timeout}s", file=sys.stderr, flush=True)
-            return last_out
+            return last_out   # slow model, not a token problem — don't flag the heartbeat
         if proc.returncode != 0:
-            print(f"[claude_cli] exit {proc.returncode}: {(proc.stderr or '').strip()[:300]}",
-                  file=sys.stderr, flush=True)
+            last_err = (proc.stderr or "").strip()[:300]
+            print(f"[claude_cli] exit {proc.returncode}: {last_err}", file=sys.stderr, flush=True)
             last_out = proc.stdout or last_out
             time.sleep(1.0)
             continue
+        _stamp_health(True)
         return proc.stdout
+    # Both attempts failed: record why (auth-tagged when the token looks lapsed) so the
+    # health dot goes red and the Telegram nudge can point at the token.
+    reason = ("auth: " + last_err) if _looks_like_auth_error(last_err) else (last_err or "unknown error")
+    _stamp_health(False, reason)
     return last_out
 
 

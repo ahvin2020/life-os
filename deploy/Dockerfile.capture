@@ -1,9 +1,15 @@
 # Life OS capture daemon — Telegram long-poll + local voice transcription.
-# PHASE 2. Adds ffmpeg + faster-whisper on top of the app image deps. This service
-# stays down (compose profile "capture") until a TELEGRAM_BOT_TOKEN exists.
+# PHASE 2. Adds ffmpeg + faster-whisper + the Claude CLI on top of the app deps.
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg (voice transcode) + Node 20 & the Claude CLI (the agentic router / proactive
+# AI shell out to `claude -p`; it authenticates headlessly with CLAUDE_CODE_OAUTH_TOKEN).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force \
+    && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -11,10 +17,10 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt \
     && pip install --no-cache-dir requests faster-whisper
 
-# Bake the app code in (see Dockerfile.app). The Claude CLI is NOT installed here yet —
-# without it, router.route falls back to an #unsorted note, so deterministic capture
-# (links/splitting/voice/prefixes) works fully; the agentic layer is a follow-up that
-# adds Node + @anthropic-ai/claude-code + CLAUDE_CODE_OAUTH_TOKEN.
+# Bake the app code in (see Dockerfile.app). On Intel there's no mlx, so voice falls
+# back to faster-whisper (ai/voice.py); HF_HOME points the ~3 GB large-v3 weights at the
+# mounted /data volume so they download once and survive redeploys.
 COPY . /app
 ENV TZ=Asia/Singapore
+ENV HF_HOME=/data/hf-cache
 CMD ["python3", "capture_daemon.py"]

@@ -287,6 +287,38 @@ def maybe_send_weekly_review(conn, tg, chat_id, now=None) -> bool:
 
 
 # ── triage (debounced) ────────────────────────────────────────────────────────
+def maybe_notify_claude_down(conn, tg, chat_id) -> bool:
+    """Nudge over Telegram when Claude starts failing (usually a lapsed OAuth token),
+    and once more when it recovers. Reads the claude_last_ok/err heartbeats stamped by
+    ai.claude_cli; keyed on the error timestamp so a persistent outage doesn't spam.
+    Since ALL AI (bot router, enrichment, proactive surfaces) runs through claude, this
+    is Kelvin's single 'your token expired, update it in Settings' signal."""
+    def _p(s):
+        try:
+            return datetime.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S")
+        except (TypeError, ValueError):
+            return None
+    ok = _get_setting(conn, "claude_last_ok")
+    err = _get_setting(conn, "claude_last_err") or ""
+    err_ts = err.split("|", 1)[0].strip()
+    reason = err.split("|", 1)[1].strip() if "|" in err else ""
+    okp, errp = _p(ok), _p(err_ts)
+    down = errp is not None and (okp is None or errp > okp)
+    notified = _get_setting(conn, "claude_down_notified") or ""
+    if down:
+        if err_ts and err_ts != notified:
+            tip = (" Your Claude token may have expired — paste a fresh one on the Settings page."
+                   if reason.lower().startswith("auth") else "")
+            tg.send_message(chat_id, "⚠️ AI is offline — I couldn't reach Claude." + tip)
+            _set_setting(conn, "claude_down_notified", err_ts)
+            return True
+    elif okp is not None and notified:
+        tg.send_message(chat_id, "✅ AI is back online.")
+        _set_setting(conn, "claude_down_notified", "")
+        return True
+    return False
+
+
 def run_triage_now(conn, tg=None, chat_id=None):
     """Invoke the triage runner and report anything it reclassified back to Kelvin."""
     import triage.run_triage as rt
@@ -373,6 +405,10 @@ def main() -> int:
                     maybe_send_weekly_review(conn, tg, allowed)
                 except Exception as e:
                     _log(f"weekly review failed: {e}")
+                try:
+                    maybe_notify_claude_down(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"claude health notify failed: {e}")
 
         except Exception as e:                       # never crash the loop
             _log(f"poll error: {e}")

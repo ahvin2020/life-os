@@ -1,49 +1,56 @@
-# Life OS — Container Manager (docker compose) project for the Synology DS423+.
+# Life OS — Container Manager project for the Synology DS423+ (PRODUCTION).
 #
-# Two bind mounts, two very different trust levels:
-#   - CODE  (this repo, the Synology Drive synced folder): mounted READ-ONLY.
-#           Edit on the Mac → Drive syncs to the NAS → restart the container.
-#   - DATA  (/volume1/docker/life-os/data): mounted READ-WRITE, and NOT synced —
-#           app.db lives here so it never round-trips through file-sync (the
-#           single-writer rule that removes the SQLite-over-sync corruption risk).
-#   - VAULT (repo/vault): mounted read-write; notes/journal markdown, synced.
+# Deploy model: `git push` → GitHub Actions builds both images → ghcr.io →
+# Watchtower on the NAS auto-pulls (or Stop→Build in Container Manager to pull now,
+# thanks to pull_policy: always). The image IS the artifact — code is NOT bind-mounted.
 #
-# Adjust the two host paths below to match your NAS before `docker compose up -d`:
-#   CODE  path = the Drive-synced Documents/life-os folder on the NAS
-#               (e.g. /volume1/homes/kelvin/Drive/Documents/life-os)
-#   DATA  path = /volume1/docker/life-os/data  (create it first, see README)
+# Only user data is mounted, and it never round-trips through the image:
+#   - DATA  (/volume1/docker/projects/life-os-compose/data → /data): app.db + backups
+#           + the whisper model cache (HF_HOME). Read-write, single-writer, persisted.
+#   - VAULT (SynologyDrive/…/life-os/vault → /app/vault): notes/journal markdown, synced.
+#
+# Secrets live in a sibling .env (chmod 600, gitignored):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_ID
+# The Claude OAuth token is NOT required here — paste it on the Settings page and both
+# containers read it from the shared DB (claude_cli._resolve_token). The env var below
+# is an optional override if you'd rather pin it in .env.
+#
+# This file mirrors /volume1/docker/projects/life-os-compose/docker-compose.yml on the
+# NAS. Keep them in sync.
 
 services:
   app:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.app
+    image: ghcr.io/ahvin2020/life-os-app:latest
+    pull_policy: always
+    container_name: life-os-app
     working_dir: /app
     volumes:
-      - /volume1/homes/kelvin/Drive/Documents/life-os:/app:ro
-      - /volume1/docker/life-os/data:/data:rw
-      - /volume1/homes/kelvin/Drive/Documents/life-os/vault:/app/vault:rw
+      - /volume1/docker/projects/life-os-compose/data:/data:rw
+      - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/vault:/app/vault:rw
     environment:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     ports:
       - "5070:5070"
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
-  # PHASE 2 — starts only when explicitly enabled:  docker compose --profile capture up -d
   capture:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.capture
+    image: ghcr.io/ahvin2020/life-os-capture:latest
+    pull_policy: always
+    container_name: life-os-capture
     working_dir: /app
-    profiles: ["capture"]
     volumes:
-      - /volume1/homes/kelvin/Drive/Documents/life-os:/app:ro
-      - /volume1/docker/life-os/data:/data:rw
-      - /volume1/homes/kelvin/Drive/Documents/life-os/vault:/app/vault:rw
+      - /volume1/docker/projects/life-os-compose/data:/data:rw
+      - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/vault:/app/vault:rw
     environment:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"

@@ -1,5 +1,50 @@
 # Deploying Life OS to the Synology DS423+
 
+> **Current model (2026-07): image-based, `git push` = deploy.** GitHub Actions builds
+> both images on every push to `main`, publishes them to `ghcr.io`, and **Watchtower**
+> on the NAS auto-pulls them. The sections below the line are the earlier Mac-first /
+> build-on-NAS history, kept for reference. The live compose is
+> `deploy/docker-compose.yml` (mirrors the NAS copy under
+> `/volume1/docker/projects/life-os-compose/`).
+
+## Production (image-based) — the current setup
+
+**Deploy:** `git push origin main` → CI builds `life-os-app` + `life-os-capture` →
+`ghcr.io/ahvin2020/*:latest` → Watchtower pulls (nightly, or immediately via
+Container Manager → **Stop → Build**, since `pull_policy: always`).
+
+**What runs where:** `life-os-app` (web on :5070, Flask) and `life-os-capture` (the
+Telegram daemon + proactive AI). Both mount the persisted `/data` volume (`app.db`,
+backups, whisper cache) and the synced `vault/`.
+
+**Nightly backup** is now **in-container** (no DSM task, no launchd): `server.py`
+schedules it in the app container, once per app-tz day at/after 03:00, writing to
+`/data/backups` on the volume (survives redeploys). Offsite mirror is opt-in — set a
+`backup_location` on the Settings page to a synced folder if you mount one. Trigger a
+backup any time from **Settings → System health → Nightly backup → Run now**.
+
+**Voice:** the NAS has no Apple `mlx`, so `ai/voice.py` falls back to
+**faster-whisper** running `large-v3` on CPU (accurate, ~20-60 s/clip on the Celeron).
+The ~3 GB weights download once to `HF_HOME=/data/hf-cache` and persist.
+
+**Claude token (rotate without SSH):** the agentic bot + proactive AI + notes "Ask"
+shell out to `claude -p`, authed by `CLAUDE_CODE_OAUTH_TOKEN`. Instead of editing
+`.env` + restarting, generate a token on the Mac with `claude setup-token` and **paste
+it into Settings → AI connection → Claude token**. Both containers read it live from
+the shared DB — no redeploy. **Settings → System health → AI (Claude) → Test** probes
+it; the sidebar dot goes red and the bot DMs you *"AI is offline — your token may have
+expired"* if a call ever fails on auth. (Never paste a token into chat — revoke +
+regenerate if you do.)
+
+**Dev vs prod bot (separate tokens):** one Telegram token can only be polled by ONE
+process — running the Mac daemon and the NAS daemon on the same token causes 409
+conflicts and dropped messages. So use a **second BotFather bot for dev**: create it,
+put its token as `TELEGRAM_BOT_TOKEN` (and your same user id) in the **Mac** repo-root
+`.env`, and start the Mac capture daemon only when actively developing the bot. The NAS
+keeps the production bot. They never collide because they poll different tokens.
+
+---
+
 Life OS runs as a Container Manager (docker compose) project on the NAS. The Mac is
 for development only; code reaches the NAS through Synology Drive sync, and a
 container restart is the whole deploy step.

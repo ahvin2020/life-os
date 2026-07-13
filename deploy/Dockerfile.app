@@ -1,6 +1,16 @@
-# Life OS web app — Flask on port 5060. Base image is multi-arch (works on the
+# Life OS web app — Flask on port 5070. Base image is multi-arch (works on the
 # Intel DS423+ and on ARM alike).
 FROM python:3.12-slim
+
+# Node 20 + the Claude CLI: the notes "Ask" Q&A shells out to `claude -p` (headless
+# auth via CLAUDE_CODE_OAUTH_TOKEN), same as the capture image.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force \
+    && apt-get purge -y curl gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt

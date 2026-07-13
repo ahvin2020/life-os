@@ -43,14 +43,21 @@ def _setting(db_path, key):
         return None
 
 
-def backup_dir() -> str:
-    d = os.environ.get("LIFEOS_BACKUP_DIR") or os.path.join(_REPO_ROOT, "data", "backups")
+def backup_dir(db_path: str = DB_PATH) -> str:
+    """Where the local snapshots live. Defaults to a 'backups/' folder NEXT TO the DB —
+    on the Mac that's repo/data/backups (unchanged); in the NAS container the DB is on
+    the mounted /data volume, so backups land in /data/backups and survive a redeploy
+    (the old repo-root default resolved to the ephemeral /app inside the image). Env
+    LIFEOS_BACKUP_DIR still wins (tests)."""
+    d = os.environ.get("LIFEOS_BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(db_path)), "backups")
     os.makedirs(d, exist_ok=True)
     return d
 
 
 def synced_dir() -> str:
-    """Synology-synced mirror at the repo root (gitignored) — the offsite copy."""
+    """Synology-synced mirror at the repo root (gitignored) — the offsite copy. Used on
+    the Mac; on the NAS there's no synced folder mounted, so the offsite mirror is
+    opt-in via the backup_location setting instead (see run_backup)."""
     d = os.environ.get("LIFEOS_SYNCED_BACKUP_DIR") or os.path.join(_REPO_ROOT, "data-backups")
     os.makedirs(d, exist_ok=True)
     return d
@@ -97,25 +104,31 @@ def stamp_heartbeat(db_path: str = DB_PATH) -> None:
 
 
 def run_backup(db_path: str = DB_PATH) -> dict:
-    """Full nightly job: online backup → prune local → mirror offsite → prune offsite →
-    heartbeat. Retention (settings.backup_keep) and the offsite location
-    (settings.backup_location) are user-overridable; env vars still win for tests."""
+    """Full nightly job: online backup → prune local → (optional) mirror offsite →
+    heartbeat. The local snapshot lands next to the DB (persisted /data on the NAS).
+    The offsite mirror is OPT-IN — only when LIFEOS_SYNCED_BACKUP_DIR (tests) or the
+    backup_location setting names a real destination; without one we skip it rather
+    than write into the ephemeral container filesystem. Retention (backup_keep) is
+    user-overridable."""
     keepv = _setting(db_path, "backup_keep")
     keep = int(keepv) if (keepv and str(keepv).isdigit()) else KEEP
-    # offsite mirror: env override (tests) > backup_location setting > default
-    synced_base = (os.environ.get("LIFEOS_SYNCED_BACKUP_DIR")
-                   or _setting(db_path, "backup_location")
-                   or os.path.join(_REPO_ROOT, "data-backups"))
-    os.makedirs(synced_base, exist_ok=True)
+    local_base = backup_dir(db_path)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     name = f"{_PREFIX}{ts}{_SUFFIX}"
-    local = os.path.join(backup_dir(), name)
+    local = os.path.join(local_base, name)
     _online_backup(db_path, local)
-    pruned_local = prune(backup_dir(), keep)
-    synced = os.path.join(synced_base, name)
-    shutil.copy2(local, synced)
-    pruned_synced = prune(synced_base, keep)
+    pruned_local = prune(local_base, keep)
+
+    # offsite mirror: env override (tests) > backup_location setting > none
+    synced_base = os.environ.get("LIFEOS_SYNCED_BACKUP_DIR") or _setting(db_path, "backup_location")
+    synced, pruned_synced = None, []
+    if synced_base and os.path.abspath(synced_base) != os.path.abspath(local_base):
+        os.makedirs(synced_base, exist_ok=True)
+        synced = os.path.join(synced_base, name)
+        shutil.copy2(local, synced)
+        pruned_synced = prune(synced_base, keep)
+
     stamp_heartbeat(db_path)
     return {"backup": local, "synced": synced,
             "pruned_local": len(pruned_local), "pruned_synced": len(pruned_synced)}

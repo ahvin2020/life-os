@@ -22,6 +22,12 @@
         {% for d in triage_days %}<option value="{{ d }}" {% if triage_day == d %}selected{% endif %}>{{ daynames[d] }}</option>{% endfor %}
       </select><input class="ctrl schedtime schedctl" type="time" name="triage_time" value="{{ values.triage_time or defaults.triage_time }}" aria-label="Triage time"><input type="checkbox" name="triage_enabled" value="1" {% if toggles.triage_enabled %}checked{% endif %} aria-label="Enable backlog triage"></div>
     </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Weekly review</div><div class="sdesc">The week in review — wins, what slipped, and next week's focus</div></div>
+      <div class="sctrls"><select class="ctrl schedctl" name="weekly_day" style="min-width:110px" aria-label="Weekly review day">
+        {% for d in triage_days %}<option value="{{ d }}" {% if weekly_day == d %}selected{% endif %}>{{ daynames[d] }}</option>{% endfor %}
+      </select><input class="ctrl schedtime schedctl" type="time" name="weekly_time" value="{{ values.weekly_time or defaults.weekly_time }}" aria-label="Weekly review time"><input type="checkbox" name="weekly_enabled" value="1" {% if toggles.weekly_enabled %}checked{% endif %} aria-label="Enable weekly review"></div>
+    </div>
   </div>
 
   <div class="sect"><span>Voice &amp; capture</span><span class="rule"></span></div>
@@ -72,6 +78,17 @@
   <div class="setsave"><span class="setsaved" id="setsaved" aria-live="polite">Saved ✓</span></div>
 </form>
 
+<div class="sect"><span>AI connection</span><span class="rule"></span></div>
+<form method="post" action="/settings/claude-token" class="setgroup">
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">Claude token</div><div class="sdesc">From <span class="mono">claude setup-token</span> on your Mac. Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. {% if ai.token_set %}A token is saved — paste a new one to rotate it.{% else %}No token set — AI features fall back to plain capture.{% endif %}</div></div>
+    <div class="sctrls">
+      <input class="ctrl" style="width:230px;font-family:var(--mono);font-size:12px" type="password" name="claude_oauth_token" autocomplete="off" placeholder="{% if ai.token_set %}•••••• paste to replace{% else %}paste token{% endif %}" aria-label="Claude OAuth token">
+      <button class="runbtn" type="submit">Save</button>
+    </div>
+  </div>
+</form>
+
 <div class="sect"><span>System health</span><span class="rule"></span></div>
 <div class="setgroup">
   <div class="setrow">
@@ -85,6 +102,10 @@
   <div class="setrow">
     <div class="sinfo"><div class="slabel">Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span> · next <span class="mono">{{ nextrun.backup }}</span></div></div>
     <div class="sctrls"><span class="health"><span class="dot {{ status.health.backup }}"></span></span><button class="runbtn" type="button" data-run="backup">Run now</button></div>
+  </div>
+  <div class="setrow">
+    <div class="sinfo"><div class="slabel">AI (Claude)</div><div class="sdesc">{% if status.health.ai == 'ok' %}<span class="mono">last ok {{ status.claude_last_ok | fstamp }}</span>{% elif status.health.ai == 'stale' %}{{ ai.detail or 'not responding' }}{% if ai.auth %} · token may be expired{% endif %}{% else %}not used yet{% endif %}</div></div>
+    <div class="sctrls"><span class="health"><span class="dot {{ status.health.ai }}"></span></span><button class="runbtn" type="button" data-run="claude">Test</button></div>
   </div>
   <div class="setrow">
     <div class="sinfo"><div class="slabel">Proactive AI</div><div class="sdesc">brief <span class="mono">{{ status.digest_last_sent | fdate }}</span>{% if nextrun.brief %} → next <span class="mono">{{ nextrun.brief }}</span>{% endif %} · reflection <span class="mono">{{ status.reflection_last_sent | fdate }}</span>{% if nextrun.reflection %} → next <span class="mono">{{ nextrun.reflection }}</span>{% endif %}</div></div>
