@@ -104,7 +104,7 @@
     <div class="sctrls">
       <input class="ctrl" style="width:210px;font-family:var(--mono);font-size:12px" type="text" name="oauth_token" autocomplete="off" spellcheck="false" placeholder="{% if ai.token_set %}saved — paste to replace{% else %}paste token{% endif %}" aria-label="{{ active_provider.label }} OAuth token">
       <button class="runbtn" type="button" data-run="claude">Test</button>
-      <button class="runbtn" type="submit">Save</button>
+      <button class="runbtn" type="submit" disabled title="Test the token first">Save</button>
     </div>
   </div>
 </form>

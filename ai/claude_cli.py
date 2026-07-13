@@ -155,7 +155,8 @@ def _looks_like_auth_error(text: str) -> bool:
     return any(h in low for h in _AUTH_HINTS)
 
 
-def call_claude(prompt: str, timeout: int = 60, tools: str = "") -> str:
+def call_claude(prompt: str, timeout: int = 60, tools: str = "", token: str | None = None,
+                record: bool = True) -> str:
     """Run `claude -p` headlessly (subscription auth, no API key) and return stdout.
 
     On failure returns "" (so callers fall back) but ALWAYS logs the real reason to
@@ -173,10 +174,13 @@ def call_claude(prompt: str, timeout: int = 60, tools: str = "") -> str:
     The ONE caller that needs a tool is the router's image path, which passes
     tools="Read" so Claude can view the downloaded photo — Read only, never more. We
     never pass --dangerously-skip-permissions."""
-    # Inject the auth token (env var wins; else the pasteable settings value) into a
-    # COPY of the environment so the CLI authenticates without a container restart.
+    # Inject the auth token into a COPY of the environment so the CLI authenticates
+    # without a container restart. An explicit `token` (from the Settings "Test" button)
+    # wins — that validates a just-pasted token WITHOUT saving it. `record=False` then
+    # keeps this trial off the health heartbeats (a mistyped token in the box shouldn't
+    # flip the live dot red or fire the Telegram nudge).
     env = os.environ.copy()
-    tok = _resolve_token()
+    tok = (token or "").strip() or _resolve_token()
     if tok:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
 
@@ -202,12 +206,14 @@ def call_claude(prompt: str, timeout: int = 60, tools: str = "") -> str:
             last_out = proc.stdout or last_out
             time.sleep(1.0)
             continue
-        _stamp_health(True)
+        if record:
+            _stamp_health(True)
         return proc.stdout
     # Both attempts failed: record why (auth-tagged when the token looks lapsed) so the
     # health dot goes red and the Telegram nudge can point at the token.
-    reason = ("auth: " + last_err) if _looks_like_auth_error(last_err) else (last_err or "unknown error")
-    _stamp_health(False, reason)
+    if record:
+        reason = ("auth: " + last_err) if _looks_like_auth_error(last_err) else (last_err or "unknown error")
+        _stamp_health(False, reason)
     return last_out
 
 

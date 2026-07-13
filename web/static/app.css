@@ -540,6 +540,9 @@ a:hover { text-decoration: underline; }
 .hwhy { color: var(--accent); }
 /* status dot leads the row label so it sits right above its reason line */
 .slabel .dot { vertical-align: middle; margin-right: 8px; }
+/* AI Test button result state — an inline green ✓ / red ✗ beats a missable toast */
+.runbtn.ok { color: var(--good); border-color: var(--good); }
+.runbtn.fail { color: var(--bad); border-color: var(--bad); }
 .setsaved.on { opacity: 1; }
 /* enable checkboxes rendered as toggle switches */
 .setrow input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 40px; height: 23px; border-radius: 99px; background: var(--surface3); border: 1px solid var(--border2); position: relative; flex: 0 0 auto; cursor: pointer; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }

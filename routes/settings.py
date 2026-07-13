@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from core.web_core import db, respond, health_status, ai_health, health_reasons
 from core.db import (get_setting, set_setting, delete_setting, machine_tz_name,
-                reload_tz, now_sg, get_tz)
+                reload_tz, now_sg, get_tz, now_iso)
 
 bp = Blueprint("settings", __name__)
 
@@ -189,15 +189,18 @@ def settings_run(job):
                              cwd=_ROOT)
             msg = "Triage sweep started"
         elif job == "claude":
-            # Probe the Claude CLI + token synchronously so the result is meaningful.
-            # call_claude stamps the health heartbeat, so the AI dot updates too.
+            # Validate synchronously. If the form passed a pasted token, trial THAT one
+            # WITHOUT saving (record=False, so a mistyped token doesn't flip the live dot
+            # or fire the Telegram nudge); otherwise probe the saved token (record=True).
             from ai.claude_cli import call_claude
-            out = call_claude("Reply with exactly the word: ok", timeout=30)
+            tok = (request.form.get("oauth_token") or "").strip()
+            out = call_claude("Reply with exactly the word: ok", timeout=30,
+                              token=tok or None, record=not tok)
             if out and out.strip():
                 msg = "AI reachable ✓"
             else:
                 return jsonify({"status": "error",
-                                "message": "AI unreachable — check the Claude token below"}), 502
+                                "message": "AI unreachable — check the token"}), 502
         else:
             return jsonify({"status": "error", "message": "unknown job"}), 400
     except subprocess.CalledProcessError as e:
@@ -224,8 +227,10 @@ def settings_claude_token():
     set_setting(conn, "ai_provider", provider)
     if token:
         set_setting(conn, f"{provider}_oauth_token", token)
-        # a fresh token invalidates the old failure — clear the nudge guard so a later
-        # recovery still notifies, and drop the stale error so the dot isn't stuck red.
+        # Save is gated behind a passing Test, so the token is verified as of now — mark
+        # it connected so the status goes green immediately, and clear the old failure +
+        # nudge guard so a later lapse still notifies.
+        set_setting(conn, "claude_last_ok", now_iso())
         delete_setting(conn, "claude_last_err")
         delete_setting(conn, "claude_down_notified")
         msg = "Token saved"

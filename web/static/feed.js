@@ -97,30 +97,47 @@
     sync();
   });
 
-  // ---- settings: run / restart background jobs --------------------------------
-  document.querySelectorAll(".runbtn[data-run]").forEach(function (b) {
+  // ---- settings: run / restart background jobs (capture/triage/backup) ---------
+  document.querySelectorAll('.runbtn[data-run]:not([data-run="claude"])').forEach(function (b) {
     b.addEventListener("click", function () {
       var label = b.textContent;
       b.disabled = true; b.textContent = "…";
-      // AI Test: if a token is typed in the field, save it FIRST, then probe — so
-      // "paste → Test" verifies the just-pasted token in one click (no Save-then-Test).
-      var pre = Promise.resolve();
-      if (b.dataset.run === "claude") {
-        var f = document.getElementById("aiform");
-        var tok = f && f.querySelector('input[name="oauth_token"]');
-        if (tok && tok.value.trim()) pre = post("/settings/claude-token", new FormData(f));
-      }
-      pre.then(function () {
-        return post("/settings/run/" + b.dataset.run);
-      }).then(function (res) {
+      post("/settings/run/" + b.dataset.run).then(function (res) {
         b.disabled = false; b.textContent = label;
         var ok = res.ok && res.data && res.data.status === "ok";
         toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
-        // reload so the connection dot + status line reflect the probe result
-        if (b.dataset.run === "claude") setTimeout(function () { location.reload(); }, 800);
       });
     });
   });
+
+  // ---- settings: AI connection — Test validates the token, then Save commits -----
+  // Test probes the pasted (or saved) token WITHOUT saving or reloading, so the token
+  // stays in the field. A green ✓ unlocks Save; a red ✗ (with reason) keeps it locked.
+  // Editing the field re-locks Save so a changed token must be re-tested.
+  (function () {
+    var form = document.getElementById("aiform");
+    if (!form) return;
+    var testBtn = form.querySelector('.runbtn[data-run="claude"]');
+    var saveBtn = form.querySelector('.runbtn[type="submit"]');
+    var field = form.querySelector('input[name="oauth_token"]');
+    if (!testBtn || !saveBtn || !field) return;
+    function relock() {
+      testBtn.textContent = "Test"; testBtn.classList.remove("ok", "fail"); saveBtn.disabled = true;
+    }
+    field.addEventListener("input", relock);
+    testBtn.addEventListener("click", function () {
+      testBtn.disabled = true; testBtn.textContent = "…";
+      post("/settings/run/claude", new FormData(form)).then(function (res) {
+        testBtn.disabled = false;
+        var ok = res.ok && res.data && res.data.status === "ok";
+        testBtn.textContent = ok ? "✓ Connected" : "✗ Failed";
+        testBtn.classList.remove("ok", "fail");
+        testBtn.classList.add(ok ? "ok" : "fail");
+        saveBtn.disabled = !(ok && field.value.trim());   // unlock Save only on ✓ + a new token
+        if (!ok) toast((res.data && res.data.message) || "AI unreachable — check the token");
+      });
+    });
+  })();
 
   // ---- settings: copy a shell command chip (e.g. `claude setup-token`) ---------
   document.querySelectorAll(".cmdcopy[data-copy]").forEach(function (b) {
