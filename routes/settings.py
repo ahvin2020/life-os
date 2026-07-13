@@ -11,6 +11,7 @@ and validation); toggles default ON (missing row = enabled).
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -148,6 +149,9 @@ def settings_page():
                        or bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")))
     status["health"]["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
     health_why = health_reasons(conn)          # why each red dot is red (computed before close)
+    # The "Restart capture" button only works where launchctl exists (the Mac). In the
+    # NAS container capture is its own service — hide the button there.
+    capture_restartable = shutil.which("launchctl") is not None
     # Next scheduled fire per job (app tz), honouring the once-per-day guards + toggles.
     now = now_sg()
     nextrun = {"capture": "live",
@@ -162,7 +166,7 @@ def settings_page():
                            weekly_day=weekly_day, backup_dir_default=backup_dir_default,
                            triage_days=_TRIAGE_DAYS, ai=ai,
                            ai_providers=AI_PROVIDERS, active_provider=active_provider,
-                           health_why=health_why)
+                           health_why=health_why, capture_restartable=capture_restartable)
 
 
 @bp.route("/settings/run/<job>", methods=["POST"])
@@ -173,6 +177,9 @@ def settings_run(job):
     uid = os.getuid()
     try:
         if job == "capture":
+            if not shutil.which("launchctl"):     # NAS container: no launchd to kick
+                return jsonify({"status": "error",
+                                "message": "Capture runs as a container here — restart it from Container Manager"}), 400
             subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/com.kelvin.lifeos.capture"],
                            check=True, capture_output=True, text=True, timeout=15)
             msg = "Capture daemon restarting"

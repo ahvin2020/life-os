@@ -98,6 +98,22 @@
   });
 
   // ---- settings: run / restart background jobs (capture/triage/backup) ---------
+  // After a job runs (async — takes a couple seconds to stamp its heartbeat), re-fetch
+  // and refresh the health rows in place: honest new timestamp + dot, no fake "just now",
+  // no full-page reload. Buttons keep their handlers (we swap only the dot class + text).
+  function refreshHealthRows() {
+    fetch("/settings").then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      document.querySelectorAll(".setrow[data-health]").forEach(function (live) {
+        var fresh = doc.querySelector('.setrow[data-health="' + live.dataset.health + '"]');
+        if (!fresh) return;
+        var fd = fresh.querySelector(".slabel .dot"), ld = live.querySelector(".slabel .dot");
+        if (fd && ld) ld.className = fd.className;
+        var fx = fresh.querySelector(".sdesc"), lx = live.querySelector(".sdesc");
+        if (fx && lx) lx.innerHTML = fx.innerHTML;
+      });
+    });
+  }
   document.querySelectorAll('.runbtn[data-run]:not([data-run="claude"])').forEach(function (b) {
     b.addEventListener("click", function () {
       var label = b.textContent;
@@ -106,6 +122,7 @@
         b.disabled = false; b.textContent = label;
         var ok = res.ok && res.data && res.data.status === "ok";
         toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
+        if (ok) setTimeout(refreshHealthRows, 2500);   // let the job finish, then refresh
       });
     });
   });
