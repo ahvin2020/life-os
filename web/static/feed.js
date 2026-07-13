@@ -102,12 +102,22 @@
     b.addEventListener("click", function () {
       var label = b.textContent;
       b.disabled = true; b.textContent = "…";
-      post("/settings/run/" + b.dataset.run).then(function (res) {
+      // AI Test: if a token is typed in the field, save it FIRST, then probe — so
+      // "paste → Test" verifies the just-pasted token in one click (no Save-then-Test).
+      var pre = Promise.resolve();
+      if (b.dataset.run === "claude") {
+        var f = document.getElementById("aiform");
+        var tok = f && f.querySelector('input[name="oauth_token"]');
+        if (tok && tok.value.trim()) pre = post("/settings/claude-token", new FormData(f));
+      }
+      pre.then(function () {
+        return post("/settings/run/" + b.dataset.run);
+      }).then(function (res) {
         b.disabled = false; b.textContent = label;
         var ok = res.ok && res.data && res.data.status === "ok";
         toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
-        // AI test: reload so the connection pill + status line reflect the probe result
-        if (b.dataset.run === "claude" && ok) setTimeout(function () { location.reload(); }, 700);
+        // reload so the connection dot + status line reflect the probe result
+        if (b.dataset.run === "claude") setTimeout(function () { location.reload(); }, 800);
       });
     });
   });

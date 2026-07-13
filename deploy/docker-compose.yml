@@ -23,6 +23,7 @@ services:
     image: ghcr.io/ahvin2020/life-os-app:latest
     pull_policy: always
     container_name: life-os-app
+    init: true                    # tini as PID 1 → forwards SIGTERM, so `docker stop` is instant
     working_dir: /app
     volumes:
       - /volume1/docker/projects/life-os-compose/data:/data:rw
@@ -41,6 +42,7 @@ services:
     image: ghcr.io/ahvin2020/life-os-capture:latest
     pull_policy: always
     container_name: life-os-capture
+    init: true                    # tini as PID 1 → forwards SIGTERM, so `docker stop` is instant
     working_dir: /app
     volumes:
       - /volume1/docker/projects/life-os-compose/data:/data:rw

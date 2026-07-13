@@ -102,8 +102,8 @@
       <div class="sdesc" style="margin-top:7px">Get one: run <button type="button" class="cmdcopy" data-copy="{{ active_provider.oauth_cmd }}" title="Copy command">{{ active_provider.oauth_cmd }} ⧉</button> in your Mac terminal, sign in, then paste it here. <a href="{{ active_provider.manage_url }}" target="_blank" rel="noopener">Manage&nbsp;/&nbsp;revoke&nbsp;↗</a></div>
     </div>
     <div class="sctrls">
-      <input class="ctrl" style="width:210px;font-family:var(--mono);font-size:12px" type="password" name="oauth_token" autocomplete="off" placeholder="{% if ai.token_set %}•••••• paste to replace{% else %}paste token{% endif %}" aria-label="{{ active_provider.label }} OAuth token">
-      <button class="runbtn" type="button" data-run="claude"{% if not ai.token_set %} disabled title="Save a token first"{% endif %}>Test</button>
+      <input class="ctrl" style="width:210px;font-family:var(--mono);font-size:12px" type="text" name="oauth_token" autocomplete="off" spellcheck="false" placeholder="{% if ai.token_set %}saved — paste to replace{% else %}paste token{% endif %}" aria-label="{{ active_provider.label }} OAuth token">
+      <button class="runbtn" type="button" data-run="claude">Test</button>
       <button class="runbtn" type="submit">Save</button>
     </div>
   </div>
