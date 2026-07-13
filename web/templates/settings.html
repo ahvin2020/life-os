@@ -98,7 +98,7 @@
   <div class="setrow">
     <div class="sinfo">
       <div class="slabel"><span class="dot {{ aist }}" title="{{ ai_why }}"></span>{{ active_provider.label }} token</div>
-      <div class="sdesc">Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. {% if aist == 'ok' %}<span class="mono">Connected · last ok {{ status.claude_last_ok | fstamp }}</span>.{% else %}<span class="hwhy">{{ ai_why }}.</span>{% endif %}</div>
+      <div class="sdesc">Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. <span id="ai-status">{% if aist == 'ok' %}<span class="mono">Connected · last ok {{ status.claude_last_ok | fstamp }}</span>.{% else %}<span class="hwhy">{{ ai_why }}.</span>{% endif %}</span></div>
       <div class="sdesc" style="margin-top:7px">Get one: run <button type="button" class="cmdcopy" data-copy="{{ active_provider.oauth_cmd }}" title="Copy command">{{ active_provider.oauth_cmd }} ⧉</button> in your Mac terminal, sign in, then paste it here. <a href="{{ active_provider.manage_url }}" target="_blank" rel="noopener">Manage&nbsp;/&nbsp;revoke&nbsp;↗</a></div>
     </div>
     <div class="sctrls">

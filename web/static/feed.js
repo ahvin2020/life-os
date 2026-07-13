@@ -137,6 +137,26 @@
         if (!ok) toast((res.data && res.data.message) || "AI unreachable — check the token");
       });
     });
+    // Save = AJAX, never a full-page reload. Persist, then update the card in place.
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (saveBtn.disabled) return;
+      var lbl = saveBtn.textContent; saveBtn.textContent = "…"; saveBtn.disabled = true;
+      post("/settings/claude-token", new FormData(form)).then(function (res) {
+        saveBtn.textContent = lbl;
+        if (!res.ok) { saveBtn.disabled = false; toast((res.data && res.data.message) || "Could not save"); return; }
+        var dot = form.querySelector(".slabel .dot");
+        if (dot) dot.className = "dot ok";
+        var st = document.getElementById("ai-status");
+        if (st) st.innerHTML = '<span class="mono">Connected · just now</span>.';
+        field.value = ""; field.placeholder = "saved — paste to replace";
+        relock();
+        // AI no longer needs attention → drop the Settings nav alert badge by one
+        var badge = document.querySelector(".setlink .count.alert");
+        if (badge) { var n = parseInt(badge.textContent, 10) - 1; if (n > 0) badge.textContent = n; else badge.remove(); }
+        toast("Token saved ✓");
+      });
+    });
   })();
 
   // ---- settings: copy a shell command chip (e.g. `claude setup-token`) ---------
