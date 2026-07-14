@@ -36,12 +36,12 @@ def test_set_identity_writes_then_replaces(client, monkeypatch, tmp_path):
     prof = tmp_path / "profile.md"
     prof.write_text("# Learned rules\n- do X\n")
     monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
-    assert vault_store.set_identity("Name: Kelvin\nWife: Mei Fang?")
+    assert vault_store.set_identity("Name: Sam\nWife: Mei Fang?")
     txt = prof.read_text()
-    assert "# Identity" in txt and "Name: Kelvin" in txt and "# Learned rules" in txt  # preserved
-    vault_store.set_identity("Name: Kelvin Tan")            # replace, not duplicate
+    assert "# Identity" in txt and "Name: Sam" in txt and "# Learned rules" in txt  # preserved
+    vault_store.set_identity("Name: Lee Jun Kai")          # replace, not duplicate
     txt = prof.read_text()
-    assert txt.count("# Identity") == 1 and "Name: Kelvin Tan" in txt
+    assert txt.count("# Identity") == 1 and "Name: Lee Jun Kai" in txt
 
 
 def test_router_derive_identity_pends_confirmation(client, monkeypatch):

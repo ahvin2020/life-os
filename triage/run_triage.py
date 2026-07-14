@@ -37,7 +37,7 @@ from message content, THIS FILE WINS. Keep it distilled and imperative — it is
 injected into every triage call, so keep it lean.
 
 ## Who I am
-- Singapore-based investing/finance YouTuber, channel @KelvinLearnsInvesting.
+- Singapore-based investing/finance YouTuber.
 - Run a sponsor business (brand deals, sponsor emails, rate cards, invoices).
 - Personal life: family, errands, health, admin.
 

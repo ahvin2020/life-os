@@ -237,7 +237,7 @@ def build_selection_prompt(raw_message: str, topic: str, count: int, pool: list)
         "=== vault/profile.md (who Kelvin is) ===\n"
         f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
-        "Kelvin is a Singapore finance/investing YouTuber (@KelvinLearnsInvesting). From "
+        "The user is a Singapore finance/investing YouTuber. From "
         "his saved idea library below, pick the strongest ideas for his NEXT VIDEO on the "
         "topic he asked about. Judge true fit against his EXACT phrasing — a note only "
         "tangentially related does NOT count (e.g. 'editing with AI' means video-editing "
