@@ -213,6 +213,13 @@ def identity_names() -> tuple:
     return own, family
 
 
+def profile_is_unconfigured() -> bool:
+    """True when the profile has no real identity yet (missing file, empty, or the untouched
+    starter with no '# Identity' section) — the signal for a first-run onboarding nudge. Once
+    derive_identity / set_identity writes a name, this flips to False."""
+    return not identity_names()[0]
+
+
 def notes_dir() -> str:
     d = os.path.join(VAULT_DIR, "notes")
     os.makedirs(d, exist_ok=True)

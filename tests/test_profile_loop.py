@@ -86,6 +86,25 @@ def test_router_remember_contact_writes_profile(client, tmp_path, monkeypatch):
     assert "jane.t@example.net" in prof.read_text()
 
 
+def test_first_run_onboarding_offers_once(client, tmp_path, monkeypatch):
+    import json
+    prof = tmp_path / "profile.md"
+    prof.write_text("# profile.md — triage context\n## Who I am\n- TODO\n")   # starter, no identity
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    conn = _db()
+    fn = lambda p: json.dumps({"action": "answer", "text": "You have 2 tasks."})
+    r1 = router.route(conn, "how many tasks?", claude_fn=fn)
+    assert "set up my profile" in r1["reply"]                  # nudged on first message
+    r2 = router.route(conn, "how many tasks?", claude_fn=fn)
+    assert "set up my profile" not in r2["reply"]              # never nags again
+    # once an identity exists, no nudge even if the guard were cleared
+    conn.execute("DELETE FROM settings WHERE key='onboarding_offered'"); conn.commit()
+    vault_store.set_identity("Name: Sam (me)")
+    r3 = router.route(conn, "how many tasks?", claude_fn=fn)
+    conn.close()
+    assert "set up my profile" not in r3["reply"]
+
+
 def test_refile_records_correction(client):
     # a note refiled to a task on the Today feed logs a correction signal
     vault_store.create_note(title="Buy milk", body="", tags=["unsorted"])

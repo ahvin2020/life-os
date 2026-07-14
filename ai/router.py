@@ -217,6 +217,33 @@ def execute_pending(conn, pending: dict) -> str:
     return "Nothing pending."
 
 
+# ── first-run onboarding (offer once) ─────────────────────────────────────────
+_ONBOARD_KEY = "onboarding_offered"
+
+
+def _maybe_append_onboarding(conn, result: dict) -> None:
+    """First-run nudge: if the profile still has no identity, append a ONE-TIME offer to set
+    it up (the real work is the existing derive_identity flow — 'set up my profile'). Guarded
+    by a settings flag so it never nags; skipped when the user is already onboarding. So a
+    fresh clone — anyone's — is greeted once and walked into building their own profile."""
+    try:
+        if "derive_identity" in (result.get("applied") or []):
+            return                                   # already setting up — don't double-offer
+        if not vault_store.profile_is_unconfigured():
+            return                                   # identity already known
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (_ONBOARD_KEY,)).fetchone()
+        if row and row["value"]:
+            return                                   # offered before — never nag
+        with conn:
+            conn.execute("INSERT INTO settings(key, value) VALUES(?, '1') "
+                         "ON CONFLICT(key) DO UPDATE SET value='1'", (_ONBOARD_KEY,))
+        result["reply"] = (result.get("reply") or "").rstrip() + (
+            "\n\n👋 One more thing — I don't know who you are yet. Want me to set up your "
+            "profile from your email + documents? Just say \"set up my profile\".")
+    except Exception:
+        pass
+
+
 def _memory_user_repr(message: str, image_path: str | None) -> str:
     """How this inbound turn is stored/logged: photos are tagged so the memory reads
     coherently ('[photo] split this between…')."""
@@ -995,6 +1022,7 @@ def route(conn, message, source: str = "telegram", claude_fn=None,
                   "applied": ["fallback_note"]}
     else:
         result = apply_result(conn, obj, ctx)
+    _maybe_append_onboarding(conn, result)                    # first-run: offer to set up a profile (once)
     # library_ideas stores a compact numbered title list in memory (via ctx) so the long
     # sent reply doesn't blow the per-entry cap and follow-ups still resolve.
     record_exchange(conn, mem_repr, ctx.get("mem_override") or result.get("reply", ""))
