@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import Kelvin's messy ~/Desktop/todo.txt into life-os (tasks / notes / journal).
+"""Import Sam's messy ~/Desktop/todo.txt into life-os (tasks / notes / journal).
 
 DRY-RUN CONTRACT
 ================
@@ -7,7 +7,7 @@ DRY-RUN CONTRACT
     python scripts/import_todo.py --apply    # actually writes (idempotent via ledger)
 
 Default is a preview: it parses todo.txt, asks `claude -p` (subscription, never a
-paid API) to classify each item, and writes a grouped markdown preview for Kelvin
+paid API) to classify each item, and writes a grouped markdown preview for Sam
 to eyeball. It writes NOTHING into the vault/DB unless --apply is passed.
 
 todo.txt is treated as READ-ONLY input; this script never modifies it.
@@ -102,7 +102,7 @@ def parse_todo(text: str) -> list[dict]:
 _BATCH = 50  # items per claude -p call (well within a comfortable prompt size)
 
 _CLASSIFY_INSTRUCTIONS = """\
-You are triaging Kelvin's messy raw todo.txt dump into his personal "life-os".
+You are triaging Sam's messy raw todo.txt dump into his personal "life-os".
 Below is his triage profile, then a numbered list of items. Classify EACH item
 into exactly ONE destination. This is a YouTuber's brain-dump: most lines are
 video ideas, some are personal todos, some are business/sponsor tasks, some are
@@ -126,7 +126,7 @@ Routing rules:
 - A reflection/quote/diary-like line → journal.
 - Lines that look already-done (contain "DONE", "done", "May done"), outdated, duplicated,
   or are pure noise/garbage → skip with the reason.
-- If you genuinely cannot tell → uncertain (goes to Kelvin for a manual call). Prefer a real
+- If you genuinely cannot tell → uncertain (goes to Sam for a manual call). Prefer a real
   bucket over uncertain when reasonable.
 
 Pick tags from: idea, video, link, research, business, content, personal.

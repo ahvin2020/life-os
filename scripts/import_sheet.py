@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import Kelvin's YouTube-projects Google Sheet into life-os.
+"""Import Sam's YouTube-projects Google Sheet into life-os.
 
 DRY-RUN CONTRACT
 ================

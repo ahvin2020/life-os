@@ -82,11 +82,11 @@ def test_enrich_note_rewrites_title_summary_tags(client):
         body="Add to note\n\nhttps://www.instagram.com/reel/DXlGR2QDA_W/?igsh=abc",
         tags=["link", "idea"])
     fetch = lambda url: {"title": "Passive income reel", "description": "5 ways", "site": "instagram.com"}
-    claude = lambda prompt: '{"title": "5 passive income ideas", "summary": "Reel Kelvin saved on side income", "tags": ["income", "idea"]}'
+    claude = lambda prompt: '{"title": "5 passive income ideas", "summary": "Reel Sam saved on side income", "tags": ["income", "idea"]}'
     saved = capture.enrich_note(note["slug"], fetch_fn=fetch, claude_fn=claude)
     assert saved["title"] == "5 passive income ideas"
     assert "income" in saved["tags"] and "link" in saved["tags"]   # union kept #link
-    assert "Reel Kelvin saved on side income" in saved["body"]
+    assert "Reel Sam saved on side income" in saved["body"]
     assert "instagram.com/reel/DXlGR2QDA_W" in saved["body"]       # URL retained
 
 

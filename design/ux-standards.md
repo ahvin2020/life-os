@@ -1,6 +1,6 @@
 # UX Standards — the vet rubric
 
-North star (Kelvin): **clean · delightful · reduce wastage.** Every element earns its pixels.
+North star (Sam): **clean · delightful · reduce wastage.** Every element earns its pixels.
 Sources distilled: Anthony Hobday's Safe Rules, Laws of UX, Nielsen's heuristics, Refactoring UI.
 Any screen or change in this app is judged against this file. When in doubt: remove, don't add.
 

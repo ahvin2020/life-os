@@ -2,7 +2,7 @@
 find_document, the daemon document send, and the schema v7 migration).
 
 Retrieval/scan Claude calls are mocked; the throwaway vault + a tmp root stand in for
-Kelvin's synced folders.
+Sam's synced folders.
 """
 
 import json
@@ -82,7 +82,7 @@ def test_content_aware_dedupes_against_filename_hit(client, tmp_path):
     from core.db import now_iso
     conn = _db()
     _root(conn, tmp_path)
-    f = tmp_path / "kelvin passport.pdf"
+    f = tmp_path / "sam passport.pdf"
     f.write_text("x")
     conn.execute(
         "INSERT INTO doc_facts(path, label, category, value, event_date, extracted_at) "

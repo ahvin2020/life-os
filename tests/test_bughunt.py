@@ -1,6 +1,6 @@
 """Bug-hunt regression tests — backend date/recurrence logic + the deleted_at rule.
 
-Companion to the two bugs Kelvin already hit (TZ mismatch, client/server contract).
+Companion to the two bugs Sam already hit (TZ mismatch, client/server contract).
 Each test reproduces a distinct backend defect and fails on the pre-fix code.
 """
 

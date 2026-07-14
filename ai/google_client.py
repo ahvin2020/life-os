@@ -1,6 +1,6 @@
 """Google integration — Gmail read + draft, Calendar read + event write.
 
-CODE-READY but inert until Kelvin completes OAuth (see scripts/google_auth.py): it needs
+CODE-READY but inert until Sam completes OAuth (see scripts/google_auth.py): it needs
 data/google_client_secret.json (downloaded from Google Cloud) and data/google_token.json
 (written by the auth script). Until then is_configured() is False and every caller
 degrades gracefully.
@@ -249,7 +249,7 @@ def gmail_search(query: str, n: int = 5, service=None, body: bool = False) -> li
 
 
 def create_draft(to: str, subject: str, body: str, service=None) -> dict:
-    """Save a Gmail DRAFT (never sends — Kelvin reviews and sends it himself)."""
+    """Save a Gmail DRAFT (never sends — Sam reviews and sends it himself)."""
     import base64
     from email.mime.text import MIMEText
     svc = service or _service("gmail", "v1")

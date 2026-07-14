@@ -57,7 +57,7 @@ container restart is the whole deploy step.
 - **Vault** — `repo/vault`, read-write; notes + journal markdown, synced (conflicts
   become Drive conflict-copies, never corruption).
 
-## NAS pre-flight (Kelvin, once)
+## NAS pre-flight (Sam, once)
 1. **Package Center** → install **Container Manager** and **Tailscale**.
 2. Enable **SSH** (Control Panel → Terminal & SNMP) for the initial setup.
 3. Install the **Tailscale** app on your phone; sign in to the same tailnet.
@@ -104,7 +104,7 @@ Triage uses the Mac's already-authed `claude` CLI (subscription, no API key). Vo
 notes are transcribed locally with **mlx-whisper** (already `pip install`ed into
 `.venv`); `ffmpeg` must be on PATH (it is, via Homebrew).
 
-### Load the launchd services (Kelvin, once)
+### Load the launchd services (Sam, once)
 ```sh
 cp deploy/com.kelvin.lifeos.web.plist     ~/Library/LaunchAgents/
 cp deploy/com.kelvin.lifeos.capture.plist ~/Library/LaunchAgents/

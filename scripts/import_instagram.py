@@ -3,7 +3,7 @@
 
 Saved posts (deliberate saves): all imported.
 Likes: only 2025+ items, filtered by `claude -p` for content-idea relevance
-(Kelvin is a Singapore finance/investing YouTuber — see vault/profile.md).
+(Sam is a Singapore finance/investing YouTuber — see vault/profile.md).
 
 Dry-run by default; --apply writes. Idempotent via the shared import ledger.
 Notes carry the original like/save timestamp as `created` so they don't

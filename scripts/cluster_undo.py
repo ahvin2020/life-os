@@ -3,7 +3,7 @@
 
 Reads data/cluster_log.json ({slug: added_tag}) and removes ONLY those tags from each
 note's frontmatter (via vault_store.remove_tag, which rewrites just the tags line). Any
-other tags — including `imported` and anything Kelvin added by hand — are left untouched.
+other tags — including `imported` and anything Sam added by hand — are left untouched.
 
 Dry-run by default; --apply performs the removal and clears the log.
 

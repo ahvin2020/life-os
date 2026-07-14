@@ -1,6 +1,6 @@
 """Read-only query answering for the Telegram bot.
 
-Kelvin can ASK about his data ("what are my todos", "any overdue?", "goals") and
+Sam can ASK about his data ("what are my todos", "any overdue?", "goals") and
 get an instant, deterministic answer — no Claude call, no cost. Intent detection is
 deliberately CONSERVATIVE: only clearly interrogative/list-shaped messages are
 treated as queries; anything ambiguous falls through to capture, because a missed
@@ -19,7 +19,7 @@ from domain.tasks_core import today_tasks, day_score
 from domain.goals_core import goal_progress
 from domain import vault_store
 
-# Nouns that make a message about Kelvin's data.
+# Nouns that make a message about Sam's data.
 _QNOUNS = ("todo", "todos", "task", "tasks", "today", "overdue", "goal", "goals",
            "journal", "note", "notes", "backlog")
 # Leading words that make a message a question/list request.

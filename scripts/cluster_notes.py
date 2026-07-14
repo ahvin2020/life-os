@@ -8,7 +8,7 @@ banks-cards, …). Imports stay ordinary notes — no separate view.
 
 Two passes, both via claude_cli.call_claude (subscription auth, never raw subprocess):
   Pass 1 (taxonomy): titles (+ a snippet where the title is generic) → 6-10 short
-                     lowercase topic slugs tailored to Kelvin's actual library.
+                     lowercase topic slugs tailored to Sam's actual library.
   Pass 2 (assignment): batches of ~60 notes → EXACTLY ONE slug each (or `misc`).
                      Unparseable batch → those notes are SKIPPED, never guessed.
 
@@ -43,14 +43,14 @@ MISC = "misc"                    # catch-all when nothing fits
 ASSIGN_BATCH = 60
 TAXONOMY_CHAR_BUDGET = 38000     # cap the one taxonomy call's listing size
 
-TAXONOMY_PROMPT = """You are organising the saved-idea library of Kelvin, a Singapore-based
+TAXONOMY_PROMPT = """You are organising the saved-idea library of Sam, a Singapore-based
 personal finance / investing YouTuber. Below are titles (and short snippets where a title is
 generic) of {n} saved notes — Instagram reels, links, and imported to-dos.
 
 Derive between 6 and 10 SHORT lowercase topic slugs in kebab-case (e.g. cpf-retirement,
 banks-cards, property, market-investing, creator-craft, sponsor-business, personal-admin)
 that together cover THIS library — tailored to the actual data below, not a generic list.
-Each slug becomes a browsable shelf Kelvin filters by, so make them distinct and useful.
+Each slug becomes a browsable shelf Sam filters by, so make them distinct and useful.
 
 Reply with ONLY a JSON array of objects, each {{"slug": "...", "meaning": "one short line"}}.
 No prose, no code fences.
@@ -58,7 +58,7 @@ No prose, no code fences.
 Notes:
 {items}"""
 
-ASSIGN_PROMPT = """You are shelving Kelvin's saved-idea notes (Singapore finance/investing
+ASSIGN_PROMPT = """You are shelving Sam's saved-idea notes (Singapore finance/investing
 YouTuber) into EXACTLY ONE topic each. The allowed topic slugs are:
 {taxonomy}
 

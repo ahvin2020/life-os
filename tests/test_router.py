@@ -313,7 +313,7 @@ def test_multi_compound_message(client):
     assert out["applied"] == ["complete_task", "create_task"]
 
 
-# ── link_goal (goal-link SUGGESTIONS confirmed by Kelvin) ─────────────────────
+# ── link_goal (goal-link SUGGESTIONS confirmed by Sam) ─────────────────────
 def _new_goal(conn, title="Retire by 50"):
     with conn:
         return conn.execute(
@@ -441,7 +441,7 @@ def test_note_without_image_has_no_media_pointer(client):
 
 # ── rolling exchange memory (follow-ups: "yes" / "the second one") ────────────-
 def test_followup_exchange_memory_yes_resolves(client):
-    """The prior (Kelvin, bot) turn is replayed into the next prompt so a bare 'yes'
+    """The prior (Sam, bot) turn is replayed into the next prompt so a bare 'yes'
     after an offer has the offer to resolve against."""
     conn = _db()
     # Turn 1: the bot answers the split and offers to create collect-money tasks.

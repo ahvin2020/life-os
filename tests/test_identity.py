@@ -57,9 +57,9 @@ def test_confirm_writes_identity(client, monkeypatch, tmp_path):
     prof = tmp_path / "profile.md"; prof.write_text("")
     monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
     conn = _db()
-    out = router.execute_pending(conn, {"kind": "profile_identity", "payload": {"block": "Name: Kelvin"}})
+    out = router.execute_pending(conn, {"kind": "profile_identity", "payload": {"block": "Name: Sam"}})
     conn.close()
-    assert "Saved" in out and "Name: Kelvin" in prof.read_text()
+    assert "Saved" in out and "Name: Sam" in prof.read_text()
 
 
 def test_identity_names_splits_own_from_family(client, monkeypatch, tmp_path):

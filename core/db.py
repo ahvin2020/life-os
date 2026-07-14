@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # All "today" calculations are pinned to the configured app timezone, never UTC — a
-# task due "today" must mean today where Kelvin is, and the NAS may run in any
+# task due "today" must mean today where Sam is, and the NAS may run in any
 # container TZ. The zone is user-settable (settings key `app_tz`); when unset it
 # defaults to the machine's timezone. Everything flows through get_tz()/now_sg()/
 # today_iso() so a single setting change moves every date in the app.
@@ -168,7 +168,7 @@ def delete_setting(conn, key):
 
 
 def record_correction(conn, kind, detail, cap=50):
-    """Log one 'the AI got it wrong and Kelvin fixed it' signal (a refile, a quick recat/
+    """Log one 'the AI got it wrong and Sam fixed it' signal (a refile, a quick recat/
     rename of a just-created task, a repeated clarify). Feeds the weekly profile-rule
     suggestion. Best-effort — must never break the action it rides on."""
     import json as _json

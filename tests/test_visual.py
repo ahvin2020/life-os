@@ -10,7 +10,7 @@ the baselines.
 
 DEV-ONLY GUARD. Playwright + Pillow are dev deps (NOT in requirements.txt — the
 runtime stays Flask-only), so this whole module SKIPS when either is missing or no
-browser is installed. Baselines are rendered on Kelvin's Mac (Avenir Next, mac
+browser is installed. Baselines are rendered on Sam's Mac (Avenir Next, mac
 font hinting); run the check on the same machine — the NAS container never runs
 pytest. Full-page height is part of the compare, so a layout reflow trips it too.
 """

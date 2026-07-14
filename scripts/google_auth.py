@@ -1,6 +1,6 @@
 """One-time Google OAuth for Life OS (run on the Mac, where a browser can open).
 
-Prereqs (Kelvin, in Google Cloud Console):
+Prereqs (Sam, in Google Cloud Console):
   1. Create a project; enable the Gmail API and the Google Calendar API.
   2. Create an OAuth client of type "Desktop app"; download the JSON.
   3. Save it as data/google_client_secret.json in this repo.

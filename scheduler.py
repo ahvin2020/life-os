@@ -311,7 +311,7 @@ def maybe_notify_claude_down(conn, tg, chat_id) -> bool:
     and once more when it recovers. Reads the claude_last_ok/err heartbeats stamped by
     ai.claude_cli; keyed on the error timestamp so a persistent outage doesn't spam.
     Since ALL AI (bot router, enrichment, proactive surfaces) runs through claude, this
-    is Kelvin's single 'your token expired, update it in Settings' signal."""
+    is Sam's single 'your token expired, update it in Settings' signal."""
     ok = _get_setting(conn, "claude_last_ok")
     err = _get_setting(conn, "claude_last_err") or ""
     err_ts = err.split("|", 1)[0].strip()

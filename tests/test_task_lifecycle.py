@@ -1,5 +1,5 @@
 """Task lifecycle — comprehensive coverage of the board/Today machinery, so UI
-regressions surface in pytest, not on Kelvin's phone.
+regressions surface in pytest, not on Sam's phone.
 
 Failure classes covered:
   1. STATE-MACHINE INVARIANTS — after ANY endpoint mutation a task row must be

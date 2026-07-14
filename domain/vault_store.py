@@ -162,7 +162,7 @@ _IDENTITY_HEADER = "# Identity"
 
 def set_identity(text: str) -> bool:
     """Write (or replace) a fenced '# Identity' section at the TOP of profile.md — who
-    Kelvin is + family, so the assistant can tell 'my passport' from a relative's. Only
+    Sam is + family, so the assistant can tell 'my passport' from a relative's. Only
     that section is touched; the rest of profile.md is preserved. False on empty input."""
     block = (text or "").strip()
     if not block:

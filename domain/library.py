@@ -1,6 +1,6 @@
 """On-demand idea pull from the clustered idea library (Telegram).
 
-Kelvin has ~700 imported idea notes (IG reels/links), each tagged with exactly ONE
+Sam has ~700 imported idea notes (IG reels/links), each tagged with exactly ONE
 topic cluster (the canonical record is data/cluster_log.json; the tag also lives in
 each note's frontmatter). He can text the bot "give me 5 ideas about CPF" / "ideas
 for my next video" / "what have I saved about bank promos" and get back 3–5 numbered
@@ -19,7 +19,7 @@ Flow:
      ~80, trimmed by recency.
   2. ONE `claude -p` call ranks the pool and picks the best 3–5 AS VIDEO IDEAS for a
      Singapore finance/investing YouTuber, favouring fresher saves on ties, each with a
-     one-line why. It's told Kelvin's raw phrasing verbatim so it judges true fit.
+     one-line why. It's told Sam's raw phrasing verbatim so it judges true fit.
   3. Strict JSON out, one retry, then a deterministic fallback (the N most recent notes
      in the matched cluster) so a reply is never dropped.
 """
@@ -234,7 +234,7 @@ def _candidate_block(pool: list) -> str:
 
 def build_selection_prompt(raw_message: str, topic: str, count: int, pool: list) -> str:
     return (
-        "=== vault/profile.md (who Kelvin is) ===\n"
+        "=== vault/profile.md (who Sam is) ===\n"
         f"{vault_store.read_profile()}\n\n"
         "=== TASK ===\n"
         "The user is a Singapore finance/investing YouTuber. From "

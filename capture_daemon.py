@@ -4,7 +4,7 @@
 Long-polls Telegram getUpdates and files each message through the SAME router the
 web composer uses (capture.route_capture), so the phone bot and the web twin file
 things identically. Voice notes are transcribed locally with mlx-whisper (base) —
-no audio ever leaves Kelvin's hardware — and the original recording is kept in
+no audio ever leaves Sam's hardware — and the original recording is kept in
 vault/.audio/ with a pointer in the note frontmatter.
 
 Also drives the outbound side: a debounced Claude triage run after ambiguous
@@ -21,7 +21,7 @@ Env (from repo-root .env via envload):
 
 Run:  .venv/bin/python capture_daemon.py
 The daemon is intended to run under launchd (see deploy/). Leave it STOPPED in
-dev; launchd/Kelvin starts it.
+dev; launchd/Sam starts it.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def format_reply(result: dict) -> str:
 # backlog triage, weekly, monthly, doc scan, reminders, sweep, Claude-down nudge)
 # live in scheduler.py and are re-exported at the top of this module.
 def run_triage_now(conn, tg=None, chat_id=None):
-    """Invoke the triage runner and report anything it reclassified back to Kelvin."""
+    """Invoke the triage runner and report anything it reclassified back to Sam."""
     import triage.run_triage as rt
     applied = rt.run(conn)
     if applied and tg and chat_id:

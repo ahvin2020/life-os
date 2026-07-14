@@ -80,7 +80,7 @@ def test_retrieve_answers_directly_from_gmail(client, monkeypatch):
     conn.close()
     assert "14 Aug" in res["reply"] and res["documents"] == []
     assert "Scoot booking" in plan.prompts[0]       # gmail evidence reached the prompt
-    assert "WHO KELVIN IS" in plan.prompts[0]        # profile injected for disambiguation
+    assert "WHO SAM IS" in plan.prompts[0]        # profile injected for disambiguation
 
 
 def test_retrieve_reads_one_document(client, monkeypatch):
@@ -362,7 +362,7 @@ def test_merge_attachments_makes_email_files_candidates(client):
 def test_gmail_widens_when_the_and_search_misses(monkeypatch):
     """Gmail ANDs every term, so a question-shaped query ('...booking number in august')
     zeroes out. _gmail_hits must drop the question words + the month and still find the
-    booking email — the exact bug Kelvin hit."""
+    booking email — the exact bug Sam hit."""
     calls = []
 
     def fake_search(q, n=5, body=False):
@@ -376,8 +376,8 @@ def test_gmail_widens_when_the_and_search_misses(monkeypatch):
     assert "scoot booking" in calls              # it widened down to the terms that hit
 
 
-def test_prefer_owner_sends_kelvins_document(client, monkeypatch):
-    """'fetch my passport' must rank KELVIN'S file above a family member's when they tie on
+def test_prefer_owner_sends_owners_document(client, monkeypatch):
+    """'fetch my passport' must rank SAM'S file above a family member's when they tie on
     filename score (the real bug: the daughter's newer file won)."""
     monkeypatch.setattr(vault_store, "identity_names",
                         lambda: ({"lee", "jun", "kai"}, {"lee", "xin", "yi", "ong", "mei", "fang"}))

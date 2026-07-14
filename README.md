@@ -8,7 +8,7 @@ agentic Telegram bot.
 Flask + SQLite + Jinja + vanilla JS. No build step, no external services, no
 pay-per-use APIs. The only AI is `claude -p` on a Claude subscription (agentic bot,
 triage, and the proactive surfaces) and local Whisper for voice — never a metered
-API. The assistant only ever touches Kelvin's **own** data; no Claude call in the app
+API. The assistant only ever touches Sam's **own** data; no Claude call in the app
 ever holds web tools.
 
 ## What's here

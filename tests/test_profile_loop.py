@@ -35,7 +35,7 @@ def test_record_and_read_corrections(client):
 
 def test_append_learned_rule_creates_section_and_dedupes(client, tmp_path, monkeypatch):
     prof = tmp_path / "profile.md"
-    prof.write_text("# Profile\n\nKelvin is a YouTuber.\n")
+    prof.write_text("# Profile\n\nSam is a YouTuber.\n")
     monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
     assert vault_store.append_learned_rule("gym captures → personal, high priority")
     body = prof.read_text()

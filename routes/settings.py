@@ -576,7 +576,7 @@ def _parse_doc_roots(raw: str) -> list:
 def settings_test_doc_roots():
     """Probe the pasted document folders WITHOUT saving (mirrors the AI-token Test): for
     each path report whether it's a readable directory and how many documents it holds,
-    so Kelvin sees his synced folders are wired before committing them."""
+    so Sam sees his synced folders are wired before committing them."""
     from domain import docs
     paths = _parse_doc_roots(request.form.get("document_roots") or "")
     if not paths:
