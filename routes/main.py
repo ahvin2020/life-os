@@ -87,6 +87,17 @@ def home():
         first_run=first_run, journal_empty=journal_empty, show_onboarding=show_onboarding)
 
 
+@bp.route("/onboarding/name", methods=["POST"])
+def onboarding_name():
+    """Save the greeting name straight from the Today first-run banner (inline onboarding)."""
+    name = " ".join((request.form.get("name") or "").split())[:40]
+    conn = db()
+    if name:
+        set_setting(conn, "display_name", name)
+    conn.close()
+    return jsonify({"ok": bool(name), "name": name})
+
+
 @bp.route("/onboarding/dismiss", methods=["POST"])
 def onboarding_dismiss():
     """Dismiss the Today first-run profile banner for good (a per-user settings flag)."""
@@ -199,6 +210,14 @@ def capture_refile():
     if not result:
         return jsonify({"status": "error", "message": "not found or no-op"}), 400
     return jsonify({"status": "ok", **result})
+
+
+@bp.route("/calendar")
+def calendar():
+    """Full calendar as a destination page (the peek stays in Today's 'Up next' card).
+    Read-only; the day/week/month grid loads events via /calendar/events after render,
+    reusing the exact same fetch + renderer as the Today widget."""
+    return render_template("calendar.html", active="calendar")
 
 
 @bp.route("/calendar/events")

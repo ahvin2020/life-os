@@ -55,6 +55,7 @@
     <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
     <a class="nav-btn {{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
     <a class="nav-btn {{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+    <a class="nav-btn {{ 'active' if active=='calendar' else '' }}" href="/calendar"><span class="ico">▦</span>Calendar</a>
     {# The Settings nav badge (red count) is now the at-a-glance health signal — click
        through for the per-job detail + reasons. The old always-there sidebar status rows
        were redundant with it, so they're gone. #}
@@ -79,6 +80,7 @@
   <a class="{{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
   <a class="{{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
   <a class="{{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
+  <a class="{{ 'active' if active=='calendar' else '' }}" href="/calendar"><span class="ico">▦</span>Calendar</a>
   <a class="{{ 'active' if active=='settings' else '' }}" href="/settings">{% if nav_alerts %}<span class="bn-badge" aria-label="{{ nav_alerts }} issues">{{ nav_alerts }}</span>{% endif %}<span class="ico">⚙</span>Settings</a>
 </nav>
 

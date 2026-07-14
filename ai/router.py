@@ -222,15 +222,16 @@ _ONBOARD_KEY = "onboarding_offered"
 
 
 def _maybe_append_onboarding(conn, result: dict) -> None:
-    """First-run nudge: if the profile still has no identity, append a ONE-TIME offer to set
-    it up (the real work is the existing derive_identity flow — 'set up my profile'). Guarded
-    by a settings flag so it never nags; skipped when the user is already onboarding. So a
-    fresh clone — anyone's — is greeted once and walked into building their own profile."""
+    """First-run nudge: if we don't know the user's name yet, append a ONE-TIME ask for it
+    ('call me <name>' → set_name). Guarded by a settings flag so it never nags; skipped the
+    moment a name exists (display_name set OR a profile identity). So a fresh clone — anyone's —
+    is greeted once and asked what to call them, with nothing hardcoded."""
     try:
-        if "derive_identity" in (result.get("applied") or []):
-            return                                   # already setting up — don't double-offer
-        if not vault_store.profile_is_unconfigured():
-            return                                   # identity already known
+        from core.db import get_setting
+        if "set_name" in (result.get("applied") or []):
+            return                                   # they're setting it right now
+        if get_setting(conn, "display_name") or not vault_store.profile_is_unconfigured():
+            return                                   # name already known
         row = conn.execute("SELECT value FROM settings WHERE key=?", (_ONBOARD_KEY,)).fetchone()
         if row and row["value"]:
             return                                   # offered before — never nag
@@ -238,8 +239,7 @@ def _maybe_append_onboarding(conn, result: dict) -> None:
             conn.execute("INSERT INTO settings(key, value) VALUES(?, '1') "
                          "ON CONFLICT(key) DO UPDATE SET value='1'", (_ONBOARD_KEY,))
         result["reply"] = (result.get("reply") or "").rstrip() + (
-            "\n\n👋 One more thing — I don't know who you are yet. Want me to set up your "
-            "profile from your email + documents? Just say \"set up my profile\".")
+            "\n\n👋 One more thing — what should I call you? Just say \"call me <your name>\".")
     except Exception:
         pass
 
@@ -440,6 +440,7 @@ find_document  {"action":"find_document","query":str,"mode":"info|file|link","qu
 derive_identity {"action":"derive_identity"}   # "who am I? / set up my profile / figure out my family / whose passports are these" — scans his Gmail address + personal-document filenames and PROPOSES an identity block (name + family) for his profile; he confirms with "yes".
 create_event   {"action":"create_event","title":str,"date":ISO-date,"start":"HH:MM"|null,"end":"HH:MM"|null,"guests":[email,...]|null}   # add something to his Google Calendar ("put dentist on Friday 10am", "block Tuesday 2-4pm for filming"). Give a time when he states one, else it's all-day. `guests` = any email addresses he wants invited ("add guest x@y.com", "invite alice@…") — Google emails them the invite. A guest named by relation/name ("add her hotmail", "invite my wife") → resolve to the address in the profile's # Contacts.
 draft_email    {"action":"draft_email","to":str,"subject":str,"body":str}   # draft an email for him to review + send ("draft a reply to the sponsor saying yes"). NEVER sends — only saves a Gmail draft. Resolve a person referred to by relation/name ("her hotmail", "my wife's email", "send Mei Fang…") to the address in the profile's # Contacts; if it's not there, clarify instead of guessing.
+set_name       {"action":"set_name","name":str}   # "call me X" / "my name is X" / "you can call me X" — save what to call him; used in the home greeting and how you address him. NOT for a task/note.
 remember_contact {"action":"remember_contact","label":str,"emails":[str,...]}   # durably SAVE a person's email(s) to his profile so he can later say "email her hotmail" / "add her to the event". Use when he tells you a contact detail to keep ("my wife's hotmail is X", "remember her two emails are A and B", "John's email is …"). `label` = who, human-readable incl. name/relation ("Wife <name>"); `emails` = the address(es). Saving a second email for someone already listed MERGES — reuse the same label you see in # Contacts.
 answer         {"action":"answer","text":str}                   # a QUESTION about his data — answer from the context below (see FORMATTING)
 clarify        {"action":"clarify","question":str}              # genuinely ambiguous — ask one short question
@@ -924,6 +925,14 @@ def apply_action(conn, act, ctx) -> tuple:
         except Exception as e:
             return (f"Couldn't save the draft: {str(e)[:80]}", None)
         return ("✉️ Draft saved in Gmail — review and send it yourself.", None)
+
+    if kind == "set_name":
+        name = " ".join((act.get("name") or "").split())[:40]
+        if not name:
+            return ("❓ What should I call you?", None)
+        from core.db import set_setting
+        set_setting(conn, "display_name", name)
+        return (f"👋 Nice to meet you, {name} — I'll call you that from now on.", None)
 
     if kind == "remember_contact":
         label = (act.get("label") or "").strip()

@@ -120,9 +120,11 @@ a:hover { text-decoration: underline; }
 
 /* ---------- main ---------- */
 .main { flex: 1; min-width: 0; margin-inline: auto; padding: 26px 30px 90px; max-width: 1320px; animation: rise var(--dur-slow) var(--ease) both; }
-.vhead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
-.vhead h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; }
+.vhead { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.vhead .vhtxt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vhead h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; line-height: 1.1; }
 .vhead .date { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.vhead .dcount { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 .vhead .spacer { flex: 1; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .chip.warn { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
@@ -141,21 +143,12 @@ a:hover { text-decoration: underline; }
 .card.sub2 .chead h2 { font-size: 10.5px; }
 .card.sub2 .cap { padding: 5px 0; }
 .card.sub2 .uprow { padding: 2px 0; }
-/* Reminders card — pending timed pushes, addable + dismissible from Today. */
-.remcard .remadd { margin-left: auto; font-size: 16px; line-height: 1; color: var(--muted); padding: 0 2px; transition: color var(--dur-fast) var(--ease); }
-.remcard .remadd:hover, .remcard .remadd.on { color: var(--accent); }
-.remform { display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; }
-.remform input[type="text"] { min-height: 34px; font-size: 13px; }
-.remrow { display: flex; gap: 6px; }
-.remrow input[type="datetime-local"] { flex: 1 1 auto; min-height: 34px; font-size: 12.5px; font-family: var(--mono); }
-.remsave { flex: 0 0 auto; background: var(--accent); color: #1A1204; border-radius: 8px; padding: 0 14px; font-weight: 600; font-size: 13px; transition: filter var(--dur) var(--ease); }
-.remsave:hover { filter: brightness(1.08); }
-.remsave:active { transform: scale(.96); }
+/* Reminders card — pure display of pending timed pushes (added via the composer). */
 .remlist { display: flex; flex-direction: column; }
 .remitem { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; min-width: 0; }
 .remitem.removing { opacity: 0; transition: opacity var(--dur) var(--ease); }
 .remitem .rt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.remitem .rwhen { flex: 0 0 auto; font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
+.remitem .rwhen { flex: 0 0 auto; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .remitem .remx { flex: 0 0 auto; color: var(--muted); font-size: 12px; padding: 0 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
 .remitem:hover .remx, .remitem:focus-within .remx { opacity: 1; }
 .remitem .remx:hover { color: var(--bad); }
@@ -175,6 +168,14 @@ a:hover { text-decoration: underline; }
 .ringwrap { position: relative; width: 24px; height: 24px; flex: 0 0 auto; }
 .ringwrap .check { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: var(--good); opacity: 0; transform: scale(.7); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .ringwrap.full .check { opacity: 1; transform: scale(1); }
+
+/* day-score hero ring: the header's focal point — big dial, % centred inside */
+.vhead .ringwrap, .vhead .ring { width: 66px; height: 66px; }
+.vhead .ring .track { stroke-width: 3; }
+.vhead .ring .fill { stroke-width: 3; }
+.vhead .ringpct { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
+.vhead.full .ringpct { color: var(--good); }
+.vhead.full .ring .fill { stroke: var(--good); }
 
 /* tasks (simple rows) */
 /* Row = [dot] [checkbox] [tmain]. Title + sub-line stack inside .tmain, so the
@@ -579,11 +580,12 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
    amber — it's a welcome, not a needs-attention alert. Dismissible; hides once a name is set. */
 .onboard { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 11px 14px; border: 1px solid var(--link); border-radius: 10px; background: color-mix(in srgb, var(--surface) 90%, var(--link) 10%); }
 .onboard-i { font-size: 17px; flex: 0 0 auto; }
-.onboard-t { flex: 1; font-size: 13.5px; color: var(--text); line-height: 1.5; }
-.onboard-go { color: var(--link); font-weight: 600; white-space: nowrap; }
+.onboard-t { flex: 0 0 auto; font-size: 13.5px; color: var(--text); line-height: 1.5; font-weight: 600; }
+.onboard-in { flex: 1 1 160px; min-width: 110px; }
+.onboard-go { flex: 0 0 auto; background: none; border: none; color: var(--link); font: inherit; font-weight: 600; white-space: nowrap; cursor: pointer; padding: 4px 6px; }
 .onboard-x { flex: 0 0 auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 6px; }
 .onboard-x:hover { color: var(--text); background: var(--surface2); }
-@media (max-width: 560px) { .onboard { flex-wrap: wrap; } .onboard-t { flex: 1 1 100%; order: 2; } }
+@media (max-width: 560px) { .onboard { flex-wrap: wrap; } .onboard-in { flex: 1 1 100%; order: 3; } }
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(var(--accent-rgb),.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background-color var(--dur) var(--ease); }
 .qcap:focus-within { border-color: rgba(var(--accent-rgb),.7); box-shadow: 0 0 0 3px var(--accent-dim); }
 /* file drag-over: brighter border + a blue tint + a soft glow ring, tweened in. WHERE it
@@ -608,6 +610,11 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 .qgo { background: var(--accent); color: #1A1204; border-radius: 8px; padding: 8px 18px; font-weight: 600; flex: 0 0 auto; transition: filter var(--dur) var(--ease), background var(--dur) var(--ease); }
 .qgo:hover { filter: brightness(1.08); }
 .qgo.did { background: var(--good); color: #06130C; }
+/* Reminder mode: the ⏰ time strip under the composer bar (revealed only in that mode). */
+.qwhen { display: flex; align-items: center; gap: 10px; margin: -6px 0 14px; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.qwhen[hidden] { display: none; }   /* author display:flex would otherwise beat the UA [hidden] rule */
+.qwhen-l { font-family: var(--mono); font-size: 11.5px; color: var(--muted); flex: 0 0 auto; }
+.qwhen input[type="datetime-local"] { flex: 1 1 auto; min-height: 36px; font-family: var(--mono); font-size: 13px; }
 .todaygrid { display: grid; grid-template-columns: 5fr 3fr; gap: 14px; align-items: start; }
 /* mid widths (sidebar still up): two columns crush hero titles to "Re…" stumps
    and wrap the capture feed one word per line — stack instead (≤760 is the
@@ -883,15 +890,9 @@ button:active { transform: scale(.97); }
    gallery card + captured-today feed row) instead of a full-page reload */
 .removing { opacity: 0; transform: translateY(4px); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); pointer-events: none; }
 
-/* ── Today calendar: full-width, Google-style day/week/month (Google events) ── */
-/* .card is display:flex, which would override [hidden] — guard it. */
-.calcard[hidden] { display: none; }
-.calcard { margin-top: 14px; gap: 12px; }
-/* full calendar in a modal overlay: wider than a normal editor, relative for the ✕ */
-.calpanel { position: relative; width: min(880px, 100%); margin-top: 0; }
-.calpanel .calbar { padding-right: 26px; }        /* clear the absolute close button */
-.calx { position: absolute; top: 14px; right: 14px; z-index: 1; background: none; border: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
-.calx:hover { color: var(--text); background: var(--surface2); }
+/* ── Calendar: full-width, Google-style day/week/month (Google events). Renders on the
+   /calendar page (.calpage); the same renderer feeds Today's compact 'Up next' agenda. ── */
+.calpage { gap: 14px; }
 .calbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .calnav { display: flex; align-items: center; gap: 8px; }
 .calnavbtn {
@@ -992,10 +993,18 @@ button:active { transform: scale(.97); }
 
 /* Phone: the week time-grid can't shrink to 7 legible columns → horizontal scroll. */
 @media (max-width: 760px) {
-  .calcard .cgrid.wk { overflow-x: auto; }
-  .calcard .cgrid.wk .cghead, .calcard .cgrid.wk .cgallday, .calcard .cgrid.wk .cggrid { min-width: 660px; }
-  .cmcell { min-height: 68px; }
-  .cmev, .cmt { font-size: 10.5px; }
+  .calpage .cgrid.wk { overflow-x: auto; }
+  .calpage .cgrid.wk .cghead, .calpage .cgrid.wk .cgallday, .calpage .cgrid.wk .cggrid { min-width: 660px; }
+  /* Phone month = GCal-mobile: reclaim cell width (thinner card padding + tighter gaps),
+     drop the time prefix so titles read, and give cells height for ~4 events. Six taller
+     rows overflow one screen → the page scrolls vertically, exactly like GCal. */
+  .calpage { padding: 12px 9px; }
+  .cmgrid, .cmdow { gap: 3px; }
+  .cmcell { min-height: 104px; padding: 4px 4px; gap: 2px; }
+  .cmnum { font-size: 11px; }
+  .cmev { font-size: 10.5px; gap: 0; }
+  .cmt { display: none; }                    /* title-only, like GCal's month chips */
+  .cmmore { font-size: 10px; }
 }
 
 /* prefers-reduced-motion kill-switch — disables every transition AND animation */

@@ -505,7 +505,7 @@
         };
         if (planned) data.planned_on = window.LIFEOS_TODAY || "";
         post("/tasks/new", data).then(function () {
-          f.saved.textContent = "saved ✓"; reloadSoon();
+          f.saved.textContent = "Saved ✓"; reloadSoon();
         });
         return;
       }
@@ -513,7 +513,7 @@
         title: f.title.value, due_date: f.due.value, priority: f.priority.value,
         category: f.category.value, col: f.col.value, recur_rule: f.recur.value,
         goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : ""
-      }).then(function () { f.saved.textContent = "saved ✓"; patchOrReload(); });
+      }).then(function () { f.saved.textContent = "Saved ✓"; patchOrReload(); });
     });
     confirmClick(document.getElementById("te-delete"), function () {
       var id = current;

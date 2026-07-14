@@ -94,9 +94,9 @@ def test_first_run_onboarding_offers_once(client, tmp_path, monkeypatch):
     conn = _db()
     fn = lambda p: json.dumps({"action": "answer", "text": "You have 2 tasks."})
     r1 = router.route(conn, "how many tasks?", claude_fn=fn)
-    assert "set up my profile" in r1["reply"]                  # nudged on first message
+    assert "call me" in r1["reply"]                            # nudged for a name on first message
     r2 = router.route(conn, "how many tasks?", claude_fn=fn)
-    assert "set up my profile" not in r2["reply"]              # never nags again
+    assert "call me" not in r2["reply"]                        # never nags again
     # once an identity exists, no nudge even if the guard were cleared
     conn.execute("DELETE FROM settings WHERE key='onboarding_offered'"); conn.commit()
     vault_store.set_identity("Name: Sam (me)")
@@ -105,18 +105,33 @@ def test_first_run_onboarding_offers_once(client, tmp_path, monkeypatch):
     assert "set up my profile" not in r3["reply"]
 
 
-def test_web_onboarding_banner_shows_hides_and_dismisses(client, tmp_path, monkeypatch):
-    from core.db import set_setting, delete_setting
+def test_web_onboarding_banner_inline_save_and_dismiss(client, tmp_path, monkeypatch):
+    from core.db import get_setting, delete_setting
     prof = tmp_path / "profile.md"
     prof.write_text("## Who I am\n- TODO\n")          # unconfigured: no # Identity
     monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
     assert 'id="onboard"' in client.get("/").data.decode()       # nameless new user → shows
-    conn = _db(); set_setting(conn, "display_name", "Sam"); conn.close()
-    assert 'id="onboard"' not in client.get("/").data.decode()   # a name hides it
+    # saving the name inline sets it and hides the banner; greeting now shows it
+    assert client.post("/onboarding/name", data={"name": "Sam"}).status_code == 200
+    conn = _db(); assert get_setting(conn, "display_name") == "Sam"; conn.close()
+    home = client.get("/").data.decode()
+    assert 'id="onboard"' not in home and "Sam" in home
+    # nameless again → banner returns; ✕ dismiss hides it for good
     conn = _db(); delete_setting(conn, "display_name"); conn.close()
-    assert 'id="onboard"' in client.get("/").data.decode()       # nameless again → back
+    assert 'id="onboard"' in client.get("/").data.decode()
     assert client.post("/onboarding/dismiss").status_code == 200
-    assert 'id="onboard"' not in client.get("/").data.decode()   # dismissed for good
+    assert 'id="onboard"' not in client.get("/").data.decode()
+
+
+def test_router_set_name_saves_display_name(client):
+    import json
+    from core.db import get_setting
+    conn = _db()
+    res = router.route(conn, "call me Kelvin",
+                       claude_fn=lambda p: json.dumps({"action": "set_name", "name": "Kelvin"}))
+    assert res["applied"] == ["set_name"] and "Kelvin" in res["reply"]
+    assert get_setting(conn, "display_name") == "Kelvin"
+    conn.close()
 
 
 def test_refile_records_correction(client):

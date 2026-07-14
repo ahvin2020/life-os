@@ -59,3 +59,42 @@ def test_daemon_skips_future_reminder(client):
     n = capture_daemon.maybe_fire_reminders(conn, tg, "999")
     conn.close()
     assert n == 0 and tg.sent == []
+
+
+# ── dashboard add / dismiss / restore (the web twin of the bot) ──────────────────
+
+def test_web_add_reminder_shows_on_today(client):
+    r = client.post("/reminders", data={"text": "call the bank", "at": "2099-12-25T15:00"})
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["status"] == "ok" and j["text"] == "call the bank"
+    assert j["fire_at"].endswith("Z") and "15:00" in j["label"]
+    # the pending reminder is rendered on Today
+    home = client.get("/").get_data(as_text=True)
+    assert "call the bank" in home and j["label"] in home
+
+
+def test_web_add_reminder_rejects_bad_input(client):
+    assert client.post("/reminders", data={"text": "", "at": ""}).status_code == 400
+    assert client.post("/reminders", data={"text": "x", "at": "nonsense"}).status_code == 400
+
+
+def test_web_dismiss_then_restore(client):
+    add = client.post("/reminders", data={"text": "gym", "at": "2099-01-02T09:00"}).get_json()
+    rid = add["id"]
+    dis = client.post(f"/reminders/{rid}/dismiss")
+    assert dis.status_code == 200
+    dj = dis.get_json()
+    assert dj["text"] == "gym" and dj["fire_at"] == add["fire_at"]
+    # gone from the pending list
+    conn = _db()
+    assert conn.execute("SELECT 1 FROM reminders WHERE id=? AND fired_at IS NULL",
+                        (rid,)).fetchone() is None
+    conn.close()
+    # undo re-inserts it verbatim
+    res = client.post("/reminders/restore", data={"text": dj["text"], "fire_at": dj["fire_at"]})
+    assert res.status_code == 200 and res.get_json()["label"] == add["label"]
+
+
+def test_web_dismiss_missing_is_404(client):
+    assert client.post("/reminders/999/dismiss").status_code == 404

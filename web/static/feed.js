@@ -21,12 +21,34 @@
     if (qclip && qatt) qclip.addEventListener("click", function () {
       var inp = qatt.querySelector('input[type="file"]'); if (inp) inp.click();
     });
+    // Reminder mode reveals a datetime field and repurposes the same bar: the text
+    // becomes the reminder, the ⏰ strip its fire time.
+    var qwhen = document.getElementById("qwhen");
+    var qat = document.getElementById("qat");
+    var DEFAULT_PH = qin.getAttribute("placeholder");
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    function reminderDefault() {
+      // Next round hour, ≥30 min out — the common "later today" case.
+      var d = new Date(Date.now() + 30 * 60000);
+      d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+        "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+    }
     function setActive(t) { chips.forEach(function (c) { c.classList.toggle("active", c.dataset.t === t); }); }
+    // Full mode switch: highlight the chip AND toggle the reminder-only extras.
+    function applyMode(t) {
+      setActive(t);
+      var rem = t === "reminder";
+      if (qwhen) qwhen.hidden = !rem;
+      if (qclip) qclip.style.display = rem ? "none" : "";   // no attachments on a reminder
+      qin.setAttribute("placeholder", rem ? "Remind me to…" : DEFAULT_PH);
+      if (rem && qat && !qat.value) qat.value = reminderDefault();
+    }
     chips.forEach(function (c) {
-      c.addEventListener("click", function () { manual = c.dataset.t; setActive(manual); qin.focus(); });
+      c.addEventListener("click", function () { manual = c.dataset.t; applyMode(manual); qin.focus(); });
     });
     qin.addEventListener("input", function () {
-      if (manual) return;
+      if (manual) return;   // reminder is always a manual choice, so auto-detect never touches its UI
       var v = qin.value.trim().toLowerCase(), t = "auto";
       if (v.startsWith("t:")) t = "task";
       else if (v.startsWith("n:") || v.startsWith("i:")) t = "note";
@@ -65,19 +87,38 @@
       return true;       // note/journal: toast is enough, no reload
     }
     var busy = false;
+    function addReminder(text) {
+      var at = qat ? qat.value : "";
+      if (!at) { toast("Pick a time for the reminder"); if (qat) qat.focus(); return; }
+      busy = true;
+      post("/reminders", { text: text, at: at }).then(function (res) {
+        busy = false;
+        if (!res.ok) { toast((res.data && res.data.message) || "Could not set reminder"); return; }
+        qgo.textContent = "✓ Set"; qgo.classList.add("did");
+        qin.value = ""; if (qat) qat.value = ""; manual = null; applyMode("auto"); autogrow(qin);
+        toast("Reminder set — " + res.data.label);
+        if (window.LifeOS && window.LifeOS.remAdd) window.LifeOS.remAdd(res.data);
+        else reloadSoon();
+        setTimeout(function () { qgo.textContent = "Add"; qgo.classList.remove("did"); }, 900);
+      }).catch(function () { busy = false; toast("Could not set reminder"); });
+    }
     function add() {
       if (busy) return;                                // guard against double-tap / rapid Enter
       var text = qin.value.trim();
       var media = qatt ? getAttach(qatt).join(",") : "";
-      if (!text && !media) { qin.focus(); return; }   // a lone attachment is enough
       var active = document.querySelector("#qtypes .qt.active");
       var type = active ? active.dataset.t : "auto";
+      if (type === "reminder") {                        // reminder has its own endpoint + time
+        if (!text) { qin.focus(); return; }
+        addReminder(text); return;
+      }
+      if (!text && !media) { qin.focus(); return; }   // a lone attachment is enough
       busy = true;
       post("/capture", { text: text, type: type, media: media }).then(function (res) {
         busy = false;
         if (!res.ok) { toast("Could not add"); return; }
         qgo.textContent = "✓ Added"; qgo.classList.add("did");
-        qin.value = ""; manual = null; setActive("auto"); autogrow(qin);   // shrink back to one row
+        qin.value = ""; manual = null; applyMode("auto"); autogrow(qin);   // shrink back to one row
         if (qatt) setAttach(qatt, []);
         toast("Added → " + (res.data.label || "filed"));
         var handled = insertCapture(res.data || {});
@@ -95,29 +136,40 @@
     });
   })();
 
-  // ---- first-run onboarding banner: dismiss for good ---------------------------
+  // ---- first-run onboarding banner: capture the name inline, or dismiss --------
   (function () {
+    var el = document.getElementById("onboard");
+    if (!el) return;
+    var input = document.getElementById("onboard-name");
+    var save = document.getElementById("onboard-save");
     var x = document.getElementById("onboardx");
-    if (!x) return;
-    x.addEventListener("click", function () {
-      var el = document.getElementById("onboard");
-      if (el) el.remove();
-      post("/onboarding/dismiss", {});
-    });
+    function doSave() {
+      var name = (input.value || "").trim();
+      if (!name) { input.focus(); return; }
+      post("/onboarding/name", { name: name }).then(function (res) {
+        if (!res.ok) { toast("Could not save"); return; }
+        var greet = document.querySelector(".greet");           // update the greeting in place
+        if (greet && greet.textContent.indexOf(",") < 0) greet.textContent = greet.textContent.trim() + ", " + name;
+        el.remove();
+        toast("👋 Hi, " + name + "!");
+      });
+    }
+    if (save) save.addEventListener("click", doSave);
+    if (input) input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
+    if (x) x.addEventListener("click", function () { el.remove(); post("/onboarding/dismiss", {}); });
   })();
 
   // ---- Today calendar: view-only day/week/month, lazy-loaded (Google events) ---
   (function () {
+    // Two surfaces share this renderer: the /calendar page (the full grid, host #calcard)
+    // and Today's 'Up next' agenda (host #agbody). Either may be present; bail if neither.
     var card = document.getElementById("calcard");
-    if (!card) return;
+    var agBody = document.getElementById("agbody");
+    if (!card && !agBody) return;
     var body = document.getElementById("calbody");
     var label = document.getElementById("callabel");
     var views = document.getElementById("calviews");
-    var nav = card.querySelector(".calnav");
-    var agBody = document.getElementById("agbody");
-    var calopen = document.getElementById("calopen");
-    var ov = document.getElementById("caloverlay");
-    var calclose = document.getElementById("calclose");
+    var nav = card ? card.querySelector(".calnav") : null;
 
     var VIEW_KEY = "lifeos_cal_view";
     // ?calview=week deep-links a view; otherwise remember the last-chosen one. Date always
@@ -283,12 +335,14 @@
         var dstr = iso(d), evs = byDate[dstr] || [];
         html += '<div class="cmcell' + (d.getMonth() === cur ? "" : " out") + (dstr === todayStr ? " istoday" : "") + '" data-date="' + dstr + '">'
           + '<div class="cmnum mono">' + d.getDate() + '</div><div class="cmevs">';
-        evs.slice(0, 3).forEach(function (ev) {
+        evs.slice(0, 4).forEach(function (ev) {
+          // Time prefix shows on desktop; phone hides .cmt (CSS) so the title gets the
+          // full narrow cell — GCal's mobile month is title-only for the same reason.
           html += '<div class="cmev' + (ev.all_day ? " allday" : "") + '" title="' + esc(ev.summary) + '">'
             + (ev.all_day ? "" : '<span class="cmt mono">' + shortTime(timeOf(ev)) + '</span> ')
             + '<span class="cmname">' + esc(ev.summary) + '</span></div>';
         });
-        if (evs.length > 3) html += '<div class="cmmore">+' + (evs.length - 3) + ' more</div>';
+        if (evs.length > 4) html += '<div class="cmmore">+' + (evs.length - 4) + ' more</div>';
         html += '</div></div>';
         d = addDays(d, 1);
       }
@@ -361,10 +415,11 @@
     }
     function setView(v) { view = v; localStorage.setItem(VIEW_KEY, v); render(); }
 
-    views.addEventListener("click", function (e) {
+    // Grid nav/view controls live only on the /calendar page (host #calcard).
+    if (views) views.addEventListener("click", function (e) {
       var b = e.target.closest(".calview"); if (b) setView(b.dataset.view);
     });
-    nav.addEventListener("click", function (e) {
+    if (nav) nav.addEventListener("click", function (e) {
       var b = e.target.closest("[data-cal]"); if (!b) return;
       var act = b.dataset.cal, dir = act === "next" ? 1 : -1;
       if (act === "today") anchor = startOfDay(new Date());
@@ -374,21 +429,9 @@
       render();
     });
 
-    // The full grid is a destination, not the default: it opens in a modal overlay (the app's
-    // note/task-editor pattern) — centered over the page, closed by ✕ / backdrop / Esc — rather
-    // than expanding inline at the bottom (which read as "weird" and buried the rest of the page).
-    function openCal() { if (ov) { ov.classList.add("on"); render(); } }
-    function closeCal() { if (ov) ov.classList.remove("on"); }
-    if (calopen) calopen.addEventListener("click", openCal);
-    if (calclose) calclose.addEventListener("click", closeCal);
-    if (ov) ov.addEventListener("click", function (e) { if (e.target === ov) closeCal(); });  // backdrop
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && ov && ov.classList.contains("on")) closeCal();
-    });
-
-    // Default surface: the compact agenda. A ?calview= deep-link still opens the grid.
-    loadAgenda();
-    if (["day", "week", "month"].indexOf(qView) >= 0) openCal();
+    // Initial paint: Today shows the compact agenda; /calendar IS the full grid.
+    if (agBody) loadAgenda();
+    if (card) render();
 
     // Auto-refresh when the tab regains focus — a calendar left open otherwise goes
     // stale (events added elsewhere never appear). Throttled so flicking between tabs
@@ -398,8 +441,8 @@
       if (document.hidden || Date.now() - lastRefresh < 30000) return;
       lastRefresh = Date.now();
       cache = {};                          // drop the session cache → re-pull fresh
-      loadAgenda(true);
-      if (ov && ov.classList.contains("on")) render(true);
+      if (agBody) loadAgenda(true);
+      if (card) render(true);
     }
     document.addEventListener("visibilitychange", maybeRefresh);
     window.addEventListener("focus", maybeRefresh);
@@ -417,31 +460,82 @@
   });
 
   // ---- settings: run / restart background jobs (capture/triage/backup) ---------
-  // After a job runs (async — takes a couple seconds to stamp its heartbeat), re-fetch
-  // and refresh the health rows in place: honest new timestamp + dot, no fake "just now",
-  // no full-page reload. Buttons keep their handlers (we swap only the dot class + text).
-  function refreshHealthRows() {
+  // These jobs are fire-and-forget subprocesses that stamp their heartbeat only when they
+  // FINISH — a fixed timer can't know when that is. So after triggering we hold the button
+  // in a "running…" state and poll /settings until THIS row's timestamp advances past the
+  // pre-click value (the only honest "done" signal), refreshing every row's dot+stamp in
+  // place as we go, then flash the button green. No fake "just now", no full-page reload.
+  var POLL_EVERY = 1500, POLL_MAX = 10;                 // ~15s ceiling, then give up quietly
+  // Heartbeat stamps read as relative recency ("just now" / "3 min ago" / "2 hr ago") — the
+  // question this card answers — falling back to the absolute date past ~18h, where a relative
+  // count stops meaning anything. The raw ISO lives in data-ago, the exact time in the title
+  // (server-rendered absolute is the no-JS fallback); a 60s ticker keeps relatives from silently
+  // rotting while the tab sits open. Skips empty (never-ran) and the schedule "next …" mono.
+  function relAgo(iso) {
+    var t = Date.parse(iso);
+    if (isNaN(t)) return null;
+    var s = (Date.now() - t) / 1000;
+    if (s < 45) return "just now";
+    if (s < 90) return "1 min ago";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 5400) return "1 hr ago";
+    if (s < 64800) return Math.round(s / 3600) + " hr ago";
+    return null;                                          // >~18h → caller keeps the absolute
+  }
+  function paintAgo(root) {
+    (root || document).querySelectorAll(".mono.ago[data-ago]").forEach(function (el) {
+      var iso = el.getAttribute("data-ago");
+      if (!iso) return;                                   // never ran → leave "never"
+      var rel = relAgo(iso);
+      el.textContent = rel || (el.getAttribute("title") || el.textContent);
+    });
+  }
+  paintAgo();
+  setInterval(function () { paintAgo(); }, 60000);
+  // Change-detection reads the raw ISO (data-ago), NOT the rendered text — second-resolution,
+  // so a re-run in the same minute still registers, and relative-vs-absolute never confuses it.
+  function healthStamp(key, root) {
+    var el = (root || document).querySelector('.setrow[data-health="' + key + '"] .sdesc .mono.ago[data-ago]');
+    return el ? (el.getAttribute("data-ago") || "") : "";
+  }
+  function applyHealthRows(doc) {                        // swap dot class + desc from a fresh doc
+    document.querySelectorAll(".setrow[data-health]").forEach(function (live) {
+      var fresh = doc.querySelector('.setrow[data-health="' + live.dataset.health + '"]');
+      if (!fresh) return;
+      var fd = fresh.querySelector(".slabel .dot"), ld = live.querySelector(".slabel .dot");
+      if (fd && ld) ld.className = fd.className;
+      var fx = fresh.querySelector(".sdesc"), lx = live.querySelector(".sdesc");
+      if (fx && lx) lx.innerHTML = fx.innerHTML;
+    });
+    paintAgo();                                           // re-render the freshly-swapped stamps
+  }
+  function pollHealth(btn, key, label, before, tries) {
     fetch("/settings").then(function (r) { return r.text(); }).then(function (html) {
       var doc = new DOMParser().parseFromString(html, "text/html");
-      document.querySelectorAll(".setrow[data-health]").forEach(function (live) {
-        var fresh = doc.querySelector('.setrow[data-health="' + live.dataset.health + '"]');
-        if (!fresh) return;
-        var fd = fresh.querySelector(".slabel .dot"), ld = live.querySelector(".slabel .dot");
-        if (fd && ld) ld.className = fd.className;
-        var fx = fresh.querySelector(".sdesc"), lx = live.querySelector(".sdesc");
-        if (fx && lx) lx.innerHTML = fx.innerHTML;
-      });
+      applyHealthRows(doc);
+      if (healthStamp(key, doc) !== before) {           // heartbeat moved → the job ran
+        btn.textContent = "Done ✓"; btn.classList.add("ok");
+        setTimeout(function () {
+          btn.classList.remove("ok"); btn.disabled = false; btn.textContent = label;
+        }, 1600);
+      } else if (tries + 1 >= POLL_MAX) {                // slow/same-minute: leave row current
+        btn.disabled = false; btn.textContent = label;
+      } else {
+        setTimeout(function () { pollHealth(btn, key, label, before, tries + 1); }, POLL_EVERY);
+      }
     });
   }
   document.querySelectorAll('.runbtn[data-run]:not([data-run="claude"])').forEach(function (b) {
     b.addEventListener("click", function () {
-      var label = b.textContent;
-      b.disabled = true; b.textContent = "…";
-      post("/settings/run/" + b.dataset.run).then(function (res) {
-        b.disabled = false; b.textContent = label;
-        var ok = res.ok && res.data && res.data.status === "ok";
-        toast((res.data && res.data.message) || (ok ? "Started" : "Could not run"));
-        if (ok) setTimeout(refreshHealthRows, 2500);   // let the job finish, then refresh
+      var key = b.dataset.run, label = b.textContent, before = healthStamp(key);
+      b.disabled = true; b.textContent = "Running…";
+      post("/settings/run/" + key).then(function (res) {
+        if (res.ok && res.data && res.data.status === "ok") {
+          pollHealth(b, key, label, before, 0);         // button state carries success; no toast
+        } else {
+          b.disabled = false; b.textContent = label;
+          toast((res.data && res.data.message) || "Could not run");
+        }
       });
     });
   });
@@ -836,27 +930,16 @@
     });
   });
 
-  // ---- reminders card: add + dismiss timed pushes -----------------------------
+  // ---- reminders card: pure display of pending pushes + dismiss ----------------
+  // Adding happens in the top composer (Reminder mode); it calls window.LifeOS.remAdd
+  // to splice a new one in here without a reload — same live-update feel as a capture.
   (function () {
     var card = document.getElementById("remcard");
     if (!card) return;
-    var form = document.getElementById("remform");
     var list = document.getElementById("remlist");
     var empty = card.querySelector(".remempty");
-    var tin = document.getElementById("rem-text");
-    var atin = document.getElementById("rem-at");
 
-    function pad(n) { return (n < 10 ? "0" : "") + n; }
-    function localDefault() {
-      // Default to the next round hour, ≥30 min out — the common "later today" case.
-      var d = new Date(Date.now() + 30 * 60000);
-      d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
-      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
-        "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
-    }
-    function syncEmpty() {
-      if (empty) empty.hidden = !!list.querySelector(".remitem");
-    }
+    function syncEmpty() { if (empty) empty.hidden = !!list.querySelector(".remitem"); }
     function makeItem(r) {
       var el = document.createElement("div");
       el.className = "remitem";
@@ -877,34 +960,9 @@
       });
       list.insertBefore(el, before);
     }
-
-    var addBtn = document.getElementById("remadd");
-    if (addBtn) addBtn.addEventListener("click", function () {
-      form.hidden = !form.hidden;
-      addBtn.classList.toggle("on", !form.hidden);
-      if (!form.hidden) { if (!atin.value) atin.value = localDefault(); tin.focus(); }
-    });
-
-    var saving = false;
-    function save() {
-      var text = (tin.value || "").trim(), at = atin.value;
-      if (!text || !at) { toast("Need a reminder and a time"); return; }
-      if (saving) return; saving = true;
-      post("/reminders", { text: text, at: at }).then(function (res) {
-        saving = false;
-        if (!res.ok) { toast(res.data.message || "Could not set reminder"); return; }
-        insertSorted(makeItem(res.data));
-        syncEmpty();
-        tin.value = ""; atin.value = ""; form.hidden = true;
-        if (addBtn) addBtn.classList.remove("on");
-        toast("Reminder set — " + res.data.label);
-      }).catch(function () { saving = false; toast("Could not set reminder"); });
-    }
-    var saveBtn = document.getElementById("remsave");
-    if (saveBtn) saveBtn.addEventListener("click", save);
-    if (tin) tin.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); save(); }
-    });
+    // Exposed for the composer's Reminder mode.
+    window.LifeOS = window.LifeOS || {};
+    window.LifeOS.remAdd = function (r) { insertSorted(makeItem(r)); syncEmpty(); };
 
     list.addEventListener("click", function (e) {
       var x = e.target.closest(".remx");

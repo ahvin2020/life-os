@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Calendar{% endblock %}
+{% block content %}
+{# Full calendar: a destination page (the peek lives in Today's 'Up next' card). The
+   day/week/month grid, nav, and event fetch are the SAME renderer as the Today widget
+   (feed.js) — it binds by id, so this page just supplies the shell. Read-only. #}
+<div class="card calpage" id="calcard">
+  <div class="calbar">
+    <div class="calnav">
+      <button class="calnavbtn" type="button" data-cal="prev" aria-label="Previous">‹</button>
+      <button class="calnavbtn" type="button" data-cal="next" aria-label="Next">›</button>
+      <button class="caltoday" type="button" data-cal="today">Today</button>
+      <span class="callabel" id="callabel">…</span>
+    </div>
+    <div class="seg calviews" id="calviews">
+      <button class="segbtn calview" type="button" data-view="day">Day</button>
+      <button class="segbtn calview" type="button" data-view="week">Week</button>
+      <button class="segbtn calview" type="button" data-view="month">Month</button>
+    </div>
+  </div>
+  <div class="calbody" id="calbody"><div class="empty">Loading…</div></div>
+</div>
+{% endblock %}

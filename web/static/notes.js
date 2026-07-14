@@ -57,7 +57,7 @@
     if (elAttach) initAttach(elAttach);
     var current = null, creating = false, savedTimer = null;
     function flashSaved() {
-      elSaved.textContent = "saved ✓";
+      elSaved.textContent = "Saved ✓";
       clearTimeout(savedTimer);
       savedTimer = setTimeout(function () { elSaved.textContent = ""; }, 1800);
     }
@@ -110,7 +110,7 @@
     // typing/blur autosave). Returns a promise so the button can chain feedback.
     function save() {
       if (current) {
-        elSaved.textContent = "saving…";
+        elSaved.textContent = "Saving…";
         return post("/notes/" + current + "/save", {
           title: elTitle.value, tags: elTags.value, body: elBody.value,
           media: elAttach ? getAttach(elAttach).join(",") : ""
@@ -120,7 +120,7 @@
       // double-click creating two notes before the POST resolves).
       if (creating) return Promise.resolve();
       if (!elTitle.value.trim() && !elBody.value.trim()) return Promise.resolve();
-      creating = true; elSaved.textContent = "saving…";
+      creating = true; elSaved.textContent = "Saving…";
       return post("/notes/new", {
         title: elTitle.value, tags: elTags.value, body: elBody.value,
         media: elAttach ? getAttach(elAttach).join(",") : ""
