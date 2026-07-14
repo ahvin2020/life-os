@@ -77,7 +77,7 @@
         busy = false;
         if (!res.ok) { toast("Could not add"); return; }
         qgo.textContent = "✓ Added"; qgo.classList.add("did");
-        qin.value = ""; manual = null; setActive("auto");
+        qin.value = ""; manual = null; setActive("auto"); autogrow(qin);   // shrink back to one row
         if (qatt) setAttach(qatt, []);
         toast("Added → " + (res.data.label || "filed"));
         var handled = insertCapture(res.data || {});
@@ -88,7 +88,11 @@
       }).catch(function () { busy = false; toast("Could not add"); });
     }
     if (qgo) qgo.addEventListener("click", add);
-    qin.addEventListener("keydown", function (e) { if (e.key === "Enter") add(); });
+    // Enter submits; Shift+Enter (and mobile return) inserts a newline — the composer is a
+    // textarea, so multi-line captures (a note with line breaks) work like Todoist/Notion.
+    qin.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); }
+    });
   })();
 
   // ---- Today calendar: view-only day/week/month, lazy-loaded (Google events) ---
@@ -101,6 +105,8 @@
     var nav = card.querySelector(".calnav");
     var agBody = document.getElementById("agbody");
     var calopen = document.getElementById("calopen");
+    var ov = document.getElementById("caloverlay");
+    var calclose = document.getElementById("calclose");
 
     var VIEW_KEY = "lifeos_cal_view";
     // ?calview=week deep-links a view; otherwise remember the last-chosen one. Date always
@@ -333,7 +339,6 @@
       Array.prototype.forEach.call(views.querySelectorAll(".calview"), function (b) {
         b.classList.toggle("on", b.dataset.view === view);
       });
-      card.hidden = false;
       if (!silent) body.innerHTML = '<div class="empty">Loading…</div>';
       fetchRange(function (list) {
         if (list === null) { body.innerHTML = '<div class="empty">Couldn’t load calendar.</div>'; return; }
@@ -358,26 +363,21 @@
       render();
     });
 
-    // The full grid (calcard) is a destination, not the default. It reveals on demand.
-    if (calopen) {
-      calopen.addEventListener("click", function () {
-        if (card.hidden) {
-          render();
-          calopen.textContent = "Hide calendar";
-          card.scrollIntoView({ behavior: "smooth", block: "start" });
-        } else {
-          card.hidden = true;
-          calopen.textContent = "Full calendar →";
-        }
-      });
-    }
+    // The full grid is a destination, not the default: it opens in a modal overlay (the app's
+    // note/task-editor pattern) — centered over the page, closed by ✕ / backdrop / Esc — rather
+    // than expanding inline at the bottom (which read as "weird" and buried the rest of the page).
+    function openCal() { if (ov) { ov.classList.add("on"); render(); } }
+    function closeCal() { if (ov) ov.classList.remove("on"); }
+    if (calopen) calopen.addEventListener("click", openCal);
+    if (calclose) calclose.addEventListener("click", closeCal);
+    if (ov) ov.addEventListener("click", function (e) { if (e.target === ov) closeCal(); });  // backdrop
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && ov && ov.classList.contains("on")) closeCal();
+    });
 
     // Default surface: the compact agenda. A ?calview= deep-link still opens the grid.
     loadAgenda();
-    if (["day", "week", "month"].indexOf(qView) >= 0) {
-      render();
-      if (calopen) calopen.textContent = "Hide calendar";
-    }
+    if (["day", "week", "month"].indexOf(qView) >= 0) openCal();
 
     // Auto-refresh when the tab regains focus — a calendar left open otherwise goes
     // stale (events added elsewhere never appear). Throttled so flicking between tabs
@@ -388,7 +388,7 @@
       lastRefresh = Date.now();
       cache = {};                          // drop the session cache → re-pull fresh
       loadAgenda(true);
-      if (!card.hidden) render(true);
+      if (ov && ov.classList.contains("on")) render(true);
     }
     document.addEventListener("visibilitychange", maybeRefresh);
     window.addEventListener("focus", maybeRefresh);

@@ -69,6 +69,7 @@ def home():
     return render_template(
         "today.html", active="home",
         weekday=now.strftime("%A"), greeting=greeting,
+        owner_name=vault_store.owner_display_name(),
         yesterday_done=yesterday_done, all_done=all_done,
         # date only — a static render-time clock goes stale on screen, and the tz
         # name is settings info, not something to re-read every morning

@@ -558,10 +558,14 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 /* ---------- quick capture + today grid ---------- */
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(var(--accent-rgb),.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 .qcap:focus-within { border-color: rgba(var(--accent-rgb),.7); box-shadow: 0 0 0 3px var(--accent-dim); }
+/* drag a file over the bar → blue drop-glow (distinct from the amber focus ring) */
+.qcap.atdrag { border-color: var(--link); box-shadow: 0 0 0 3px var(--link-dim); }
 .qplus { color: var(--accent); font-size: 21px; font-weight: 600; flex: 0 0 auto; }
-.qcap input { flex: 1; background: none; border: none; padding: 8px 4px; color: var(--text); font: inherit; min-width: 0; }
-.qcap input:focus { outline: none; }
-.qcap input::placeholder { color: var(--muted); }
+.qcap input, .qcap textarea { flex: 1; background: none; border: none; padding: 8px 4px; color: var(--text); font: inherit; min-width: 0; }
+.qcap input:focus, .qcap textarea:focus { outline: none; }
+.qcap input::placeholder, .qcap textarea::placeholder { color: var(--muted); }
+/* multi-line composer: one row by default, auto-grows (core.js autogrow), scrolls when tall */
+.qcap textarea { box-sizing: border-box; resize: none; min-height: 36px; line-height: 1.4; max-height: 40vh; overflow-y: auto; display: block; }
 .qtypes { display: flex; gap: 4px; flex: 0 0 auto; }
 .qt { font-family: var(--mono); font-size: 11px; padding: 5px 11px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 .qt.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
@@ -847,6 +851,11 @@ button:active { transform: scale(.97); }
 /* .card is display:flex, which would override [hidden] — guard it. */
 .calcard[hidden] { display: none; }
 .calcard { margin-top: 14px; gap: 12px; }
+/* full calendar in a modal overlay: wider than a normal editor, relative for the ✕ */
+.calpanel { position: relative; width: min(880px, 100%); margin-top: 0; }
+.calpanel .calbar { padding-right: 26px; }        /* clear the absolute close button */
+.calx { position: absolute; top: 14px; right: 14px; z-index: 1; background: none; border: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.calx:hover { color: var(--text); background: var(--surface2); }
 .calbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .calnav { display: flex; align-items: center; gap: 8px; }
 .calnavbtn {

@@ -213,6 +213,27 @@ def identity_names() -> tuple:
     return own, family
 
 
+def owner_display_name() -> str:
+    """The owner's own name from the '# Identity' block (the '(me)' line, or a 'Name:' line),
+    stripped of the '(me)' marker — for greetings. '' when there's no identity yet, so a fresh/
+    unconfigured profile greets namelessly. Fully per-user (reads profile.md); nothing hardcoded —
+    whoever runs the app is greeted by the name in THEIR profile."""
+    text = read_profile()
+    lines = text.splitlines()
+    hdr = next((i for i, l in enumerate(lines) if l.strip() == _IDENTITY_HEADER), None)
+    if hdr is None:
+        return ""
+    for l in lines[hdr + 1:]:
+        if l.startswith("# "):
+            break
+        if ":" not in l:
+            continue
+        key, val = l.split(":", 1)
+        if "(me)" in val.lower() or key.strip().lower() == "name":
+            return re.sub(r"\(me\)", "", val, flags=re.I).strip().strip(",").strip()
+    return ""
+
+
 def profile_is_unconfigured() -> bool:
     """True when the profile has no real identity yet (missing file, empty, or the untouched
     starter with no '# Identity' section) — the signal for a first-run onboarding nudge. Once

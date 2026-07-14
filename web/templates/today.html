@@ -2,7 +2,7 @@
 {% import "_macros.html" as m %}
 {% block title %}Today{% endblock %}
 {% block content %}
-{% if greeting %}<div class="greet">{{ greeting }}, Sam</div>{% endif %}
+{% if greeting %}<div class="greet">{{ greeting }}{% if owner_name %}, {{ owner_name }}{% endif %}</div>{% endif %}
 <div class="vhead">
   <h1>{{ weekday }}</h1><span class="date">{{ date_str }}{% if yesterday_done %} · yesterday you finished {{ yesterday_done }}{% endif %}</span>
   <span class="spacer"></span>
@@ -14,7 +14,7 @@
 <div class="qcap">
   <span class="qplus">＋</span>
   {# short enough to survive mid widths uncropped; bare-URL capture still works #}
-  <input type="text" id="qin" placeholder="Add a task, note, or journal entry…" aria-label="Quick add">
+  <textarea id="qin" rows="1" placeholder="Add a task, note, or journal entry…" aria-label="Quick add"></textarea>
   <button class="qclip" id="qclip" type="button" title="Attach a file" aria-label="Attach a file">📎</button>
   <div class="qtypes" id="qtypes">
     <button class="qt active" data-t="auto" type="button">Auto</button>
@@ -116,21 +116,24 @@
   </div>
 </div>
 
-<div class="card calcard" id="calcard" hidden>
-  <div class="calbar">
-    <div class="calnav">
-      <button class="calnavbtn" type="button" data-cal="prev" aria-label="Previous">‹</button>
-      <button class="calnavbtn" type="button" data-cal="next" aria-label="Next">›</button>
-      <button class="caltoday" type="button" data-cal="today">Today</button>
-      <span class="callabel" id="callabel">…</span>
+<div class="overlay" id="caloverlay">
+  <div class="editor calcard calpanel" id="calcard" role="dialog" aria-label="Full calendar" aria-modal="true">
+    <button class="calx" id="calclose" type="button" aria-label="Close calendar">✕</button>
+    <div class="calbar">
+      <div class="calnav">
+        <button class="calnavbtn" type="button" data-cal="prev" aria-label="Previous">‹</button>
+        <button class="calnavbtn" type="button" data-cal="next" aria-label="Next">›</button>
+        <button class="caltoday" type="button" data-cal="today">Today</button>
+        <span class="callabel" id="callabel">…</span>
+      </div>
+      <div class="seg calviews" id="calviews">
+        <button class="segbtn calview" type="button" data-view="day">Day</button>
+        <button class="segbtn calview" type="button" data-view="week">Week</button>
+        <button class="segbtn calview" type="button" data-view="month">Month</button>
+      </div>
     </div>
-    <div class="seg calviews" id="calviews">
-      <button class="segbtn calview" type="button" data-view="day">Day</button>
-      <button class="segbtn calview" type="button" data-view="week">Week</button>
-      <button class="segbtn calview" type="button" data-view="month">Month</button>
-    </div>
+    <div class="calbody" id="calbody"><div class="empty">Loading…</div></div>
   </div>
-  <div class="calbody" id="calbody"><div class="empty">Loading…</div></div>
 </div>
 {% endblock %}
 {% block scripts %}
