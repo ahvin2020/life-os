@@ -907,20 +907,12 @@ def apply_action(conn, act, ctx) -> tuple:
         fire_local = (act.get("fire_at") or "").strip()
         if not text or not fire_local:
             return ("❓ Remind you to do what, and when?", None)
-        from core.db import get_tz
-        from datetime import datetime, timezone
+        from domain import reminders
         try:
-            dt = datetime.fromisoformat(fire_local)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=get_tz())
-            fire_utc = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except Exception:
+            r = reminders.create_reminder(conn, text, fire_local)
+        except (ValueError, TypeError):
             return ("❓ I couldn't read that time — try 'at 3pm' or 'in 10 minutes'.", None)
-        conn.execute("INSERT INTO reminders (text, fire_at, created, fired_at) VALUES (?,?,?,NULL)",
-                     (text, fire_utc, now_iso()))
-        conn.commit()
-        label = dt.strftime("%H:%M") if dt.date() == now_sg().date() else dt.strftime("%-d %b %H:%M")
-        return (f"⏰ Reminder set — {label}: {text}", None)
+        return (f"⏰ Reminder set — {r['label']}: {text}", None)
 
     if kind == "draft_email":
         from ai import google_client

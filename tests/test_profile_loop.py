@@ -105,6 +105,20 @@ def test_first_run_onboarding_offers_once(client, tmp_path, monkeypatch):
     assert "set up my profile" not in r3["reply"]
 
 
+def test_web_onboarding_banner_shows_hides_and_dismisses(client, tmp_path, monkeypatch):
+    from core.db import set_setting, delete_setting
+    prof = tmp_path / "profile.md"
+    prof.write_text("## Who I am\n- TODO\n")          # unconfigured: no # Identity
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    assert 'id="onboard"' in client.get("/").data.decode()       # nameless new user → shows
+    conn = _db(); set_setting(conn, "display_name", "Sam"); conn.close()
+    assert 'id="onboard"' not in client.get("/").data.decode()   # a name hides it
+    conn = _db(); delete_setting(conn, "display_name"); conn.close()
+    assert 'id="onboard"' in client.get("/").data.decode()       # nameless again → back
+    assert client.post("/onboarding/dismiss").status_code == 200
+    assert 'id="onboard"' not in client.get("/").data.decode()   # dismissed for good
+
+
 def test_refile_records_correction(client):
     # a note refiled to a task on the Today feed logs a correction signal
     vault_store.create_note(title="Buy milk", body="", tags=["unsorted"])

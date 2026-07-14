@@ -95,6 +95,17 @@
     });
   })();
 
+  // ---- first-run onboarding banner: dismiss for good ---------------------------
+  (function () {
+    var x = document.getElementById("onboardx");
+    if (!x) return;
+    x.addEventListener("click", function () {
+      var el = document.getElementById("onboard");
+      if (el) el.remove();
+      post("/onboarding/dismiss", {});
+    });
+  })();
+
   // ---- Today calendar: view-only day/week/month, lazy-loaded (Google events) ---
   (function () {
     var card = document.getElementById("calcard");
@@ -824,4 +835,90 @@
       });
     });
   });
+
+  // ---- reminders card: add + dismiss timed pushes -----------------------------
+  (function () {
+    var card = document.getElementById("remcard");
+    if (!card) return;
+    var form = document.getElementById("remform");
+    var list = document.getElementById("remlist");
+    var empty = card.querySelector(".remempty");
+    var tin = document.getElementById("rem-text");
+    var atin = document.getElementById("rem-at");
+
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    function localDefault() {
+      // Default to the next round hour, ≥30 min out — the common "later today" case.
+      var d = new Date(Date.now() + 30 * 60000);
+      d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+        "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+    }
+    function syncEmpty() {
+      if (empty) empty.hidden = !!list.querySelector(".remitem");
+    }
+    function makeItem(r) {
+      var el = document.createElement("div");
+      el.className = "remitem";
+      el.dataset.id = r.id; el.dataset.text = r.text; el.dataset.fire = r.fire_at;
+      var rt = document.createElement("span"); rt.className = "rt"; rt.textContent = r.text;
+      var wt = document.createElement("time"); wt.className = "rwhen"; wt.textContent = r.label;
+      var x = document.createElement("button");
+      x.className = "remx"; x.type = "button"; x.textContent = "✕";
+      x.setAttribute("aria-label", "Cancel reminder");
+      el.appendChild(rt); el.appendChild(wt); el.appendChild(x);
+      return el;
+    }
+    function insertSorted(el) {
+      // List is soonest-first; fire_at is UTC ISO, so lexical compare = chronological.
+      var fire = el.dataset.fire, before = null;
+      list.querySelectorAll(".remitem").forEach(function (it) {
+        if (!before && it.dataset.fire > fire) before = it;
+      });
+      list.insertBefore(el, before);
+    }
+
+    var addBtn = document.getElementById("remadd");
+    if (addBtn) addBtn.addEventListener("click", function () {
+      form.hidden = !form.hidden;
+      addBtn.classList.toggle("on", !form.hidden);
+      if (!form.hidden) { if (!atin.value) atin.value = localDefault(); tin.focus(); }
+    });
+
+    var saving = false;
+    function save() {
+      var text = (tin.value || "").trim(), at = atin.value;
+      if (!text || !at) { toast("Need a reminder and a time"); return; }
+      if (saving) return; saving = true;
+      post("/reminders", { text: text, at: at }).then(function (res) {
+        saving = false;
+        if (!res.ok) { toast(res.data.message || "Could not set reminder"); return; }
+        insertSorted(makeItem(res.data));
+        syncEmpty();
+        tin.value = ""; atin.value = ""; form.hidden = true;
+        if (addBtn) addBtn.classList.remove("on");
+        toast("Reminder set — " + res.data.label);
+      }).catch(function () { saving = false; toast("Could not set reminder"); });
+    }
+    var saveBtn = document.getElementById("remsave");
+    if (saveBtn) saveBtn.addEventListener("click", save);
+    if (tin) tin.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); save(); }
+    });
+
+    list.addEventListener("click", function (e) {
+      var x = e.target.closest(".remx");
+      if (!x) return;
+      var item = x.closest(".remitem");
+      post("/reminders/" + item.dataset.id + "/dismiss").then(function (res) {
+        if (!res.ok) { toast("Could not cancel"); return; }
+        removeWithUndo(item, {
+          msg: "Reminder cancelled",
+          restore: "/reminders/restore",
+          restoreData: { text: res.data.text, fire_at: res.data.fire_at },
+          after: syncEmpty,
+        });
+      });
+    });
+  })();
 })();

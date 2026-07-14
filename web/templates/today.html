@@ -11,6 +11,15 @@
   <span class="chip">{{ score.done }}/{{ score.total }} done</span>
 </div>
 
+{% if show_onboarding %}
+<div class="onboard" id="onboard">
+  <span class="onboard-i" aria-hidden="true">👋</span>
+  <span class="onboard-t">Welcome — tell me who you are, so I can greet you by name and tell your things from your family's.</span>
+  <a class="onboard-go" href="/settings">Set up →</a>
+  <button class="onboard-x" id="onboardx" type="button" aria-label="Dismiss">✕</button>
+</div>
+{% endif %}
+
 <div class="qcap">
   <span class="qplus">＋</span>
   {# short enough to survive mid widths uncropped; bare-URL capture still works #}
@@ -82,6 +91,27 @@
     <div class="card sub2 agendacard" id="agendacard">
       <div class="chead"><h2>Up next</h2><button class="calopen" id="calopen" type="button">Full calendar →</button></div>
       <div class="agbody" id="agbody"><div class="empty">Loading…</div></div>
+    </div>
+
+    <div class="card sub2 remcard" id="remcard">
+      <div class="chead"><h2>Reminders</h2><button class="remadd" id="remadd" type="button" aria-label="Add reminder">＋</button></div>
+      <form class="remform" id="remform" hidden>
+        <input type="text" id="rem-text" placeholder="Remind me to…" maxlength="200" autocomplete="off">
+        <div class="remrow">
+          <input type="datetime-local" id="rem-at">
+          <button class="remsave" id="remsave" type="button">Set</button>
+        </div>
+      </form>
+      <div class="remlist" id="remlist">
+        {% for r in reminders %}
+        <div class="remitem" data-id="{{ r.id }}" data-text="{{ r.text }}" data-fire="{{ r.fire_at }}">
+          <span class="rt">{{ r.text }}</span>
+          <time class="rwhen">{{ r.label }}</time>
+          <button class="remx" type="button" aria-label="Cancel reminder">✕</button>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="empty remempty"{% if reminders %} hidden{% endif %}>No reminders set.</div>
     </div>
 
     <div class="card sub2">

@@ -10,12 +10,12 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, render_template, render_template_string, request, jsonify, send_file, abort
 
 from core.web_core import db, today_iso
-from core.db import now_sg, get_setting
+from core.db import now_sg, get_setting, set_setting
 from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal)
 from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done, task_dict
 from domain.goals_core import goal_progress
-from domain import vault_store
+from domain import vault_store, reminders
 
 bp = Blueprint("main", __name__)
 
@@ -42,6 +42,7 @@ def home():
     any_goal = conn.execute("SELECT 1 FROM goals LIMIT 1").fetchone()
     goals_list = [dict(g) for g in conn.execute(
         "SELECT id, title FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()]
+    pending_reminders = reminders.pending_reminders(conn)
     conn.close()
     first_run = not any_task and not any_goal and not vault_store.list_notes() \
         and not vault_store.list_journal_days()
@@ -59,6 +60,10 @@ def home():
     # Greeting name: the user-set display name (Settings) wins, else derive from the profile
     # identity, else nameless — nothing hardcoded, so it's right for whoever runs the app.
     owner_name = get_setting(conn2, "display_name") or vault_store.owner_display_name()
+    # Web onboarding: if we don't know who they are (no display name AND no profile identity)
+    # and they haven't dismissed it, show a one-line banner nudging them to set up — the web
+    # counterpart of the bot's first-run nudge, so a web-first user isn't left nameless.
+    show_onboarding = bool(not owner_name and not get_setting(conn2, "web_onboard_dismissed"))
     sg_mid = datetime.fromisoformat(today).replace(tzinfo=now.tzinfo)
     y_start = (sg_mid - timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     y_end = sg_mid.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -78,7 +83,59 @@ def home():
         # name is settings info, not something to re-read every morning
         date_str=now.strftime("%-d %b %Y"),
         tasks=tasks, week=week, score=score, goals=goals, goals_list=goals_list,
-        first_run=first_run, journal_empty=journal_empty)
+        reminders=pending_reminders,
+        first_run=first_run, journal_empty=journal_empty, show_onboarding=show_onboarding)
+
+
+@bp.route("/onboarding/dismiss", methods=["POST"])
+def onboarding_dismiss():
+    """Dismiss the Today first-run profile banner for good (a per-user settings flag)."""
+    conn = db()
+    set_setting(conn, "web_onboard_dismissed", "1")
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@bp.route("/reminders", methods=["POST"])
+def reminder_add():
+    """Add a timed reminder from the dashboard (the web twin of the bot's set_reminder).
+    `at` is a local wall-clock datetime ('YYYY-MM-DDTHH:MM' from a datetime-local input)."""
+    text = (request.form.get("text") or "").strip()
+    at = (request.form.get("at") or "").strip()
+    if not text or not at:
+        return jsonify({"status": "error", "message": "need text and time"}), 400
+    conn = db()
+    try:
+        r = reminders.create_reminder(conn, text, at)
+    except ValueError:
+        conn.close()
+        return jsonify({"status": "error", "message": "couldn't read that time"}), 400
+    conn.close()
+    return jsonify({"status": "ok", **r})
+
+
+@bp.route("/reminders/<int:rid>/dismiss", methods=["POST"])
+def reminder_dismiss(rid):
+    """Cancel a pending reminder; returns its text+fire_at so the toast can undo."""
+    conn = db()
+    gone = reminders.dismiss_reminder(conn, rid)
+    conn.close()
+    if not gone:
+        return jsonify({"status": "error", "message": "not found"}), 404
+    return jsonify({"status": "ok", **gone})
+
+
+@bp.route("/reminders/restore", methods=["POST"])
+def reminder_restore():
+    """Undo a dismiss: re-insert the reminder verbatim (fire_at is UTC ISO)."""
+    text = (request.form.get("text") or "").strip()
+    fire_at = (request.form.get("fire_at") or "").strip()
+    if not text or not fire_at:
+        return jsonify({"status": "error", "message": "bad restore"}), 400
+    conn = db()
+    r = reminders.restore_reminder(conn, text, fire_at)
+    conn.close()
+    return jsonify({"status": "ok", **r})
 
 
 @bp.route("/capture", methods=["POST"])
