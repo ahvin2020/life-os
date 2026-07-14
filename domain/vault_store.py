@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime
+import secrets
+import sqlite3
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from core.db import get_tz, now_sg
@@ -37,6 +39,178 @@ def read_profile() -> str:
             return f.read()
     except OSError:
         return ""
+
+
+_LEARNED_HEADER = "# Learned rules"
+
+
+def append_learned_rule(line: str, cap: int = 15) -> bool:
+    """Append ONE imperative routing rule under a fenced '# Learned rules' section in
+    profile.md (created at EOF if absent). Deduped, capped at `cap` bullets — returns
+    False if full or the line is empty/duplicate, True on write. Only touches that
+    section; the rest of profile.md is preserved verbatim."""
+    line = " ".join((line or "").split()).strip().lstrip("-").strip()
+    if not line:
+        return False
+    try:
+        with open(PROFILE_PATH, encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = ""
+    lines = content.splitlines()
+    # locate the Learned-rules section and its bullet lines
+    hdr = next((i for i, l in enumerate(lines) if l.strip() == _LEARNED_HEADER), None)
+    if hdr is None:
+        block = ([""] if content and not content.endswith("\n\n") else []) + [_LEARNED_HEADER]
+        lines += block
+        hdr = len(lines) - 1
+    end = len(lines)
+    for j in range(hdr + 1, len(lines)):
+        if lines[j].startswith("# "):
+            end = j
+            break
+    bullets = [lines[j].strip()[2:].strip() for j in range(hdr + 1, end)
+               if lines[j].strip().startswith("- ")]
+    if any(line.lower() == b.lower() for b in bullets):
+        return False                          # already have this rule
+    if len(bullets) >= cap:
+        return False                          # section full — prune before adding
+    insert_at = end
+    while insert_at > hdr + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1                        # keep the bullet flush under the section
+    lines.insert(insert_at, f"- {line}")
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return True
+
+
+_CONTACTS_HEADER = "# Contacts"
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _norm_label(label: str) -> str:
+    """Lowercase alnum tokens of a contact label, for match/dedup ('Wife Jane Tan')."""
+    return " ".join(re.findall(r"[a-z0-9]+", (label or "").lower()))
+
+
+def upsert_contact(label: str, emails, cap: int = 40) -> bool:
+    """Add or update ONE contact under a '# Contacts' section in profile.md (created at EOF
+    if absent) — durable people→email(s) the assistant can use for draft_email `to` and
+    create_event `guests`. Injected into every prompt (it's part of profile.md), so a saved
+    contact is always in context. Merges: a matching line (same normalized label OR a shared
+    email) gains the new address instead of duplicating; a new person appends a bullet. Only
+    touches that section. False on no valid email or when the section is full (`cap`)."""
+    clean = []
+    for e in ([emails] if isinstance(emails, str) else (emails or [])):
+        m = _EMAIL_RE.search(str(e))
+        if m and m.group(0).lower() not in [c.lower() for c in clean]:
+            clean.append(m.group(0))
+    label = " ".join((label or "").split()).strip().rstrip(":").strip()
+    if not clean or not label:
+        return False
+    try:
+        with open(PROFILE_PATH, encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = ""
+    lines = content.splitlines()
+    hdr = next((i for i, l in enumerate(lines) if l.strip() == _CONTACTS_HEADER), None)
+    if hdr is None:
+        lines += ([""] if content and not content.endswith("\n\n") else []) + [_CONTACTS_HEADER]
+        hdr = len(lines) - 1
+    end = len(lines)
+    for j in range(hdr + 1, len(lines)):
+        if lines[j].startswith("# "):
+            end = j
+            break
+    nlabel = _norm_label(label)
+    # find a matching existing bullet: same normalized label, or an overlapping email
+    match = None
+    for j in range(hdr + 1, end):
+        s = lines[j].strip()
+        if not s.startswith("- ") or ":" not in s:
+            continue
+        lbl, rest = s[2:].split(":", 1)
+        existing_emails = _EMAIL_RE.findall(rest)
+        if _norm_label(lbl) == nlabel or (set(e.lower() for e in existing_emails)
+                                          & set(e.lower() for e in clean)):
+            merged, seen = [], set()
+            for e in existing_emails + clean:                  # keep order, dedup
+                if e.lower() not in seen:
+                    seen.add(e.lower())
+                    merged.append(e)
+            best_label = label if len(label) >= len(lbl.strip()) else lbl.strip()
+            lines[j] = f"- {best_label}: {', '.join(merged)}"
+            match = j
+            break
+    if match is None:
+        bullets = sum(1 for j in range(hdr + 1, end)
+                      if lines[j].strip().startswith("- "))
+        if bullets >= cap:
+            return False
+        insert_at = end
+        while insert_at > hdr + 1 and not lines[insert_at - 1].strip():
+            insert_at -= 1
+        lines.insert(insert_at, f"- {label}: {', '.join(clean)}")
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
+    return True
+
+
+_IDENTITY_HEADER = "# Identity"
+
+
+def set_identity(text: str) -> bool:
+    """Write (or replace) a fenced '# Identity' section at the TOP of profile.md — who
+    Kelvin is + family, so the assistant can tell 'my passport' from a relative's. Only
+    that section is touched; the rest of profile.md is preserved. False on empty input."""
+    block = (text or "").strip()
+    if not block:
+        return False
+    try:
+        with open(PROFILE_PATH, encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = ""
+    lines = content.splitlines()
+    section = [_IDENTITY_HEADER, block, ""]
+    hdr = next((i for i, l in enumerate(lines) if l.strip() == _IDENTITY_HEADER), None)
+    if hdr is None:
+        new = section + (["", *lines] if lines else [])
+    else:
+        end = len(lines)
+        for j in range(hdr + 1, len(lines)):
+            if lines[j].startswith("# "):
+                end = j
+                break
+        new = lines[:hdr] + section + lines[end:]
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(new).rstrip() + "\n")
+    return True
+
+
+def identity_names() -> tuple:
+    """Parse the '# Identity' section → (own_tokens, family_tokens) as lowercase name-word
+    sets. Own = the names on the line marked '(me)' (or a 'Name:' line); family = names on
+    the other identity lines. Used to tell 'my passport' from a relative's when picking a
+    document to send. ((), ()) if there's no identity section."""
+    text = read_profile()
+    lines = text.splitlines()
+    hdr = next((i for i, l in enumerate(lines) if l.strip() == _IDENTITY_HEADER), None)
+    if hdr is None:
+        return set(), set()
+    own, family = set(), set()
+    for l in lines[hdr + 1:]:
+        if l.startswith("# "):
+            break
+        if ":" not in l:
+            continue
+        key, val = l.split(":", 1)
+        is_self = "(me)" in val.lower() or key.strip().lower() == "name"
+        toks = {w for w in re.findall(r"[a-z0-9]+", val.lower().replace("(me)", ""))
+                if len(w) >= 2}
+        (own if is_self else family).update(toks)
+    return own, family
 
 
 def notes_dir() -> str:
@@ -67,6 +241,76 @@ def media_dir() -> str:
     d = os.path.join(VAULT_DIR, ".media")
     os.makedirs(d, exist_ok=True)
     return d
+
+
+_IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
+# Stored basenames embed the ORIGINAL filename after this marker so a document tile can
+# show "invoice.pdf" instead of a timestamp. Older pointers have no marker and just show
+# their basename (images don't display a name anyway).
+_NAME_SEP = "__"
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def media_is_image(name: str) -> bool:
+    """True if `name` (a pointer or basename) is an accepted image type — governs whether a
+    tile renders a thumbnail or a file card, and whether the modal previews inline."""
+    return os.path.splitext(media_display_name(name).lower())[1] in _IMG_EXTS
+
+
+def _safe_original(name: str) -> str:
+    """Sanitise an uploaded filename to a traversal-safe basename kept for display."""
+    base = os.path.basename(name or "").strip()
+    stem, ext = os.path.splitext(base)
+    stem = _SAFE_NAME_RE.sub("-", stem).strip("-.") or "file"
+    ext = _SAFE_NAME_RE.sub("", ext)
+    return (stem[:50] + ext[:10])
+
+
+def media_display_name(name: str) -> str:
+    """The human filename for a pointer/basename: the part after `__` if present, else the
+    bare basename. Traversal-safe (basename only)."""
+    base = os.path.basename(name or "")
+    return base.split(_NAME_SEP, 1)[1] if _NAME_SEP in base else base
+
+
+def new_media_basename(original: str) -> str:
+    """A unique, traversal-safe stored basename that embeds the original filename after
+    `__` (so a document tile shows 'invoice.pdf'). Shared by the web upload and the
+    Telegram document flow so both produce the same pointer shape."""
+    orig = _safe_original(original) or "file"
+    return now_sg().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4) + _NAME_SEP + orig
+
+
+def save_media_file(storage) -> str | None:
+    """Save an uploaded file (any type — a Werkzeug FileStorage) into vault/.media/ and
+    return its `vault/.media/<name>` pointer. The stored basename embeds the original
+    filename after `__` so documents keep a readable name. None if there's no filename."""
+    orig = getattr(storage, "filename", "") or ""
+    if not _safe_original(orig):
+        return None
+    base = new_media_basename(orig)
+    storage.save(os.path.join(media_dir(), base))
+    return "vault/.media/" + base
+
+
+def media_file_path(name: str):
+    """Absolute path of a media file by basename (path-traversal-guarded). None if absent."""
+    p = os.path.join(media_dir(), os.path.basename(name or ""))
+    return p if os.path.exists(p) else None
+
+
+def media_items(media_str: str) -> list:
+    """Split a comma-separated media value (frontmatter or tasks.media) into display items
+    [{name, url, is_image}] — name is the original filename, url the /media/<basename>
+    serve route, is_image governs thumbnail-vs-file-tile rendering."""
+    out = []
+    for p in (media_str or "").split(","):
+        p = p.strip()
+        if p:
+            base = os.path.basename(p)
+            out.append({"name": media_display_name(base), "url": "/media/" + base,
+                        "is_image": media_is_image(base)})
+    return out
 
 
 # ── slug + frontmatter ────────────────────────────────────────────────────────
@@ -140,9 +384,11 @@ _URL_RE = re.compile(r"https?://[^\s<>\")]+")
 
 
 def first_url(body: str):
-    """The first http(s) URL in a note body, or None."""
+    """The first http(s) URL in a text, or None. Trailing sentence punctuation
+    (`).,;'"`) is trimmed so the same link tokenizes identically everywhere — this is
+    the ONE first_url in the codebase (capture re-exports it) so URL dedupe can't drift."""
     m = _URL_RE.search(body or "")
-    return m.group(0) if m else None
+    return m.group(0).rstrip(").,;'\"") if m else None
 
 
 def _domain_of(body: str):
@@ -174,6 +420,7 @@ def _note_from_path(path: str) -> dict:
         "archived": meta.get("archived") or False,
         "audio": meta.get("audio") or "",
         "media": meta.get("media") or "",
+        "media_items": media_items(meta.get("media") or ""),
         "body": body,
         "snippet": snippet,
         "domain": _domain_of(body),
@@ -367,6 +614,95 @@ def restore_note(slug: str) -> bool:
     return True
 
 
+# ── attachment garbage collection ─────────────────────────────────────────────
+def _attachment_basenames(*pointers) -> set:
+    """Basenames of the .media/.audio files referenced by a set of comma-separated
+    frontmatter pointers (`vault/.media/a.jpg,b.jpg` → {'a.jpg', 'b.jpg'})."""
+    out = set()
+    for p in pointers:
+        for tok in (p or "").split(","):
+            tok = tok.strip()
+            if tok:
+                out.add(os.path.basename(tok))
+    return out
+
+
+def _referenced_attachments(conn, undo_cutoff: datetime) -> set:
+    """Every attachment basename still pointed at by something restorable: live notes,
+    every journal entry, any task row still in the DB (a soft-deleted task can be undone),
+    and notes trashed within the undo window (their `.md` is still restorable)."""
+    ref = set()
+    # Read notes DIRECTLY (not via list_notes, which swallows per-file errors): a file we
+    # can't read — a Synology mid-sync partial write, a transient lock — must RAISE so the
+    # caller aborts the GC, never treat it as "no attachments" and orphan a live original.
+    ndir = notes_dir()
+    for name in os.listdir(ndir):
+        if not name.endswith(".md"):
+            continue
+        with open(os.path.join(ndir, name), encoding="utf-8") as f:
+            meta, _ = _parse_frontmatter(f.read())
+        ref |= _attachment_basenames(meta.get("audio"), meta.get("media"))
+    for d in list_journal_days():
+        page = read_journal(d["day"])
+        if not page:
+            continue
+        for e in page["entries"]:
+            ref |= _attachment_basenames(e.get("audio"), e.get("media"))
+    try:
+        for row in conn.execute("SELECT media FROM tasks WHERE media IS NOT NULL AND media != ''"):
+            ref |= _attachment_basenames(row[0])
+    except sqlite3.Error:
+        pass
+    # notes still inside their trash-undo window keep their attachments alive
+    tdir = trash_dir()
+    for name in os.listdir(tdir):
+        if not name.endswith(".md"):
+            continue
+        m = re.search(r"\.(\d{14})\.md$", name)
+        if m:                                    # deletion stamp in the filename
+            try:
+                stamp = datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=get_tz())
+                if stamp < undo_cutoff:
+                    continue                     # window lapsed → no longer a reference
+            except ValueError:
+                pass
+        with open(os.path.join(tdir, name), encoding="utf-8") as f:   # raises → GC aborts
+            meta, _ = _parse_frontmatter(f.read())
+        ref |= _attachment_basenames(meta.get("audio"), meta.get("media"))
+    return ref
+
+
+def purge_orphan_attachments(conn, days: int = 30) -> int:
+    """Delete .media/.audio files nothing points at anymore, once past the `days` undo
+    window. A file is removed only when it is referenced by no live note, journal entry,
+    task, or still-restorable trashed note AND its own mtime is older than `days` — so a
+    just-captured attachment survives even if its journal entry was deleted (that entry's
+    Undo can still restore the pointer). Undo-safe and idempotent; also reclaims orphans
+    left by past deletions (which never cleaned up their files). Returns the count removed."""
+    undo_cutoff = now_sg() - timedelta(days=days)
+    try:
+        referenced = _referenced_attachments(conn, undo_cutoff)
+    except Exception:
+        # A vault file couldn't be read (mid-sync, lock, encoding glitch) → the reference
+        # set is incomplete. Skip this run entirely rather than risk deleting an attachment
+        # whose owner we simply failed to scan. GC is non-critical; a later run cleans up.
+        return 0
+    age_cutoff = undo_cutoff.timestamp()
+    removed = 0
+    for folder in (media_dir(), audio_dir()):
+        for name in os.listdir(folder):
+            if name in referenced:
+                continue
+            path = os.path.join(folder, name)
+            try:
+                if os.path.isfile(path) and os.path.getmtime(path) < age_cutoff:
+                    os.remove(path)
+                    removed += 1
+            except OSError:
+                continue
+    return removed
+
+
 # ── journal ───────────────────────────────────────────────────────────────────
 def journal_path(day: str) -> str:
     return os.path.join(journal_dir(), f"{day}.md")
@@ -394,15 +730,23 @@ def _parse_journal_entries(raw: str) -> list:
             if cur:
                 cur["text"] = cur["text"].strip()
                 entries.append(cur)
-            # A voice entry stows its recording pointer in the header slot as
-            # `audio:vault/.audio/…`; split it back out into its own field so the
-            # source label stays clean and the page can offer playback.
-            src = (m.group(2) or "").strip()
-            audio = ""
-            if src.startswith("audio:"):
-                audio = src[len("audio:"):].strip()
-                src = ""
-            cur = {"time": m.group(1), "source": src, "text": "", "audio": audio}
+            # The header slot carries ` · `-separated tokens: a plain source label, a
+            # voice recording (`audio:…`), and/or attached images (`media:a.jpg,b.jpg`).
+            # Split them back into their own fields so the label stays clean and the page
+            # can offer playback / a photo gallery.
+            src = audio = media = ""
+            for tok in (m.group(2) or "").split("·"):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                if tok.startswith("audio:"):
+                    audio = tok[len("audio:"):].strip()
+                elif tok.startswith("media:"):
+                    media = tok[len("media:"):].strip()
+                else:
+                    src = tok
+            cur = {"time": m.group(1), "source": src, "text": "", "audio": audio,
+                   "media": media, "media_items": media_items(media)}
         elif line.startswith("# "):
             continue  # page title header
         elif cur is not None:
@@ -413,14 +757,22 @@ def _parse_journal_entries(raw: str) -> list:
     return entries
 
 
-def append_journal_entry(day: str, text: str, source: str = "", audio: str | None = None) -> dict:
+def append_journal_entry(day: str, text: str, source: str = "", audio: str | None = None,
+                         media: str | None = None) -> dict:
     """Append a timestamped '## HH:MM' entry to the day's page, creating it if needed.
-    A voice entry's original recording pointer rides in the header slot as
-    `audio:<pointer>` (parsed back out by _parse_journal_entries → entry['audio'])."""
+    A voice recording rides in the header slot as `audio:<pointer>` and attached images
+    as `media:<a,b>` (both parsed back out by _parse_journal_entries)."""
     path = journal_path(day)
     now = now_sg()
     hhmm = now.strftime("%H:%M")
-    slot = ("audio:" + audio) if audio else source
+    tokens = []
+    if source:
+        tokens.append(source)
+    if audio:
+        tokens.append("audio:" + audio)
+    if media:
+        tokens.append("media:" + media)
+    slot = " · ".join(tokens)
     header = f"## {hhmm}" + (f" · {slot}" if slot else "")
     block = f"\n{header}\n{text.strip()}\n"
     if not os.path.exists(path):

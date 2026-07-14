@@ -20,7 +20,7 @@ from core.db import now_iso
 # Pure goal-domain helpers now live in goals_core (Blueprint-free so the bot
 # daemon / proactive AI can import them). Re-exported here for back-compat.
 from domain.goals_core import (
-    TIMEFRAMES, current_period_start, goal_progress, format_goal_progress,
+    TIMEFRAMES, current_period_start, create_goal, goal_progress, format_goal_progress,
     archive_expired_goals, purge_deleted_goals,
 )
 
@@ -87,16 +87,10 @@ def goal_new():
     unit = (f.get("unit") or "").strip() or None
     target = _num(f.get("target"))
     current = _num(f.get("current")) or 0
-    period = "week" if timeframe == "week" else "month"        # legacy CHECK-compatible
-    kind = "number" if (target is not None or unit) else "rollup"
     conn = db()
     with conn:
-        cur = conn.execute(
-            "INSERT INTO goals (title, period, period_start, kind, target_num, "
-            "current_num, timeframe, end_date, unit, created) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (title, period, current_period_start(timeframe), kind, target, current,
-             timeframe, end_date, unit, now_iso()))
-    gid = cur.lastrowid
+        gid = create_goal(conn, title, timeframe, target=target, current=current,
+                          unit=unit, end_date=end_date)
     conn.close()
     if is_ajax():
         return jsonify({"status": "ok", "id": gid})

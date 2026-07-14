@@ -4,51 +4,20 @@ the Telegram bot), which delegates to capture.route_capture."""
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, render_template, render_template_string, request, jsonify
+from flask import Blueprint, render_template, render_template_string, request, jsonify, send_file, abort
 
 from core.web_core import db, today_iso
 from core.db import now_sg
 from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
-                     convert_note_to_journal, convert_task_to_journal,
-                     imported_task_ids)
+                     convert_note_to_journal, convert_task_to_journal)
 from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done, task_dict
 from domain.goals_core import goal_progress
 from domain import vault_store
 
 bp = Blueprint("main", __name__)
-
-
-def captured_today(conn, today: str) -> list:
-    """Feed of what was captured today: notes and top-level tasks created today,
-    newest first, each showing where it was filed."""
-    feed = []
-    for n in vault_store.list_notes():
-        if "imported" in n["tags"]:
-            continue   # backfilled imports aren't "captured today" even if timestamped today
-        if (n["created"] or "")[:10] == today:
-            tag_str = " ".join("#" + t for t in n["tags"]) if n["tags"] else ""
-            feed.append({"source": "NOTE", "kind": "note", "ref": n["slug"],
-                         "text": n["title"],
-                         "dest": "→ Notes" + (f" · {tag_str}" if tag_str else ""),
-                         "ts": n["created"]})
-    skip_ids = imported_task_ids()   # bulk-imported tasks aren't "captured today"
-    # tasks.created is UTC ISO; "today" is an SG date — query the UTC window that
-    # spans SG midnight-to-midnight (a plain date match loses 00:00–08:00 SG captures)
-    sg_midnight = datetime.fromisoformat(today).replace(tzinfo=now_sg().tzinfo)
-    start = sg_midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end = (sg_midnight + timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = conn.execute(
-        "SELECT id, title, created FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
-        "AND created >= ? AND created < ? ORDER BY created DESC", (start, end)).fetchall()
-    for r in rows:
-        if r["id"] in skip_ids:
-            continue
-        feed.append({"source": "TASK", "kind": "task", "ref": r["id"],
-                     "text": r["title"], "dest": "→ Tasks", "ts": r["created"]})
-    feed.sort(key=lambda x: x["ts"], reverse=True)
-    return feed[:8]
 
 
 @bp.route("/")
@@ -67,8 +36,6 @@ def home():
     for g in goal_rows:
         goals.append({"title": g["title"], "kind": g["kind"],
                       "progress": goal_progress(conn, g)})
-
-    feed = captured_today(conn, today)
 
     # First-run onboarding: nothing in the DB and nothing in the vault yet.
     any_task = conn.execute("SELECT 1 FROM tasks LIMIT 1").fetchone()
@@ -106,7 +73,7 @@ def home():
         # date only — a static render-time clock goes stale on screen, and the tz
         # name is settings info, not something to re-read every morning
         date_str=now.strftime("%-d %b %Y"),
-        tasks=tasks, week=week, score=score, goals=goals, feed=feed, goals_list=goals_list,
+        tasks=tasks, week=week, score=score, goals=goals, goals_list=goals_list,
         first_run=first_run, journal_empty=journal_empty)
 
 
@@ -115,23 +82,16 @@ def capture():
     """Quick-add: composer, FAB, and (later) the Telegram daemon all land here."""
     text = (request.form.get("text") or "").strip()
     forced = request.form.get("type") or "auto"
-    if not text:
+    media = (request.form.get("media") or "").strip() or None
+    if not text and not media:
         return jsonify({"status": "error", "message": "empty"}), 400
     conn = db()
-    result = route_capture(conn, text, source="web", forced=forced)
-    # Server-rendered partials so the composer can splice the new item into the
-    # page in place (no full reload). Feed row for task/note; a This-week row too
-    # for a task (captures land at the top of the week pool). Same macros the home
-    # page uses, so the spliced markup is byte-identical to a reload.
+    result = route_capture(conn, text, source="web", forced=forced, media=media)
+    # A task captured on Today splices into This-week in place (captures land at the top
+    # of the week pool) — same macro the home page uses, so the markup matches a reload.
+    # Notes/journal have no card on Today; the toast is their confirmation.
     extra = {}
     kind = result.get("kind")
-    if kind in ("task", "note"):
-        c = {"source": kind.upper(), "kind": kind,
-             "ref": result.get("id") if kind == "task" else result.get("slug"),
-             "text": result.get("title") or text,
-             "dest": "→ " + (result.get("label") or "")}
-        extra["cap_html"] = render_template_string(
-            "{% import '_macros.html' as m %}{{ m.cap_item(c) }}", c=c)
     if kind == "task" and result.get("id"):
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (result["id"],)).fetchone()
         if row:
@@ -170,7 +130,59 @@ def capture_refile():
             result = convert_task_to_note(conn, tid)
         elif to == "journal":
             result = convert_task_to_journal(conn, tid)
+    if result:
+        # A manual refile means the auto-filing was wrong — a signal for the profile loop.
+        from core.db import record_correction
+        record_correction(conn, "refile", f"{kind}->{to}")
     conn.close()
     if not result:
         return jsonify({"status": "error", "message": "not found or no-op"}), 400
     return jsonify({"status": "ok", **result})
+
+
+@bp.route("/calendar/events")
+def calendar_events():
+    """Lazy feed for the Today-page calendar: primary-calendar events between two ISO
+    dates. Loaded by JS AFTER the page renders, so a slow/absent Google never blocks
+    Today. Read-only — creating events stays with the bot's confirm-first flow."""
+    start = (request.args.get("start") or today_iso())[:10]
+    end = (request.args.get("end") or start)[:10]
+    events, connected = [], False
+    try:
+        from ai import google_client
+        connected = google_client.is_configured()
+        if connected:
+            events = google_client.calendar_range(start, end)
+    except Exception:
+        events = []
+    return jsonify({"connected": connected, "events": events})
+
+
+@bp.route("/media/upload", methods=["POST"])
+def media_upload():
+    """Shared image-attachment upload (notes, journal, tasks). Saves to vault/.media/ and
+    returns the pointer; the editor then submits it with the note/task/journal on save."""
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"status": "error", "message": "no file"}), 400
+    pointer = vault_store.save_media_file(f)
+    if not pointer:
+        return jsonify({"status": "error", "message": "unsupported file type"}), 400
+    return jsonify({"status": "ok", "pointer": pointer,
+                    "url": "/media/" + os.path.basename(pointer)})
+
+
+@bp.route("/media/<path:name>")
+def media_serve(name):
+    """Serve an attached file by basename (traversal-guarded; Tailscale is the perimeter).
+    `?download=1` forces a download with the original filename; otherwise the browser
+    decides (images/PDFs render inline)."""
+    path = vault_store.media_file_path(name)
+    if not path:
+        abort(404)
+    if request.args.get("download"):
+        return send_file(path, as_attachment=True,
+                         download_name=vault_store.media_display_name(name))
+    resp = send_file(path)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp

@@ -111,7 +111,8 @@ a:hover { text-decoration: underline; }
 .nav-btn.active .count { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
 .side .setlink { margin-top: auto; }
 .side .foot { padding: 6px 10px 0; font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.7; }
-.dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--good); margin-right: 6px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--muted); margin-right: 6px; }
+.dot.ok { background: var(--good); }        /* health fails to grey, not to "fine" — green is explicit */
 .dot.stale { background: var(--bad); }
 .dot.off { background: var(--muted); }
 .cap .chg { flex: 0 0 auto; margin-top: 2px; font-family: var(--mono); font-size: 11px; color: var(--muted); background: none; border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; cursor: pointer; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
@@ -197,6 +198,7 @@ a:hover { text-decoration: underline; }
 .donefold > summary::before { content: "▸"; font-size: 10px; transition: transform var(--dur-fast) var(--ease); }
 .donefold[open] > summary::before { transform: rotate(90deg); }
 .donefold > summary:hover { color: var(--text); }
+.morefold[open] > summary .mf-more, .morefold:not([open]) > summary .mf-less { display: none; }
 .rec { font-size: 11.5px; color: var(--muted); }
 .subcount { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 /* "Do today" plan pill — compact labelled control; amber when on (needs-attention) */
@@ -366,9 +368,8 @@ a:hover { text-decoration: underline; }
 .note.txt .ntitle { font-size: 16px; }
 .note.txt .nsnip { -webkit-line-clamp: 4; }
 
-/* ---------- notes: utility row + on-this-day + shuffle ---------- */
+/* ---------- notes: utility row + on-this-day ---------- */
 .nutil { display: flex; gap: 10px; align-items: center; margin: 6px 2px 0; }
-.shufbtn { color: var(--accent); border-color: rgba(var(--accent-rgb),.4); }
 .archlabel { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .flashstrip { display: flex; align-items: center; gap: 14px; margin: 16px 2px 2px; padding: 12px 15px; border: 1px solid var(--border2); border-radius: 12px; background: linear-gradient(105deg, var(--accent-dim), transparent 70%); flex-wrap: wrap; }
 .flashstrip .flab { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); flex: 0 0 auto; }
@@ -376,35 +377,6 @@ a:hover { text-decoration: underline; }
 .flashitem { font-size: 13.5px; color: var(--muted); cursor: pointer; display: inline-flex; gap: 8px; align-items: baseline; }
 .flashitem:hover { color: var(--text); }
 .flashitem .fspan { font-family: var(--mono); font-size: 10.5px; color: var(--muted); flex: 0 0 auto; }
-
-.shufintro { color: var(--muted); font-size: 14px; margin: 2px 0 20px; }
-#shufdeck { max-width: 520px; margin: 0 auto; }
-.shufcard { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; overflow: hidden; animation: pop-in var(--dur) var(--ease) both; }
-.shufcard.hide { display: none; }
-.shufthumb { position: relative; background: var(--surface3); }
-.shufthumb.video { aspect-ratio: 16/9; }
-.shufthumb.photo, .shufthumb.link { aspect-ratio: 4/3; }
-.shufthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.shufthumb.noimg { aspect-ratio: 16/9; }
-.shufthumb.noimg img { display: none; }
-.shufbody { padding: 18px 20px 20px; }
-.shuftitle { font-size: 19px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em; overflow-wrap: anywhere; }
-.shufsnip { color: var(--muted); font-size: 14px; line-height: 1.55; margin-top: 8px; }
-.shufmeta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 12px; }
-.shufmeta a, .shufdone-sub a { color: var(--link); }
-.shufbar { display: flex; gap: 10px; align-items: center; justify-content: center; max-width: 520px; margin: 20px auto 0; }
-.shufbar.hide { display: none; }
-.shufbtn-x { padding: 11px 20px; border-radius: 99px; border: 1px solid var(--border2); font-weight: 600; font-size: 14px; color: var(--text); background: var(--surface); transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
-.shufbtn-x:hover { transform: translateY(-1px); }
-.shufbtn-x.delete:hover { border-color: var(--bad); color: var(--bad); }
-.shufbtn-x.archive:hover { border-color: var(--accent); color: var(--accent); }
-.shufbtn-x.keep { background: var(--accent); border-color: var(--accent); color: #1a1410; }
-.shufprog { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.shufdone { text-align: center; padding: 40px 20px; }
-.shufdone.hide { display: none; }
-.shufdone-big { font-size: 22px; font-weight: 700; }
-.shufdone-sub { color: var(--muted); margin-top: 8px; }
-@media (max-width: 560px) { .shufbar .shufprog { display: none; } }
 
 /* ---------- today: greeting + all-done ending ---------- */
 .greet { color: var(--accent); font-weight: 600; font-size: 15px; margin: 0 2px 3px; }
@@ -538,11 +510,37 @@ a:hover { text-decoration: underline; }
 .setsaved { font-family: var(--mono); font-size: 13px; color: var(--good); opacity: 0; transition: opacity var(--dur) var(--ease); }
 /* "why is this red" reason on a stale System-health row — amber = needs attention now */
 .hwhy { color: var(--accent); }
+/* connection card status note on its OWN line: amber = needs setup, red = actual error */
+.cnote { display: block; margin-top: 7px; font-size: 12.5px; }
+.cnote.warn { color: var(--accent); }
+.cnote.err { color: var(--bad); }
+/* inline red reason (a stale/stopped System-health row): matches its red dot */
+.cerr { color: var(--bad); }
 /* status dot leads the row label so it sits right above its reason line */
 .slabel .dot { vertical-align: middle; margin-right: 8px; }
 /* AI Test button result state — an inline green ✓ / red ✗ beats a missable toast */
 .runbtn.ok { color: var(--good); border-color: var(--good); }
 .runbtn.fail { color: var(--bad); border-color: var(--bad); }
+/* ── connection cards (Claude / Google / Dropbox) ── */
+.conn { margin-top: 12px; transition: border-color var(--dur) var(--ease); }
+.conn .setrow { padding: 17px 0; }                           /* a touch more breathing room */
+.conn .slabel { display: flex; align-items: center; gap: 13px; line-height: 1; }
+.conn .sdesc { line-height: 1.55; margin-top: 5px; }
+.conn.connected { border-color: rgba(var(--good-rgb),.4); }   /* quiet connected signal, no motion */
+/* bare connection-provider mark (no tile) — the glyph fills an 18px box flush-left, so its
+   left edge lines up with the body text column below it; gap does the spacing to the label.
+   NOTE: named .clogo, NOT .brand — .brand is already the sidebar "Life OS" title. */
+.clogo { display: inline-flex; align-items: center; width: 18px; height: 18px; flex: 0 0 auto; }
+.clogo svg { display: block; width: 18px; height: 18px; }
+.conn .slabel .dot { margin: 0 0 0 2px; }                    /* gap handles spacing; small nudge off the label */
+/* the ONE primary action per card state (Save credentials / Connect) reads as amber */
+.runbtn.primary { color: var(--accent); border-color: rgba(var(--accent-rgb),.5); background: var(--accent-dim); }
+.runbtn.primary:hover { border-color: var(--accent); transform: translateY(-1px); }
+/* setup steps: inputs stack full-width UNDER the instructions, left-aligned (reading order) */
+.credblock { margin-top: 13px; display: flex; flex-direction: column; gap: 9px; }
+.credblock[hidden] { display: none; }                        /* hidden attr must beat display:flex */
+.credblock .ctrl { width: 100%; max-width: 340px; font-family: var(--mono); font-size: 12px; min-height: 40px; }
+.linkish { background: none; border: none; color: var(--link); cursor: pointer; padding: 0; font: inherit; }
 .setsaved.on { opacity: 1; }
 /* enable checkboxes rendered as toggle switches */
 .setrow input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 40px; height: 23px; border-radius: 99px; background: var(--surface3); border: 1px solid var(--border2); position: relative; flex: 0 0 auto; cursor: pointer; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
@@ -777,6 +775,11 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
     white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
     -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35;
   }
+  /* the title sits in a nowrap+ellipsis .tt span (desktop single-line rows); on phone
+     it must inherit the wrap above, or a long title renders one line off the screen edge. */
+  .task .taskedit .tt {
+    white-space: normal; overflow: visible; text-overflow: clip; max-width: none;
+  }
   /* ≥44px effective hit areas on phones (CLAUDE.md UX). Visible controls stay
      compact; the tap zone is grown with a transparent ::after overlay, or a
      padded wrapper for the checkbox (inputs can't take ::after). */
@@ -840,7 +843,161 @@ button:active { transform: scale(.97); }
    gallery card + captured-today feed row) instead of a full-page reload */
 .removing { opacity: 0; transform: translateY(4px); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); pointer-events: none; }
 
+/* ── Today calendar: full-width, Google-style day/week/month (Google events) ── */
+/* .card is display:flex, which would override [hidden] — guard it. */
+.calcard[hidden] { display: none; }
+.calcard { margin-top: 14px; gap: 12px; }
+.calbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.calnav { display: flex; align-items: center; gap: 8px; }
+.calnavbtn {
+  width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border);
+  border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
+  cursor: pointer; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.calnavbtn:hover { color: var(--text); border-color: var(--muted); }
+.caltoday {
+  font-family: var(--mono); font-size: 11px; padding: 4px 10px; border: 1px solid var(--border);
+  border-radius: 99px; background: transparent; color: var(--muted); cursor: pointer; margin-left: 4px;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.caltoday:hover { color: var(--text); border-color: var(--muted); }
+.callabel { font-size: 16px; font-weight: 600; color: var(--text); margin-left: 6px; }
+.calviews { display: inline-flex; gap: 4px; }
+.calview {
+  font-family: var(--mono); font-size: 11px; padding: 4px 11px; border: 1px solid var(--border);
+  border-radius: 99px; background: transparent; color: var(--muted); cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.calview:hover { color: var(--text); border-color: var(--muted); }
+.calview.on { background: var(--surface3); border-color: var(--border2); color: var(--text); font-weight: 600; }
+
+/* Compact agenda ("Up next") — the default calendar surface in the right rail.
+   Restrained + cohesive (the app's --link blue, matching istoday everywhere) —
+   joy comes from hierarchy, relative day headers and a Today accent, not rainbow. */
+.agendacard .calopen { margin-left: auto; font-size: 12.5px; color: var(--link); padding: 0; }
+.agendacard .calopen:hover { text-decoration: underline; }
+.agbody { display: flex; flex-direction: column; gap: 11px; }
+.agday { display: flex; flex-direction: column; gap: 2px; }
+.agdh { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding-bottom: 3px; }
+.agday.istoday .agdh { color: var(--accent); }        /* today's header brighter still */
+.agev {
+  display: flex; align-items: baseline; gap: 9px; min-width: 0; font-size: 13px;
+  padding: 3px 0 3px 10px; border-left: 2px solid var(--accent);   /* calendar = the brand amber */
+  transition: border-color var(--dur) var(--ease);
+}
+.agev.allday { border-left-color: transparent; }
+.agt { flex: 0 0 auto; width: 54px; font-size: 11px; color: var(--muted); }
+.agev.allday .agt { width: auto; color: var(--accent); background: var(--accent-dim); border-radius: 3px; padding: 0 6px; }
+.agn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.agmore { font-size: 11px; color: var(--muted); padding-top: 1px; }
+
+/* Time-grid (day + week) */
+.cgrid { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cghead { display: grid; border-bottom: 1px solid var(--border); }
+.cggcorner { border-right: 1px solid var(--border); }
+.cgdaylabel { text-align: center; padding: 8px 4px; font-size: 12.5px; color: var(--muted); border-left: 1px solid var(--border); }
+.cgdaylabel.istoday { color: var(--accent); font-weight: 700; }
+.cgallday { display: grid; border-bottom: 1px solid var(--border); background: var(--surface); }
+.cggutlbl { font-size: 9.5px; color: var(--muted); text-align: right; padding: 5px 6px 0 0; }
+.cgadcell { border-left: 1px solid var(--border); padding: 4px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cgadev {
+  background: var(--accent-dim); color: var(--text); font-size: 11.5px; border-radius: 4px;
+  padding: 2px 6px; border-left: 3px solid var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cgbody { max-height: 470px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.cggrid { display: grid; position: relative; }
+.cggutter { position: relative; }
+.cghour { position: relative; height: 42px; }
+.cghour span { position: absolute; top: -7px; right: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.cgcol {
+  position: relative; border-left: 1px solid var(--border);
+  background-image: repeating-linear-gradient(var(--border) 0 1px, transparent 1px 42px);
+}
+.cgcol.istoday { background-color: rgba(var(--accent-rgb), .05); }
+.cgev {
+  position: absolute; box-sizing: border-box; background: var(--accent-dim); border-left: 3px solid var(--accent);
+  border-radius: 4px; padding: 2px 6px; font-size: 11.5px; line-height: 1.25; color: var(--text);
+  overflow: hidden; z-index: 2;
+}
+.cgevt { color: var(--muted); font-size: 10px; }
+.cgnow { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 3; }
+.cgnow::before { content: ""; position: absolute; left: -3px; top: -3px; width: 8px; height: 8px; border-radius: 99px; background: var(--accent); }
+
+/* Month with event titles in each cell */
+.cmonth { display: flex; flex-direction: column; gap: 5px; }
+.cmdow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cmdow span { font-family: var(--mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding-left: 3px; }
+.cmgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cmcell {
+  min-height: 96px; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; background: var(--surface);
+  cursor: pointer; display: flex; flex-direction: column; gap: 3px; overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+.cmcell:hover { border-color: var(--border2); }
+.cmcell.out { opacity: .42; }
+.cmcell.istoday { border-color: var(--accent); }
+.cmnum { font-size: 12px; color: var(--muted); align-self: flex-start; }
+.cmcell.istoday .cmnum { color: var(--accent); font-weight: 700; }
+.cmevs { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cmev { display: flex; align-items: baseline; gap: 4px; font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmev.allday { background: var(--accent-dim); border-radius: 3px; padding: 0 4px; }
+.cmt { font-size: 10px; color: var(--muted); flex: 0 0 auto; }
+.cmname { overflow: hidden; text-overflow: ellipsis; }
+.cmmore { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+
+/* Phone: the week time-grid can't shrink to 7 legible columns → horizontal scroll. */
+@media (max-width: 760px) {
+  .calcard .cgrid.wk { overflow-x: auto; }
+  .calcard .cgrid.wk .cghead, .calcard .cgrid.wk .cgallday, .calcard .cgrid.wk .cggrid { min-width: 660px; }
+  .cmcell { min-height: 68px; }
+  .cmev, .cmt { font-size: 10.5px; }
+}
+
 /* prefers-reduced-motion kill-switch — disables every transition AND animation */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* ── image attachments (notes / journal / tasks) + lightbox ─────────────────── */
+.attach { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--border2); border-radius: 8px; padding: 10px; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.attach.atdrag { border-color: var(--link); background: var(--link-dim); }
+.athumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.athumbs:empty { display: none; }
+.athumb { position: relative; width: 72px; height: 72px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.athumb img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; display: block; }
+.atx { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 99px; border: none; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+.atx:hover { background: rgba(0,0,0,.85); }
+.atadd { align-self: flex-start; }
+/* non-image attachment tile (widget) — icon + filename, opens the media modal */
+.atfile { position: relative; display: flex; align-items: center; gap: 8px; max-width: 230px; padding: 8px 30px 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); cursor: pointer; transition: border-color var(--dur-fast) var(--ease); }
+.atfile:hover { border-color: var(--border2); }
+.atficon { font-size: 18px; flex: 0 0 auto; line-height: 1; }
+.atfname { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.atfile .atx { top: 50%; right: 6px; transform: translateY(-50%); }
+/* capture-bar attach: a 📎 opens the picker; thumbs/tiles drop to their own row */
+.qcap { flex-wrap: wrap; }
+.qclip { flex: 0 0 auto; font-size: 15px; color: var(--muted); padding: 5px 7px; border-radius: 7px; transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease); }
+.qclip:hover { color: var(--text); background: var(--surface2); }
+.qattach { flex: 0 0 100%; border: none; padding: 2px 0 0; }
+.qattach:not(:has(.athumb, .atfile)) { display: none; }
+.lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
+.lightbox.on { display: flex; }
+.lightbox img { max-width: 96vw; max-height: 92vh; border-radius: 8px; box-shadow: 0 0 0 1px var(--border2); }
+/* smart media modal: PDF preview + doc card share this shell (cursor resets — not zoom-out) */
+.mediabox { background: var(--surface); border: 1px solid var(--border2); border-radius: 10px; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; cursor: default; }
+.mediabox iframe { width: 88vw; max-width: 900px; height: 80vh; border: none; background: #fff; }
+.mediabar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); }
+.mfname { flex: 1; font-family: var(--mono); font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mediabar a.mini { text-decoration: none; }
+.mediabar a.mini:hover { text-decoration: none; }
+.docbox { align-items: center; gap: 12px; padding: 36px 32px; text-align: center; }
+.docglyph { font-size: 52px; line-height: 1; }
+.docname { font-family: var(--mono); font-size: 13px; color: var(--text); max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dochint { font-size: 12px; color: var(--muted); }
+.docbox .mediabar { border-top: none; padding: 4px 0 0; }
+.jgallery { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.jgimg { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; }
+.jgfile { display: inline-flex; align-items: center; gap: 8px; max-width: 240px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); cursor: pointer; transition: border-color var(--dur-fast) var(--ease); }
+.jgfile:hover { border-color: var(--border2); }
+.jgficon { font-size: 16px; line-height: 1; }
+.jgfname { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

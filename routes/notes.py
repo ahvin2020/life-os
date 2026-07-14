@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template, request, jsonify, send_file, abort
 
-from core.web_core import db, respond, is_ajax
+from core.web_core import respond, is_ajax
+from core.db import today_iso
 from domain import vault_store
 from domain import thumbs
 
@@ -34,7 +35,6 @@ def _note_spaces(tags) -> list:
 
 @bp.route("/notes")
 def notes_page():
-    from core import db
     show_archived = request.args.get("archived") == "1"
     all_notes = vault_store.list_notes()
     for n in all_notes:                   # enrich for the card template
@@ -46,7 +46,7 @@ def notes_page():
     recent = shown
     space_counts = [(key, label, sum(1 for n in live if key in n["spaces"]))
                     for key, label, _tags in SPACES]
-    flashbacks = vault_store.notes_on_this_day(db.today_iso())
+    flashbacks = vault_store.notes_on_this_day(today_iso())
     for f in flashbacks:
         f["note"]["kind"] = thumbs.note_kind(f["note"])
     return render_template("notes.html", recent=recent,
@@ -64,19 +64,6 @@ def note_archive(slug):
     if not saved:
         return jsonify({"status": "error", "message": "not found"}), 404
     return jsonify({"status": "ok", "archived": saved["archived"]})
-
-
-@bp.route("/notes/shuffle")
-def notes_shuffle():
-    """Serendipity: a peaceful pass over older un-archived notes, one at a time, to keep
-    or archive. Deterministic 'random' (no Math.random dependency): oldest-touched first,
-    so it naturally resurfaces things you haven't looked at in a while."""
-    live = [n for n in vault_store.list_notes() if not n["archived"]]
-    for n in live:
-        n["kind"] = thumbs.note_kind(n)
-    live.sort(key=lambda n: n["updated_ts"])   # least-recently-touched first
-    deck = live[:20]
-    return render_template("shuffle.html", deck=deck, total=len(live), active="notes")
 
 
 @bp.route("/notes/thumb/<slug>")
@@ -131,7 +118,7 @@ def note_new():
     title = (f.get("title") or "Untitled").strip()
     body = f.get("body") or ""
     tags = [t.strip().lstrip("#") for t in (f.get("tags") or "").split(",") if t.strip()]
-    note = vault_store.create_note(title=title, body=body, tags=tags)
+    note = vault_store.create_note(title=title, body=body, tags=tags, media=(f.get("media") or None))
     if is_ajax():
         return jsonify({"status": "ok", "slug": note["slug"], "note": note})
     return respond(True, "Note created", to="/notes")
@@ -157,7 +144,8 @@ def note_save(slug):
         tags = [t.strip().lstrip("#") for t in f.get("tags").split(",") if t.strip()]
     else:
         tags = note["tags"]
-    saved = vault_store.write_note(slug, title, tags, body, note["pinned"], note["created"])
+    media = f.get("media") if "media" in f else None   # "" clears, missing preserves
+    saved = vault_store.write_note(slug, title, tags, body, note["pinned"], note["created"], media=media)
     return jsonify({"status": "ok", "note": saved})
 
 

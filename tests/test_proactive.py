@@ -430,6 +430,62 @@ def test_brief_no_notes_no_resurface(client):
     assert "(none)" in ctx["text"]
 
 
+def test_monthly_retro_window_and_content(client):
+    """The retrospective covers the PREVIOUS calendar month; a completion inside the
+    window is counted, one outside is not."""
+    conn = _db()
+    with conn:
+        a = create_task(conn, "June task")
+        conn.execute("UPDATE tasks SET done=1, completed_at=? WHERE id=?", ("2026-06-15", a))
+        b = create_task(conn, "July task")
+        conn.execute("UPDATE tasks SET done=1, completed_at=? WHERE id=?", ("2026-07-02", b))
+    ctx = proactive.build_monthly_context(conn, "2026-07-05",
+                                          now=datetime(2026, 7, 5, 17, 0, tzinfo=TZ))
+    conn.close()
+    assert ctx["month_label"] == "June 2026" and ctx["start"] == "2026-06-01"
+    assert "June task" in ctx["text"] and "July task" not in ctx["text"]
+
+
+def test_monthly_retro_january_edge(client):
+    conn = _db()
+    ctx = proactive.build_monthly_context(conn, "2026-01-04",
+                                          now=datetime(2026, 1, 4, 17, 0, tzinfo=TZ))
+    conn.close()
+    assert ctx["start"] == "2025-12-01" and ctx["month_label"] == "December 2025"
+
+
+def test_monthly_retro_guard_first_sunday_only(client, monkeypatch):
+    from core.db import delete_setting
+    monkeypatch.setattr(proactive, "monthly_retrospective", lambda c, d, n: "MONTHLY")
+    conn = _db()
+    tg = FakeTelegram()
+    # 2026-07-05 is the first Sunday of July
+    assert cd.maybe_send_monthly_retro(conn, tg, "1", now=datetime(2026, 7, 5, 17, 30, tzinfo=TZ))
+    # second Sunday (2026-07-12) must NOT fire
+    delete_setting(conn, "monthly_last_sent")
+    assert not cd.maybe_send_monthly_retro(conn, tg, "1", now=datetime(2026, 7, 12, 17, 30, tzinfo=TZ))
+    conn.close()
+
+
+def test_brief_surfaces_upcoming_renewal(client):
+    """An expiry within the lead window appears in the brief context; a far-future one
+    does not. Also surfaces in the deterministic digest fallback when ≤30 days."""
+    conn = _db()
+    with conn:
+        conn.execute("INSERT INTO doc_facts(path,label,category,value,event_date,extracted_at) "
+                     "VALUES ('/p','Passport','expiry','expires','2026-07-20','t')")
+        conn.execute("INSERT INTO doc_facts(path,label,category,value,event_date,extracted_at) "
+                     "VALUES ('/l','Lease','renewal','renew','2031-01-01','t')")
+    ctx = proactive.build_brief_context(conn, "2026-07-13",
+                                        now=datetime(2026, 7, 13, 7, 0, tzinfo=TZ))
+    digest = proactive.build_digest(conn, "2026-07-13",
+                                    now=datetime(2026, 7, 13, 7, 0, tzinfo=TZ))
+    conn.close()
+    assert "Passport" in ctx["text"] and "Lease" not in ctx["text"]
+    assert [r["label"] for r in ctx["renewals"]] == ["Passport"]
+    assert "Passport" in digest and "Renewals soon" in digest
+
+
 # ── FEATURE 4: weekly review ──────────────────────────────────────────────────
 def test_weekly_context_counts_postpones_and_window(client):
     conn = _db()

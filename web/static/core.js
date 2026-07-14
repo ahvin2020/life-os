@@ -53,7 +53,7 @@ window.post = post;   // exposed so per-page inline scripts (Shuffle) reuse CSRF
 // First click ARMS the button (label → "Confirm delete?", red .arming state); a
 // second click within 3s runs onConfirm. Auto-disarms after 3s. Undo toast stays
 // as the recovery net. btn._disarm lets a reopened editor reset a stale armed state.
-function confirmClick(btn, onConfirm) {
+function confirmClick(btn, onConfirm, confirmLabel) {
   if (!btn) return;
   var timer = null, label = btn.textContent;
   btn._disarm = function () {
@@ -64,7 +64,7 @@ function confirmClick(btn, onConfirm) {
   btn.addEventListener("click", function () {
     if (timer) { btn._disarm(); onConfirm(); return; }
     btn.classList.add("arming");
-    btn.textContent = "Confirm delete?";
+    btn.textContent = confirmLabel || "Confirm delete?";
     timer = setTimeout(btn._disarm, 3000);
   });
 }
@@ -270,3 +270,146 @@ document.querySelectorAll("textarea").forEach(function (t) {
   t.addEventListener("input", function () { autogrow(t); });
   autogrow(t);   // size correctly on load (respects each textarea's min-height)
 });
+
+// ---- shared file-attachment widget (notes / journal / tasks / capture) ------
+// Wires a `[data-attach]` block (with .athumbs, .atadd button, and a hidden file
+// input) for pick + drag-drop + paste upload of ANY file to /media/upload. Stores
+// the media POINTERS on root._media; the editor reads getAttach(root) on save.
+// Images render as thumbnails; other files as named tiles — both open in the
+// smart media modal. Idempotent per element.
+var _IMG_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "heic"];
+function pointerUrl(p) { return "/media/" + (p || "").split("/").pop(); }
+// Stored basenames embed the original filename after "__"; recover it for display.
+function pointerName(p) { var b = (p || "").split("/").pop(); var i = b.indexOf("__"); return i >= 0 ? b.slice(i + 2) : b; }
+function pointerExt(p) { var n = pointerName(p); var i = n.lastIndexOf("."); return i >= 0 ? n.slice(i + 1).toLowerCase() : ""; }
+function pointerIsImage(p) { return _IMG_EXTS.indexOf(pointerExt(p)) >= 0; }
+function getAttach(root) { return (root && root._media) ? root._media.slice() : []; }
+function setAttach(root, pointers) { if (root) { root._media = (pointers || []).filter(Boolean); renderAttach(root); } }
+function renderAttach(root) {
+  var wrap = root.querySelector(".athumbs"); if (!wrap) return;
+  wrap.innerHTML = "";
+  (root._media || []).forEach(function (p, i) {
+    var t = document.createElement("div");
+    if (pointerIsImage(p)) {
+      t.className = "athumb";
+      var img = document.createElement("img"); img.src = pointerUrl(p); img.loading = "lazy"; img.alt = "";
+      img.addEventListener("click", function () { openMedia(p); });
+      t.appendChild(img);
+    } else {
+      t.className = "atfile";
+      var ic = document.createElement("span"); ic.className = "atficon"; ic.textContent = fileGlyph(pointerExt(p));
+      var nm = document.createElement("span"); nm.className = "atfname"; nm.textContent = pointerName(p);
+      t.appendChild(ic); t.appendChild(nm);
+      t.addEventListener("click", function (e) { if (!e.target.classList.contains("atx")) openMedia(p); });
+    }
+    var x = document.createElement("button"); x.type = "button"; x.className = "atx"; x.textContent = "✕";
+    x.addEventListener("click", function (e) { e.stopPropagation(); root._media.splice(i, 1); renderAttach(root); });
+    t.appendChild(x); wrap.appendChild(t);
+  });
+}
+function fileGlyph(ext) {
+  if (ext === "pdf") return "📄";
+  if (["doc", "docx", "odt", "rtf", "txt", "md"].indexOf(ext) >= 0) return "📝";
+  if (["xls", "xlsx", "csv", "ods"].indexOf(ext) >= 0) return "📊";
+  if (["ppt", "pptx", "key", "odp"].indexOf(ext) >= 0) return "📑";
+  if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return "🗜";
+  if (["mp3", "wav", "m4a", "oga", "ogg"].indexOf(ext) >= 0) return "🎵";
+  if (["mp4", "mov", "mkv", "webm"].indexOf(ext) >= 0) return "🎬";
+  return "📎";
+}
+function initAttach(root) {
+  if (!root || root._attachInit) return; root._attachInit = true;
+  root._media = root._media || [];
+  var input = root.querySelector('input[type="file"]'), add = root.querySelector(".atadd");
+  function upload(files) {
+    Array.prototype.forEach.call(files || [], function (f) {
+      var fd = new FormData(); fd.append("file", f);
+      post("/media/upload", fd).then(function (res) {
+        if (res.ok && res.data && res.data.pointer) { root._media.push(res.data.pointer); renderAttach(root); }
+        else { toast((res.data && res.data.message) || "Upload failed"); }
+      });
+    });
+  }
+  root._upload = upload;   // let a host (e.g. the capture bar's 📎) drive uploads
+  if (add) add.addEventListener("click", function () { input && input.click(); });
+  if (input) input.addEventListener("change", function () { upload(input.files); input.value = ""; });
+  // The whole editor / capture bar is the drop + paste zone, so a drag onto the
+  // widget itself isn't required (it collapses when empty).
+  var scope = root.closest(".editor") || root.closest(".qcap") || root;
+  scope.addEventListener("dragover", function (e) { e.preventDefault(); scope.classList.add("atdrag"); });
+  scope.addEventListener("dragleave", function (e) { if (e.target === scope) scope.classList.remove("atdrag"); });
+  scope.addEventListener("drop", function (e) {
+    e.preventDefault(); scope.classList.remove("atdrag");
+    if (e.dataTransfer && e.dataTransfer.files) upload(e.dataTransfer.files);
+  });
+  scope.addEventListener("paste", function (e) {
+    var items = e.clipboardData && e.clipboardData.files;
+    if (items && items.length) { upload(items); }
+  });
+  renderAttach(root);
+}
+
+// ---- smart media modal: image / PDF preview inline, other files as a card ---
+// `src` may be a pointer ("vault/.media/x") or a plain URL; `name` optional label.
+function openMedia(src, name) {
+  var url = /^https?:|^\//.test(src) ? src : pointerUrl(src);
+  var fname = name || pointerName(src);
+  var ext = (fname.split(".").pop() || "").toLowerCase();
+  var isImg = _IMG_EXTS.indexOf(ext) >= 0;
+  var isPdf = ext === "pdf";
+  var lb = document.getElementById("lightbox");
+  if (!lb) {
+    lb = document.createElement("div"); lb.id = "lightbox"; lb.className = "lightbox";
+    lb.setAttribute("role", "dialog");
+    lb.setAttribute("aria-modal", "true");
+    lb.setAttribute("aria-label", "Media preview");
+    lb.tabIndex = -1;
+    var close = function () {
+      lb.classList.remove("on");
+      var prev = lb._lastFocus; lb._lastFocus = null;
+      if (prev && prev.focus) { try { prev.focus(); } catch (e) { } }   // restore focus
+    };
+    lb._close = close;
+    lb.addEventListener("click", function (e) { if (e.target === lb) close(); });
+    document.addEventListener("keydown", function (e) {
+      if (!lb.classList.contains("on")) return;
+      if (e.key === "Escape") { close(); return; }
+      if (e.key !== "Tab") return;
+      // trap focus inside the dialog while it's open
+      var f = lb.querySelectorAll('a[href], button, iframe, [tabindex]:not([tabindex="-1"])');
+      if (!f.length) { e.preventDefault(); lb.focus(); return; }
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    document.body.appendChild(lb);
+  }
+  var dl = url + (url.indexOf("?") >= 0 ? "&" : "?") + "download=1";
+  if (isImg) {
+    lb.innerHTML = '<img alt="">';
+    lb.querySelector("img").src = url;
+  } else if (isPdf) {
+    lb.innerHTML = '<div class="mediabox"><iframe title="preview"></iframe>' +
+      '<div class="mediabar"><span class="mfname"></span>' +
+      '<a class="mini" target="_blank" rel="noopener">Open</a>' +
+      '<a class="mini" download>Download</a></div></div>';
+    lb.querySelector("iframe").src = url;
+    lb.querySelector(".mfname").textContent = fname;
+    lb.querySelectorAll("a")[0].href = url;
+    lb.querySelectorAll("a")[1].href = dl;
+  } else {
+    lb.innerHTML = '<div class="mediabox docbox"><div class="docglyph"></div>' +
+      '<div class="docname"></div><div class="dochint">No inline preview for this file type.</div>' +
+      '<div class="mediabar"><a class="mini" target="_blank" rel="noopener">Open</a>' +
+      '<a class="mini" download>Download</a></div></div>';
+    lb.querySelector(".docglyph").textContent = fileGlyph(ext);
+    lb.querySelector(".docname").textContent = fname;
+    lb.querySelectorAll("a")[0].href = url;
+    lb.querySelectorAll("a")[1].href = dl;
+  }
+  lb._lastFocus = document.activeElement;   // remember opener → restore focus on close
+  lb.classList.add("on");
+  lb.focus();
+}
+// Back-compat alias — older callers passed a plain image URL.
+function openLightbox(url) { openMedia(url); }

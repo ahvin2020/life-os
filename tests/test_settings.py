@@ -60,6 +60,112 @@ def test_settings_page_prefills_defaults_as_values(client):
     assert "checked" in html
 
 
+# ── time format (24h/12h clock for display) ───────────────────────────────────
+def test_time_format_default_and_toggle(client):
+    from core.db import time_format, reload_time_format
+    from core.web_core import _fmt_time
+    conn = _db()
+
+    # default: no row → 24h, filter is a pass-through
+    reload_time_format()
+    assert time_format() == "24h"
+    assert _fmt_time("13:35") == "13:35"
+
+    # 12h: filter converts, dropping :00 (matching the calendar agenda)
+    client.post("/settings/save", data={"time_format": "12h"})
+    assert time_format() == "12h"
+    assert _fmt_time("13:35") == "1:35pm"
+    assert _fmt_time("09:00") == "9am"
+    assert _fmt_time("00:15") == "12:15am"
+
+    # invalid value resets to the default rather than persisting junk
+    client.post("/settings/save", data={"time_format": "junk"})
+    assert get_setting(conn, "time_format") is None
+    reload_time_format()
+    assert _fmt_time("13:35") == "13:35"
+
+
+def test_time_format_applies_to_journal_render(client):
+    """The stored 'HH:MM' entry key is untouched; only the visible label switches."""
+    day = today_iso()
+    vs_mod = __import__("domain.vault_store", fromlist=["append_journal_entry", "read_journal"])
+    vs_mod.append_journal_entry(day, "puncture again", source="")
+    t = vs_mod.read_journal(day)["entries"][0]["time"]         # e.g. 13:42
+
+    client.post("/settings/save", data={"time_format": "12h"})
+    html = client.get("/journal").data.decode()
+    hh, mm = t.split(":")
+    want = f"{int(hh) % 12 or 12}:{mm}{'am' if int(hh) < 12 else 'pm'}"
+    assert f'class="due">{want}' in html                       # 12h label
+    assert f'data-time="{t}"' in html                          # 24h key preserved
+
+
+# ── document folders card (Test + Save, own routes like the AI token) ──────────
+def test_settings_page_has_connections_section(client):
+    html = client.get("/settings").data.decode()
+    assert "Connections" in html
+    assert 'name="app_base_url"' in html and 'action="/settings/app-url"' in html
+
+
+def test_monthly_and_docscan_have_ui_and_persist(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="monthly_enabled"' in html and 'name="monthly_time"' in html
+    assert 'name="docscan_enabled"' in html and 'name="docscan_day"' in html
+    # off-switch works: unchecked → disabled; day/time persist
+    client.post("/settings/save", data={"monthly_time": "16:30", "docscan_day": "mon"})
+    conn = _db()
+    assert get_setting(conn, "monthly_enabled") == "0"      # absent checkbox → disabled
+    assert get_setting(conn, "monthly_time") == "16:30"
+    assert get_setting(conn, "docscan_day") == "mon"
+    conn.close()
+
+
+def test_app_url_save_validates_and_persists(client):
+    r = client.post("/settings/app-url", data={"app_base_url": "http://localhost:5070/"})
+    assert r.status_code in (200, 302)
+    conn = _db()
+    assert get_setting(conn, "app_base_url") == "http://localhost:5070"
+    conn.close()
+    bad = client.post("/settings/app-url", data={"app_base_url": "localhost:5070"},
+                      headers={"X-Requested-With": "XMLHttpRequest"})
+    assert bad.get_json()["status"] == "error"
+
+
+def test_doc_roots_save_round_trip(client, tmp_path):
+    r = client.post("/settings/doc-roots", data={
+        "document_roots": f"{tmp_path}\n  \nrelative/skip\n{tmp_path}\n",   # dedupe + drop relative/blank
+        "app_base_url": "http://nas.tail1234.ts.net:5070/"})
+    assert r.status_code in (200, 302)
+    conn = _db()
+    import json
+    assert json.loads(get_setting(conn, "document_roots")) == [str(tmp_path)]
+    assert get_setting(conn, "app_base_url") == "http://nas.tail1234.ts.net:5070"   # trailing / trimmed
+    conn.close()
+
+
+def test_doc_roots_test_reports_counts(client, tmp_path):
+    (tmp_path / "passport.pdf").write_text("x")
+    (tmp_path / "notes.txt").write_text("x")
+    r = client.post("/settings/test-doc-roots", data={"document_roots": str(tmp_path)},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    body = r.get_json()
+    assert body["status"] == "ok" and "2 documents" in body["message"]
+    assert "✓" in body["detail"]
+
+
+def test_doc_roots_test_flags_missing_folder(client):
+    r = client.post("/settings/test-doc-roots", data={"document_roots": "/no/such/folder"},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    body = r.get_json()
+    assert body["status"] == "error" and "✗" in body["detail"]
+
+
+def test_doc_roots_bad_base_url_rejected(client):
+    r = client.post("/settings/doc-roots", data={"document_roots": "", "app_base_url": "nas:5070"},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.get_json()["status"] == "error"
+
+
 # ── 2. round-trip ─────────────────────────────────────────────────────────────
 def test_settings_save_round_trip_persists_and_prefills(client):
     r = client.post("/settings/save", data={

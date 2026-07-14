@@ -466,7 +466,7 @@ def test_exchange_memory_cap_and_persistence(client):
     """Memory keeps only the last _MEM_MAX_PAIRS turns and survives a fresh connection
     (persisted in the settings table)."""
     conn = _db()
-    for i in range(5):
+    for i in range(13):
         router.route(conn, f"message number {i}",
                      claude_fn=_fn({"action": "answer", "text": f"reply {i}"}))
     conn.close()
@@ -477,9 +477,9 @@ def test_exchange_memory_cap_and_persistence(client):
     pairs = router.load_exchanges(conn2)
     conn2.close()
     assert row is not None                                      # persisted, not in-memory
-    assert len(pairs) == router._MEM_MAX_PAIRS == 3             # capped to last 3
-    assert pairs[-1]["u"] == "message number 4"                 # newest kept
-    assert pairs[0]["u"] == "message number 2"                  # oldest dropped
+    assert len(pairs) == router._MEM_MAX_PAIRS == 10            # capped to last 10
+    assert pairs[-1]["u"] == "message number 12"               # newest kept
+    assert pairs[0]["u"] == "message number 3"                 # oldest dropped
 
 
 def test_exchange_memory_entry_capped(client):
@@ -489,6 +489,32 @@ def test_exchange_memory_entry_capped(client):
     conn.close()
     assert len(pairs[-1]["u"]) <= router._MEM_ENTRY_CAP
     assert len(pairs[-1]["b"]) <= router._MEM_ENTRY_CAP
+
+
+def test_long_memo_prompt_asks_for_note_plus_tasks(client):
+    conn = _db()
+    ctx = router.build_context(conn)
+    conn.close()
+    p = router.build_prompt("a long rambling memo about the week", ctx, long_memo=True)
+    assert "LONG MEMO" in p and "one create_task per concrete action" in p
+    # a normal message has no such block
+    p2 = router.build_prompt("buy milk", ctx, long_memo=False)
+    assert "LONG MEMO" not in p2
+
+
+def test_conditional_reminder_rule_in_contract():
+    assert "Conditional follow-ups" in router._CONTRACT
+
+
+def test_record_exchange_reply_cap_override(client):
+    """The user side is always capped at _MEM_ENTRY_CAP; the bot side honours reply_cap
+    so a long list answer from the deterministic tier survives instead of truncating."""
+    conn = _db()
+    router.record_exchange(conn, "u" * 5000, "b" * 5000, reply_cap=1200)
+    pair = router.load_exchanges(conn)[-1]
+    conn.close()
+    assert len(pair["u"]) == router._MEM_ENTRY_CAP          # user side unchanged
+    assert 400 < len(pair["b"]) <= 1200                     # bot side kept up to the larger cap
 
 
 # ── invalid id → clarify (never mutate the wrong row) ─────────────────────────

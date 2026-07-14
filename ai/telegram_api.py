@@ -37,6 +37,17 @@ class Telegram:
     def send_chat_action(self, chat_id, action="typing"):
         return self._call("sendChatAction", chat_id=chat_id, action=action)
 
+    def send_document(self, chat_id, path, caption=None):
+        """Upload a local file to the chat (document retrieval 'file' delivery)."""
+        import requests
+        data = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption
+        with open(path, "rb") as f:
+            r = requests.post(f"{self.api}/sendDocument", data=data,
+                              files={"document": f}, timeout=120)
+        return r.json()
+
     def answer_callback_query(self, callback_id, text=None):
         params = {"callback_query_id": callback_id}
         if text:

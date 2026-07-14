@@ -28,6 +28,16 @@
         {% for d in triage_days %}<option value="{{ d }}" {% if weekly_day == d %}selected{% endif %}>{{ daynames[d] }}</option>{% endfor %}
       </select><input class="ctrl schedtime schedctl" type="time" name="weekly_time" value="{{ values.weekly_time or defaults.weekly_time }}" aria-label="Weekly review time"><input type="checkbox" name="weekly_enabled" value="1" {% if toggles.weekly_enabled %}checked{% endif %} aria-label="Enable weekly review"></div>
     </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Monthly retrospective</div><div class="sdesc">First-Sunday look-back over the month's wins and journal</div></div>
+      <div class="sctrls"><input class="ctrl schedtime schedctl" type="time" name="monthly_time" value="{{ values.monthly_time or defaults.monthly_time }}" aria-label="Monthly retrospective time"><input type="checkbox" name="monthly_enabled" value="1" {% if toggles.monthly_enabled %}checked{% endif %} aria-label="Enable monthly retrospective"></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Document scan</div><div class="sdesc">Pre-reads new documents (bookings, expiry dates) so questions answer instantly</div></div>
+      <div class="sctrls"><select class="ctrl schedctl" name="docscan_day" style="min-width:110px" aria-label="Document scan day">
+        {% for d in triage_days %}<option value="{{ d }}" {% if docscan_day == d %}selected{% endif %}>{{ daynames[d] }}</option>{% endfor %}
+      </select><input type="checkbox" name="docscan_enabled" value="1" {% if toggles.docscan_enabled %}checked{% endif %} aria-label="Enable document scan"></div>
+    </div>
   </div>
 
   <div class="sect"><span>Voice &amp; capture</span><span class="rule"></span></div>
@@ -48,6 +58,13 @@
     <div class="setrow">
       <div class="sinfo"><div class="slabel">App timezone</div><div class="sdesc">Used for all &ldquo;today&rdquo; logic; blank = this device (<span class="mono">{{ machine_tz }}</span>)</div></div>
       <div class="sctrls"><select class="ctrl" name="app_tz" style="min-width:180px">{% for z in tz_options %}<option value="{{ z }}" {% if z == tz_current %}selected{% endif %}>{{ z }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">Time format</div><div class="sdesc">How clock times show — 24-hour or am/pm</div></div>
+      <div class="sctrls"><select class="ctrl" name="time_format" style="min-width:180px">
+        <option value="24h" {% if (values.time_format or defaults.time_format) == '24h' %}selected{% endif %}>24-hour (13:35)</option>
+        <option value="12h" {% if values.time_format == '12h' %}selected{% endif %}>12-hour (1:35pm)</option>
+      </select></div>
     </div>
     <div class="setrow">
       <div class="sinfo"><div class="slabel">Archive done after</div><div class="sdesc">Completed tasks move to the archive</div></div>
@@ -78,49 +95,161 @@
   <div class="setsave"><span class="setsaved" id="setsaved" aria-live="polite">Saved ✓</span></div>
 </form>
 
-<div class="sect" style="margin-top:14px"><span>AI connection</span><span class="rule"></span></div>
 {% set aist = status.health.ai %}
 {% set ai_why = (ai.detail ~ (' — token may have expired' if ai.auth else '')) if aist == 'stale'
-                else ('Token saved but not verified — hit Test' if ai.token_set
-                      else 'Not connected — no token yet, so AI falls back to plain capture') %}
-<form method="post" action="/settings/claude-token" class="setgroup" id="aiform">
+                else ('Saved — hit Test' if ai.token_set else 'Not connected — AI falls back to plain capture') %}
+{% set G_LOGO %}<svg viewBox="0 0 48 48"><path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/><path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"/><path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/></svg>{% endset %}
+{% set D_LOGO %}<svg viewBox="0 0 40 40" fill="#0061FF"><path d="M11.6 3L2 9.2l9.6 6.2L21.2 9.2 11.6 3zM2 21.6l9.6 6.2 9.6-6.2-9.6-6.2L2 21.6zM21.2 21.6l9.6 6.2 9.6-6.2-9.6-6.2-9.6 6.2zM40.4 9.2L30.8 3l-9.6 6.2 9.6 6.2 9.6-6.2zM21.2 29.5l-9.6 6.2L8 33.4v2.3l13.2 7.9 13.2-7.9v-2.3l-3.6 2.3-9.6-6.2z"/></svg>{% endset %}
+{% set C_LOGO %}<svg viewBox="0 0 100 100" fill="#D97757"><rect x="44" y="6" width="12" height="88" rx="6"/><rect x="6" y="44" width="88" height="12" rx="6"/><rect x="44" y="6" width="12" height="88" rx="6" transform="rotate(45 50 50)"/><rect x="44" y="6" width="12" height="88" rx="6" transform="rotate(-45 50 50)"/></svg>{% endset %}
+{% set T_LOGO %}<svg viewBox="0 0 24 24" fill="#26A5E4"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.56 8.23l-1.86 8.76c-.14.62-.5.77-1.02.48l-2.82-2.08-1.36 1.31c-.15.15-.28.28-.57.28l.2-2.88 5.24-4.73c.23-.2-.05-.32-.35-.12l-6.47 4.07-2.79-.87c-.6-.19-.62-.6.13-.89l10.87-4.19c.5-.18.94.12.78.83z"/></svg>{% endset %}
+
+<div class="sect" style="margin-top:14px"><span>Connections</span><span class="rule"></span></div>
+
+<form class="setgroup" id="appurlform" method="post" action="/settings/app-url">
   <div class="setrow">
-    <div class="sinfo">
-      <div class="slabel">Provider</div>
-      <div class="sdesc">Pick your AI engine and paste its <b>OAuth token</b> — a subscription sign-in, not a pay-per-use API key. More engines appear here as they're wired up.</div>
-    </div>
+    <div class="sinfo"><div class="slabel">App URL</div><div class="sdesc">Where you reach this app — builds the connect links below. Blank = localhost.</div></div>
     <div class="sctrls">
-      <select class="ctrl" name="ai_provider" style="min-width:170px" aria-label="AI provider">
-        {% for p in ai_providers %}<option value="{{ p.id }}"{% if p.id == active_provider.id %} selected{% endif %}{% if not p.wired %} disabled{% endif %}>{{ p.label }}{% if not p.wired %} — soon{% endif %}</option>{% endfor %}
-      </select>
+      <input class="ctrl" type="text" name="app_base_url" value="{{ app_base_url }}" spellcheck="false" style="width:230px;font-family:var(--mono);font-size:12px" placeholder="http://localhost:5070" aria-label="App URL" data-autosave>
     </div>
   </div>
+</form>
+
+<form method="post" action="/settings/claude-token" class="setgroup conn{{ ' connected' if aist == 'ok' }}" id="aiform">
   <div class="setrow">
     <div class="sinfo">
-      <div class="slabel"><span class="dot {{ aist }}" title="{{ ai_why }}"></span>{{ active_provider.label }} token</div>
-      <div class="sdesc">Powers the bot's actions, link enrichment, Q&amp;A and the proactive briefs. <span id="ai-status">{% if aist == 'ok' %}<span class="mono">Connected · last ok {{ status.claude_last_ok | fstamp }}</span>.{% else %}<span class="hwhy">{{ ai_why }}.</span>{% endif %}</span></div>
-      <div class="sdesc" style="margin-top:7px">Get one: run <button type="button" class="cmdcopy" data-copy="{{ active_provider.oauth_cmd }}" title="Copy command">{{ active_provider.oauth_cmd }} ⧉</button> in your Mac terminal, sign in, then paste it here. <a href="{{ active_provider.manage_url }}" target="_blank" rel="noopener">Manage&nbsp;/&nbsp;revoke&nbsp;↗</a></div>
+      <div class="slabel"><span class="clogo">{{ C_LOGO }}</span>Claude</div>
+      <div class="sdesc">Powers the bot, Q&amp;A and proactive briefs.{% if aist == 'ok' %} <span class="mono">Connected.</span>{% endif %}</div>
+      {% if aist == 'off' %}<div class="cnote warn">Not connected — AI falls back to plain capture.</div>
+      {% elif aist == 'stale' %}<div class="cnote err">AI token isn't working — {{ ai_why }}.</div>{% endif %}
     </div>
     <div class="sctrls">
-      <input class="ctrl" style="width:210px;font-family:var(--mono);font-size:12px" type="text" name="oauth_token" autocomplete="off" spellcheck="false" placeholder="{% if ai.token_set %}saved — paste to replace{% else %}paste token{% endif %}" aria-label="{{ active_provider.label }} OAuth token">
-      <button class="runbtn" type="button" data-run="claude">Test</button>
-      <button class="runbtn" type="submit" disabled title="Test the token first">Save</button>
+      {% if aist == 'ok' %}<button class="runbtn" type="button" data-test="claude">Test</button><button class="runbtn" type="button" data-disconnect-claude>Disconnect</button>{% endif %}
     </div>
   </div>
+  {% if aist != 'ok' %}
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="sdesc"><b>Paste a subscription token:</b> run <button type="button" class="cmdcopy" data-copy="claude setup-token">copy claude setup-token</button> in your terminal, sign in, then paste the result:</div>
+      <div class="credblock">
+        <input class="ctrl" type="text" name="oauth_token" autocomplete="off" spellcheck="false" placeholder="{% if ai.token_set %}saved — paste to replace{% else %}paste token{% endif %}" aria-label="Claude token">
+        <button class="runbtn primary" type="submit" id="claude-connect" style="align-self:flex-start">Connect</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</form>
+
+<form method="post" action="/settings/telegram-creds" class="setgroup conn{{ ' connected' if integrations.telegram.connected }}" id="telegramform">
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="slabel"><span class="clogo">{{ T_LOGO }}</span>Telegram</div>
+      <div class="sdesc">Chat with and capture to your bot.{% if integrations.telegram.connected %}{% if integrations.telegram.user %} <span class="mono">You: {{ integrations.telegram.user }}.</span>{% endif %}{% if status.health.capture == 'ok' %} <span class="mono">Live.</span>{% endif %}{% endif %}</div>
+      {% if integrations.telegram.connected and status.health.capture != 'ok' %}<div class="cnote err">The capture daemon (below) is stopped — the bot won't reply. Restart it.</div>{% endif %}
+    </div>
+    <div class="sctrls">
+      {% if integrations.telegram.connected %}<button class="runbtn" type="button" data-test="telegram">Test</button><button class="runbtn" type="button" data-disconnect="telegram">Disconnect</button>{% endif %}
+    </div>
+  </div>
+  {% if not integrations.telegram.connected %}
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="sdesc"><b>Set up once:</b> create a bot with <a href="https://telegram.me/BotFather" target="_blank" rel="noopener">@BotFather</a> for the token; message <a href="https://telegram.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a> for your user ID:</div>
+      <div class="credblock">
+        <input class="ctrl" type="text" name="telegram_bot_token" placeholder="bot token" autocomplete="off" spellcheck="false" aria-label="Telegram bot token">
+        <input class="ctrl" type="text" name="telegram_allowed_user" placeholder="your Telegram user ID" spellcheck="false" aria-label="Telegram user ID">
+        <button class="runbtn primary" type="submit" style="align-self:flex-start">Connect</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</form>
+
+<form method="post" action="/settings/google-creds" class="setgroup conn{{ ' connected' if integrations.google.connected }}" id="googleform">
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="slabel"><span class="clogo">{{ G_LOGO }}</span>Google</div>
+      <div class="sdesc">Calendar + inbox feed your brief; drafts emails & creates events (you confirm).{% if integrations.google.connected and not integrations.google.failing %} <span class="mono">Connected.</span>{% endif %}</div>
+      {% if integrations.google.failing %}<div class="cnote err">A recent Google call failed — the token may have expired. Reconnect.</div>{% endif %}
+    </div>
+    <div class="sctrls">
+      {% if integrations.google.connected %}
+      <button class="runbtn" type="button" data-test="google">Test</button><button class="runbtn" type="button" data-disconnect="google">Disconnect</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if not integrations.google.connected %}
+  <div class="setrow">
+    <div class="sinfo">
+      {% if integrations.google.creds_set %}
+      <div class="sdesc"><span class="mono">✓ Credentials saved</span> — sign in to finish; a bad key fails here instantly. · <button type="button" class="linkish" data-reveal="google-cred">Replace</button></div>
+      <div class="credblock" id="google-cred" hidden>
+        <input class="ctrl" type="text" name="google_client_id" placeholder="new client ID" spellcheck="false" aria-label="Google client ID">
+        <input class="ctrl" type="text" name="google_client_secret" placeholder="new client secret" autocomplete="off" spellcheck="false" aria-label="Google client secret">
+        <button class="runbtn" type="submit" style="align-self:flex-start">Save credentials</button>
+      </div>
+      <div style="margin-top:13px"><a class="runbtn primary" href="/settings/google/connect" data-connect>Sign in with Google</a></div>
+      {% else %}
+      <div class="sdesc"><b>Set up once:</b> <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud</a> → enable Gmail + Calendar → create a Web OAuth client with redirect <button type="button" class="cmdcopy" data-copy="{{ app_base_url or 'http://localhost:5070' }}/settings/google/callback">copy callback</button>, then paste its ID + secret:</div>
+      <div class="credblock">
+        <input class="ctrl" type="text" name="google_client_id" placeholder="client ID" spellcheck="false" aria-label="Google client ID">
+        <input class="ctrl" type="text" name="google_client_secret" placeholder="client secret" autocomplete="off" spellcheck="false" aria-label="Google client secret">
+        <button class="runbtn primary" type="submit" style="align-self:flex-start">Save credentials</button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</form>
+
+<form method="post" action="/settings/dropbox-creds" class="setgroup conn{{ ' connected' if integrations.dropbox.connected }}" id="dropboxform">
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="slabel"><span class="clogo">{{ D_LOGO }}</span>Dropbox</div>
+      <div class="sdesc">Search, send & pre-read your Dropbox documents.{% if integrations.dropbox.connected and not integrations.dropbox.failing %} <span class="mono">Connected.</span>{% endif %}</div>
+      {% if integrations.dropbox.failing %}<div class="cnote err">A recent Dropbox call failed — the token may have been revoked. Reconnect.</div>{% endif %}
+    </div>
+    <div class="sctrls">
+      {% if integrations.dropbox.connected %}
+      <button class="runbtn" type="button" data-test="dropbox">Test</button><button class="runbtn" type="button" data-disconnect="dropbox">Disconnect</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if not integrations.dropbox.connected %}
+  <div class="setrow">
+    <div class="sinfo">
+      {% if integrations.dropbox.creds_set %}
+      <div class="sdesc"><span class="mono">✓ Credentials saved</span> — sign in to finish; a bad key fails here instantly. · <button type="button" class="linkish" data-reveal="dropbox-cred">Replace</button></div>
+      <div class="credblock" id="dropbox-cred" hidden>
+        <input class="ctrl" type="text" name="dropbox_app_key" placeholder="new app key" spellcheck="false" aria-label="Dropbox app key">
+        <input class="ctrl" type="text" name="dropbox_app_secret" placeholder="new app secret" autocomplete="off" spellcheck="false" aria-label="Dropbox app secret">
+        <button class="runbtn" type="submit" style="align-self:flex-start">Save credentials</button>
+      </div>
+      <div style="margin-top:13px"><a class="runbtn primary" href="/settings/dropbox/connect" data-connect>Sign in with Dropbox</a></div>
+      {% else %}
+      <div class="sdesc"><b>Set up once:</b> <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener">Dropbox app</a> → scoped access, files read → redirect <button type="button" class="cmdcopy" data-copy="{{ app_base_url or 'http://localhost:5070' }}/settings/dropbox/callback">copy callback</button>, then paste its key + secret:</div>
+      <div class="credblock">
+        <input class="ctrl" type="text" name="dropbox_app_key" placeholder="app key" spellcheck="false" aria-label="Dropbox app key">
+        <input class="ctrl" type="text" name="dropbox_app_secret" placeholder="app secret" autocomplete="off" spellcheck="false" aria-label="Dropbox app secret">
+        <button class="runbtn primary" type="submit" style="align-self:flex-start">Save credentials</button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </form>
 
 <div class="sect"><span>System health</span><span class="rule"></span></div>
 <div class="setgroup">
   <div class="setrow" data-health="capture">
-    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.capture }}" title="{{ health_why.capture }}"></span>Capture daemon</div><div class="sdesc"><span class="mono">{{ status.capture_last_ran | fstamp }}</span>{% if status.health.capture == 'ok' %} · <span class="mono">{{ nextrun.capture }}</span>{% else %} · <span class="hwhy">{{ health_why.capture }}</span>{% endif %}</div></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.capture }}" title="{{ health_why.capture }}"></span>Capture daemon</div><div class="sdesc"><span class="mono">{{ status.capture_last_ran | fstamp }}</span>{% if status.health.capture == 'ok' %} · <span class="mono">{{ nextrun.capture }}</span>{% endif %}</div>{% if status.health.capture != 'ok' %}<div class="cnote {{ 'err' if status.health.capture == 'stale' else 'warn' }}">{{ health_why.capture }}</div>{% endif %}</div>
     <div class="sctrls">{% if capture_restartable %}<button class="runbtn" type="button" data-run="capture">Restart</button>{% endif %}</div>
   </div>
   <div class="setrow" data-health="triage">
-    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.triage }}" title="{{ health_why.triage }}"></span>#unsorted sweep</div><div class="sdesc"><span class="mono">{{ status.triage_last_ran | fstamp }}</span>{% if status.health.triage == 'ok' %} · next <span class="mono">{{ nextrun.triage }}</span>{% else %} · <span class="hwhy">{{ health_why.triage }}</span>{% endif %}</div></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.triage }}" title="{{ health_why.triage }}"></span>#unsorted sweep</div><div class="sdesc"><span class="mono">{{ status.triage_last_ran | fstamp }}</span>{% if status.health.triage == 'ok' %} · next <span class="mono">{{ nextrun.triage }}</span>{% endif %}</div>{% if status.health.triage != 'ok' %}<div class="cnote {{ 'err' if status.health.triage == 'stale' else 'warn' }}">{{ health_why.triage }}</div>{% endif %}</div>
     <div class="sctrls"><button class="runbtn" type="button" data-run="triage">Run now</button></div>
   </div>
   <div class="setrow" data-health="backup">
-    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.backup }}" title="{{ health_why.backup }}"></span>Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span>{% if status.health.backup == 'ok' %} · next <span class="mono">{{ nextrun.backup }}</span>{% else %} · <span class="hwhy">{{ health_why.backup }}</span>{% endif %}</div></div>
+    <div class="sinfo"><div class="slabel"><span class="dot {{ status.health.backup }}" title="{{ health_why.backup }}"></span>Nightly backup</div><div class="sdesc"><span class="mono">{{ status.backup_last_ran | fstamp }}</span>{% if status.health.backup == 'ok' %} · next <span class="mono">{{ nextrun.backup }}</span>{% endif %}</div>{% if status.health.backup != 'ok' %}<div class="cnote {{ 'err' if status.health.backup == 'stale' else 'warn' }}">{{ health_why.backup }}</div>{% endif %}</div>
     <div class="sctrls"><button class="runbtn" type="button" data-run="backup">Run now</button></div>
   </div>
 </div>

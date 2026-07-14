@@ -47,15 +47,7 @@ def test_note_created_on_first_save_with_content(client):
     assert any(n["slug"] == slug for n in vault_store.list_notes())
 
 
-# ── captured-today feed ───────────────────────────────────────────────────────
-def test_feed_excludes_imported_notes(client):
-    vault_store.create_note(title="Captured normally", body="x", tags=["idea"])
-    vault_store.create_note(title="Backfilled reel", body="y", tags=["imported", "link"])
-    home = client.get("/").data.decode()
-    assert "Captured normally" in home         # a genuine capture shows in the feed
-    assert "Backfilled reel" not in home       # a #imported backfill is skipped
-
-
+# ── note/task soft-delete + restore ───────────────────────────────────────────
 def test_feed_delete_note_soft_deletes_and_restores(client):
     n = vault_store.create_note(title="Feed note", body="z", tags=[])
     slug = n["slug"]
@@ -84,21 +76,6 @@ def test_feed_delete_task_soft_deletes_and_restores(client):
 
 
 # ── #imported exclusion: imported TASKS (via the ledger) + today-so-far count ──
-def test_feed_excludes_imported_tasks(client, monkeypatch):
-    """Notes are filtered by the #imported tag; imported TASKS carry no tag, so the
-    captured feed must drop them via the import ledger (the missed second code path)."""
-    conn = _db()
-    with conn:
-        keep = create_task(conn, "Real task today", col="week")
-        skip = create_task(conn, "Imported task today", col="backlog")
-    conn.close()
-    from routes import main
-    monkeypatch.setattr(main, "imported_task_ids", lambda: {skip})
-    home = client.get("/").data.decode()
-    assert "Real task today" in home
-    assert "Imported task today" not in home
-
-
 def test_today_so_far_count_excludes_imported_notes(client):
     from routes.journal import today_so_far
     vault_store.create_note(title="Fresh capture", body="x", tags=["idea"])

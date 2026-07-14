@@ -31,7 +31,7 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 # Heavy third-party imports (requests, mlx_whisper) are deferred into the
 # functions that need them so `import capture_daemon` stays cheap for the tests.
@@ -72,8 +72,8 @@ def _safety_log_raw(msg) -> None:
         if not text:
             if "voice" in msg or "audio" in msg:
                 text = "[voice note — transcription lost to crash]"
-            elif "photo" in msg or _is_image_document(msg):
-                text = "[photo — lost to crash]"
+            elif "photo" in msg or "document" in msg:
+                text = "[photo/file — lost to crash]"
             else:
                 return
         os.makedirs(os.path.dirname(_RAW_LOG_PATH), exist_ok=True)
@@ -99,52 +99,25 @@ def _stamp_heartbeat(conn):
 from ai.telegram_api import Telegram
 
 # ── voice transcription (mlx-whisper, local) ──────────────────────────────────
-# The pure transcode/transcribe primitives live in voice.py. `route_voice` and
-# `_handle_voice` (which log + touch the vault + route) stay here. The constants
-# are re-imported so `_handle_voice`'s settings-defaults and tests that monkeypatch
-# `capture_daemon.oga_to_wav` / `.transcribe_wav` keep resolving here.
+# The pure transcode/transcribe primitives live in voice.py. `_handle_voice` (below)
+# is the live path: it transcribes, preserves the .oga via `_preserve_audio`, then
+# routes the text through `router.route`. The constants are re-imported so tests that
+# monkeypatch `capture_daemon.oga_to_wav` / `.transcribe_wav` keep resolving here.
 from ai.voice import transcribe_wav, oga_to_wav, _WHISPER_MODEL, _VOICE_LANGUAGE
 
-
-_SPOKEN_TASK = ("task ", "todo ", "to-do ", "to do ")
-_SPOKEN_JOURNAL = ("journal ", "diary ", "dear diary ")
-_SPOKEN_IDEA = ("idea ", "video idea ")
-
-
-def route_voice(conn, text: str, oga_path: str | None):
-    """File a transcribed voice note. A leading spoken keyword maps to task/journal;
-    otherwise it lands as an #unsorted note (triage will refine). The original .oga
-    is kept in vault/.audio/<slug>.oga and pointed at from the note frontmatter."""
-    from domain.capture import route_capture, _strip_prefix
-    from domain import vault_store
-
-    low = text.lower().lstrip()
-    if low.startswith(_SPOKEN_TASK):
-        stripped = text.split(None, 1)[1] if " " in text.strip() else text
-        return route_capture(conn, "t: " + stripped, source="voice", forced="task")
-    if low.startswith(_SPOKEN_JOURNAL):
-        stripped = text.split(None, 1)[1] if " " in text.strip() else text
-        return route_capture(conn, "j: " + stripped, source="voice", forced="journal")
-
-    tags = ["unsorted"]
-    if low.startswith(_SPOKEN_IDEA):
-        tags = ["idea", "unsorted"]
-    title = (text.strip().splitlines()[0] if text.strip() else "Voice note")[:60]
-    note = vault_store.create_note(title=title, body=text, tags=tags)
-    # Persist the original audio next to the note and record the pointer.
-    if oga_path and os.path.exists(oga_path):
-        import shutil
-        dest = os.path.join(vault_store.audio_dir(), note["slug"] + ".oga")
-        try:
-            shutil.copyfile(oga_path, dest)
-            note = vault_store.write_note(
-                note["slug"], note["title"], note["tags"], note["body"],
-                note["pinned"], note["created"], audio=f"vault/.audio/{note['slug']}.oga")
-        except OSError as e:
-            _log(f"could not store audio: {e}")
-    tag_str = " ".join("#" + t for t in tags)
-    return {"kind": "note", "slug": note["slug"], "label": "Notes · " + tag_str,
-            "tags": tags}
+# ── outbound scheduler ────────────────────────────────────────────────────────
+# The time-of-day cadences (morning brief, reflection, backlog triage, weekly review,
+# monthly retro, doc scan, timed reminders, daily sweep, Claude-down nudge) live in
+# scheduler.py now. Re-exported here so the main loop below and the tests' existing
+# `capture_daemon.maybe_*` call sites resolve unchanged (same pattern as routes/
+# re-exporting the domain helpers). scheduler.schedule_doc_scan / scan_documents_now
+# are re-exported too so _handle_photo can still fire an on-capture scan.
+from scheduler import (
+    maybe_send_digest, maybe_send_reflection, maybe_send_backlog_triage,
+    maybe_send_weekly_review, maybe_send_monthly_retro, maybe_scan_documents,
+    maybe_fire_reminders, maybe_daily_sweep, maybe_notify_claude_down,
+    scan_documents_now, schedule_doc_scan,
+)
 
 
 # ── reply formatting ──────────────────────────────────────────────────────────
@@ -165,160 +138,9 @@ def format_reply(result: dict) -> str:
 
 # ── outbound: morning digest ──────────────────────────────────────────────────
 # The digest composer (build_digest + _digest_tasks/_stale_backlog) lives in
-# proactive.py now — it's the deterministic FALLBACK body of the AI morning brief,
-# and keeping it there kills the old capture_daemon⇄proactive import cycle.
-def maybe_send_digest(conn, tg, chat_id, now=None) -> bool:
-    """Send the AI morning brief once per day at/after digest_hour (default 7). On
-    Sundays a fresh backlog triage is woven into the brief. Returns True if sent.
-    proactive.build_digest remains the deterministic fallback inside proactive."""
-    from core.db import today_iso, now_sg
-    from ai import proactive
-    if _get_setting(conn, "brief_enabled", "1") == "0":
-        return False
-    now = now or now_sg()
-    today = today_iso()
-    h, m = _parse_hhmm(_get_setting(conn, "digest_hour", "7"), 7, 0)
-    if (now.hour, now.minute) < (h, m):
-        return False
-    if _get_setting(conn, "digest_last_sent") == today:
-        return False
-    # Backlog triage is now its own scheduled surface (maybe_send_backlog_triage),
-    # independent of the brief — no longer woven in on Sundays.
-    text = proactive.morning_brief(conn, today, now)
-    tg.send_message(chat_id, text)
-    _set_setting(conn, "digest_last_sent", today)
-    _log("morning brief sent")
-    return True
-
-
-def _parse_hhmm(val, default_h, default_m):
-    """Parse an 'HH:MM' (or bare 'HH') setting into (hour, minute)."""
-    try:
-        s = str(val)
-        if ":" in s:
-            h, m = s.split(":", 1)
-            return int(h), int(m)
-        return int(s), 0
-    except (TypeError, ValueError):
-        return default_h, default_m
-
-
-def maybe_send_reflection(conn, tg, chat_id, now=None) -> bool:
-    """Send the evening journal reflection once per day at/after reflection_hour
-    (default 21:30). Returns True if sent."""
-    from core.db import today_iso, now_sg
-    from ai import proactive
-    if _get_setting(conn, "reflection_enabled", "1") == "0":
-        return False
-    now = now or now_sg()
-    today = today_iso()
-    h, m = _parse_hhmm(_get_setting(conn, "reflection_hour", "21:30"), 21, 30)
-    if (now.hour, now.minute) < (h, m):
-        return False
-    if _get_setting(conn, "reflection_last_sent") == today:
-        return False
-    text = proactive.evening_reflection(conn, today, now)
-    tg.send_message(chat_id, text)
-    _set_setting(conn, "reflection_last_sent", today)
-    _log("evening reflection sent")
-    return True
-
-
-_WEEKDAY_NUM = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
-
-
-def maybe_send_backlog_triage(conn, tg, chat_id, now=None) -> bool:
-    """Send the Do/Defer/Delete backlog triage once on its scheduled day at/after its
-    time (settings triage_day + triage_time; default Sunday 09:00). Independent of the
-    morning brief. On-demand triage ("triage my backlog") still works separately."""
-    from core.db import today_iso, now_sg
-    from ai import proactive
-    if _get_setting(conn, "triage_enabled", "1") == "0":
-        return False
-    now = now or now_sg()
-    today = today_iso()
-    day = (_get_setting(conn, "triage_day", "sun") or "sun").lower()
-    if day != "daily" and now.weekday() != _WEEKDAY_NUM.get(day, 6):
-        return False
-    h, m = _parse_hhmm(_get_setting(conn, "triage_time", "09:00"), 9, 0)
-    if (now.hour, now.minute) < (h, m):
-        return False
-    if _get_setting(conn, "triage_scheduled_sent") == today:
-        return False
-    try:
-        text = proactive.backlog_triage(conn)
-    except Exception as e:
-        _log(f"scheduled backlog triage failed: {e}")
-        return False
-    tg.send_message(chat_id, text)
-    _set_setting(conn, "triage_scheduled_sent", today)
-    _log("backlog triage sent")
-    return True
-
-
-def maybe_send_weekly_review(conn, tg, chat_id, now=None) -> bool:
-    """Send the weekly review once on its scheduled day at/after its time (settings
-    weekly_day + weekly_time; default Sunday 18:00). Celebrates the week's wins, names
-    what slipped, and tees up next week — distinct from the morning brief and the
-    do/defer/delete backlog triage. Returns True if sent."""
-    from core.db import today_iso, now_sg
-    from ai import proactive
-    if _get_setting(conn, "weekly_enabled", "1") == "0":
-        return False
-    now = now or now_sg()
-    today = today_iso()
-    day = (_get_setting(conn, "weekly_day", "sun") or "sun").lower()
-    if day != "daily" and now.weekday() != _WEEKDAY_NUM.get(day, 6):
-        return False
-    h, m = _parse_hhmm(_get_setting(conn, "weekly_time", "18:00"), 18, 0)
-    if (now.hour, now.minute) < (h, m):
-        return False
-    if _get_setting(conn, "weekly_last_sent") == today:
-        return False
-    try:
-        text = proactive.weekly_review(conn, today, now)
-    except Exception as e:
-        _log(f"scheduled weekly review failed: {e}")
-        return False
-    tg.send_message(chat_id, text)
-    _set_setting(conn, "weekly_last_sent", today)
-    _log("weekly review sent")
-    return True
-
-
-# ── triage (debounced) ────────────────────────────────────────────────────────
-def maybe_notify_claude_down(conn, tg, chat_id) -> bool:
-    """Nudge over Telegram when Claude starts failing (usually a lapsed OAuth token),
-    and once more when it recovers. Reads the claude_last_ok/err heartbeats stamped by
-    ai.claude_cli; keyed on the error timestamp so a persistent outage doesn't spam.
-    Since ALL AI (bot router, enrichment, proactive surfaces) runs through claude, this
-    is Kelvin's single 'your token expired, update it in Settings' signal."""
-    def _p(s):
-        try:
-            return datetime.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S")
-        except (TypeError, ValueError):
-            return None
-    ok = _get_setting(conn, "claude_last_ok")
-    err = _get_setting(conn, "claude_last_err") or ""
-    err_ts = err.split("|", 1)[0].strip()
-    reason = err.split("|", 1)[1].strip() if "|" in err else ""
-    okp, errp = _p(ok), _p(err_ts)
-    down = errp is not None and (okp is None or errp > okp)
-    notified = _get_setting(conn, "claude_down_notified") or ""
-    if down:
-        if err_ts and err_ts != notified:
-            tip = (" Your Claude token may have expired — paste a fresh one on the Settings page."
-                   if reason.lower().startswith("auth") else "")
-            tg.send_message(chat_id, "⚠️ AI is offline — I couldn't reach Claude." + tip)
-            _set_setting(conn, "claude_down_notified", err_ts)
-            return True
-    elif okp is not None and notified:
-        tg.send_message(chat_id, "✅ AI is back online.")
-        _set_setting(conn, "claude_down_notified", "")
-        return True
-    return False
-
-
+# proactive.py; the scheduled cadences that fire it (morning brief, reflection,
+# backlog triage, weekly, monthly, doc scan, reminders, sweep, Claude-down nudge)
+# live in scheduler.py and are re-exported at the top of this module.
 def run_triage_now(conn, tg=None, chat_id=None):
     """Invoke the triage runner and report anything it reclassified back to Kelvin."""
     import triage.run_triage as rt
@@ -334,26 +156,29 @@ def main() -> int:
     from envload import load_env
     load_env()
 
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        _log("TELEGRAM_BOT_TOKEN not set — nothing to do. Exiting.")
-        return 0
-    allowed = str(os.environ.get("TELEGRAM_ALLOWED_USER_ID") or "")
-
     from core.db import connect
     conn = connect()
+    # Prefer the Settings-stored bot token + allowed user (configured in the web UI);
+    # fall back to the legacy .env vars for back-compat.
+    token = _get_setting(conn, "telegram_bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        _log("no Telegram bot token (set it in Settings → Connections) — exiting.")
+        conn.close()
+        return 0
+    allowed = str(_get_setting(conn, "telegram_allowed_user")
+                  or os.environ.get("TELEGRAM_ALLOWED_USER_ID") or "")
     tg = Telegram(token)
 
     offset = int(_get_setting(conn, "telegram_offset", "0") or "0")
     sweep_due_at = None        # epoch seconds; set after a fallback capture
     import reloader
-    code_baseline = reloader.code_mtime()   # re-exec when our own .py files change past this
+    code_baseline = reloader.snapshot()   # re-exec on a settled .py change OR a newly-connected integration
     _log(f"starting long-poll loop (offset={offset})")
 
     while True:
         try:
-            if reloader.should_reload(code_baseline):   # pick up code edits without a manual restart
-                _log("code change detected — reloading daemon")
+            if reloader.should_reload(code_baseline):   # pick up code edits / a new integration without a manual restart
+                _log("code or integration change detected — reloading daemon")
                 reloader.reexec(conn.close)
             updates = tg.get_updates(offset)
             for upd in updates:
@@ -390,6 +215,10 @@ def main() -> int:
             # Outbound: morning brief + evening reflection (checked each poll cycle).
             if allowed:
                 try:
+                    maybe_fire_reminders(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"reminders failed: {e}")
+                try:
                     maybe_send_digest(conn, tg, allowed)
                 except Exception as e:
                     _log(f"digest failed: {e}")
@@ -406,6 +235,14 @@ def main() -> int:
                 except Exception as e:
                     _log(f"weekly review failed: {e}")
                 try:
+                    maybe_send_monthly_retro(conn, tg, allowed)
+                except Exception as e:
+                    _log(f"monthly retro failed: {e}")
+                try:
+                    maybe_scan_documents(conn)
+                except Exception as e:
+                    _log(f"document scan schedule failed: {e}")
+                try:
                     maybe_notify_claude_down(conn, tg, allowed)
                 except Exception as e:
                     _log(f"claude health notify failed: {e}")
@@ -414,19 +251,6 @@ def main() -> int:
             _log(f"poll error: {e}")
             time.sleep(5)                            # network backoff
     return 0
-
-
-def maybe_daily_sweep(conn, tg, chat_id) -> bool:
-    """Run the #unsorted sweep at most once per day (a floor under the on-fallback
-    sweep, so leftovers never rot). Returns True if it ran."""
-    from core.db import today_iso
-    today = today_iso()
-    if _get_setting(conn, "sweep_last_day") == today:
-        return False
-    _set_setting(conn, "sweep_last_day", today)
-    if capture_has_unsorted():
-        run_triage_now(conn, tg, chat_id)
-    return True
 
 
 def capture_has_unsorted() -> bool:
@@ -475,7 +299,7 @@ def _process_update(conn, tg, allowed, upd, sweep_due_at):
         elif "text" in msg:
             if _handle_text(conn, tg, chat_id, msg["text"]):
                 sweep_due_at = time.time() + SWEEP_DELAY_S
-        elif "photo" in msg or _is_image_document(msg):
+        elif "photo" in msg or "document" in msg:
             if _handle_photo(conn, tg, msg, chat_id):
                 sweep_due_at = time.time() + SWEEP_DELAY_S
         elif "voice" in msg or "audio" in msg:
@@ -514,18 +338,38 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
     skip Claude; everything else goes through the agentic router. Returns True if a
     router fallback fired (so the caller schedules a sweep)."""
     low = text.strip().lower()
+    from ai.router import record_exchange
 
     # Fast path 1: prefix shortcuts → deterministic capture, no Claude. (Prefix wins over
     # URL detection, so `n: <url>` files a plain note exactly as before.)
     if low.startswith(("t:", "n:", "i:", "j:")):
         from domain.capture import route_capture
         result = route_capture(conn, text, source="telegram")
-        tg.send_message(chat_id, format_reply(result))
+        reply = format_reply(result)
+        tg.send_message(chat_id, reply)
+        record_exchange(conn, text, reply)     # so "rename it"/"make it a task" resolve
         return False
 
     # Fast path 1b: a bare link → instant ack, then edit into the enriched reply.
     if _looks_like_url(text):
         _handle_link(conn, tg, chat_id, text)
+        return False
+
+    # Fast path 1c: a "yes"/"no" answering a pending suggestion (weekly action, profile
+    # rule, calendar create). Only fires when something is actually pending, so a stray
+    # "yes" otherwise routes normally.
+    from ai.router import peek_pending, is_affirmation, is_rejection, execute_pending, clear_pending
+    pending = peek_pending(conn)
+    if pending and is_affirmation(text):
+        reply = execute_pending(conn, pending)
+        clear_pending(conn)
+        tg.send_message(chat_id, reply)
+        record_exchange(conn, text, reply)
+        return False
+    if pending and is_rejection(text):
+        clear_pending(conn)
+        tg.send_message(chat_id, "👍 Skipped.")
+        record_exchange(conn, text, "👍 Skipped.")
         return False
 
     # Fast path 2: unambiguous list questions → instant deterministic answer, no Claude.
@@ -534,7 +378,20 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
         ans = answer_query(conn, text)
         if ans is not None:
             tg.send_message(chat_id, ans)
+            # Record so ordinal follow-ups ("complete the second one") see the list that
+            # the deterministic tier answered — the router replays this next turn. Larger
+            # cap so a full task list survives instead of truncating mid-list.
+            record_exchange(conn, text, ans, reply_cap=1200)
             return False
+
+    # Fast path 2b: a question we can answer instantly from the document facts cache
+    # ("what's my Scoot booking number", "cruise price?") — no Claude, no live read.
+    from domain import docs
+    fact = docs.answer_from_facts(conn, text)
+    if fact is not None:
+        tg.send_message(chat_id, fact)
+        record_exchange(conn, text, fact)
+        return False
 
     # Fast path 3: an explicit backlog-triage request → run backlog intelligence and
     # reply, skipping the router (its only job would be to decide to run this anyway).
@@ -544,7 +401,9 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
             tg.send_chat_action(chat_id, "typing")
         except Exception:
             pass
-        tg.send_message(chat_id, proactive.backlog_triage(conn))
+        reply = proactive.backlog_triage(conn)
+        tg.send_message(chat_id, reply)
+        record_exchange(conn, text, reply)
         return False
 
     # The agentic router — the ONE Claude entry point. Acts on instructions,
@@ -554,11 +413,39 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
         tg.send_chat_action(chat_id, "typing")
     except Exception:
         pass
-    out = router.route(conn, text, source="telegram")
+    # Narrate slow lookup steps (a multi-hop fetch fires several seconds-long Claude calls;
+    # without this the user just sees a timed-out 'typing…'). Each update is its own message
+    # and re-triggers typing so the chat keeps showing activity.
+    def _progress(msg):
+        try:
+            tg.send_message(chat_id, msg)
+            tg.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+
+    out = router.route(conn, text, source="telegram", progress=_progress)
     tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+    _maybe_send_document(tg, chat_id, out)
     if out.get("fell_back"):
         _log(f"router fell back to #unsorted: {text[:80]}")
     return bool(out.get("fell_back"))
+
+
+def _maybe_send_document(tg, chat_id, out) -> None:
+    """Upload any file(s) the router/lookup selected to the (allowlisted) chat. Supports a
+    single `document` (legacy find_document) and a `documents` list (the agentic lookup's
+    multi-file fetch). Recipient is ALWAYS this chat_id — never anything the model chose."""
+    paths = list(out.get("documents") or [])
+    if out.get("document"):
+        paths.append(out["document"])
+    for path in paths:
+        if not path:
+            continue
+        try:
+            tg.send_document(chat_id, path)
+        except Exception as e:
+            _log(f"document send failed: {e}")
+            tg.send_message(chat_id, "⚠️ Couldn't send that file.")
 
 
 def _looks_like_url(text: str) -> bool:
@@ -631,10 +518,11 @@ def _is_image_document(msg) -> bool:
 
 
 def _handle_photo(conn, tg, msg, chat_id) -> bool:
-    """Download the highest-resolution copy of an inbound image to vault/.media/, then
-    route it (with any caption) through the SAME agentic router as text and voice. The
-    Claude CLI views the file with its Read tool. Returns True if the router fell back
-    (so the caller schedules a sweep)."""
+    """Download an inbound photo OR document to vault/.media/. Images (photos + image
+    documents) route through the agentic router so Claude can VIEW them with its Read
+    tool. Non-image documents (PDF, Word, …) can't be viewed, so they're filed directly
+    as a note with the file attached (deterministic, no vision call). Returns True if the
+    router fell back (so the caller schedules a sweep)."""
     from domain import vault_store
     from core.db import now_sg
 
@@ -646,29 +534,49 @@ def _handle_photo(conn, tg, msg, chat_id) -> bool:
     file_id = biggest.get("file_id")
     if not file_id:
         return False
-    uniq = biggest.get("file_unique_id") or "img"
-    stamp = now_sg().strftime("%Y%m%d-%H%M%S")
-    dest = os.path.join(vault_store.media_dir(), f"{stamp}-{uniq}.jpg")
+    caption = (msg.get("caption") or "").strip()
+    is_image = bool(photo) or _is_image_document(msg)
 
     try:
         tg.send_chat_action(chat_id, "typing")
     except Exception:
         pass
-    try:
-        fpath = tg.get_file_path(file_id)
-        tg.download_file(fpath, dest)
-    except Exception as e:
-        _log(f"photo download failed: {e}")
-        tg.send_message(chat_id, "⚠️ Couldn't download that image — try again?")
-        return False
 
-    caption = (msg.get("caption") or "").strip()
-    from ai import router
-    out = router.route(conn, caption, source="telegram", image_path=dest)
-    tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
-    if out.get("fell_back"):
-        _log(f"router fell back on photo: {caption[:80]}")
-    return bool(out.get("fell_back"))
+    if is_image:
+        # Keep the historical .jpg naming for images (the router reads them by path).
+        uniq = biggest.get("file_unique_id") or "img"
+        dest = os.path.join(vault_store.media_dir(),
+                            f"{now_sg().strftime('%Y%m%d-%H%M%S')}-{uniq}.jpg")
+        try:
+            tg.download_file(tg.get_file_path(file_id), dest)
+        except Exception as e:
+            _log(f"photo download failed: {e}")
+            tg.send_message(chat_id, "⚠️ Couldn't download that image — try again?")
+            return False
+        from ai import router
+        out = router.route(conn, caption, source="telegram", image_path=dest)
+        tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+        if out.get("fell_back"):
+            _log(f"router fell back on photo: {caption[:80]}")
+        return bool(out.get("fell_back"))
+
+    # --- non-image document: save with its real name, file as a note, no vision ---
+    orig = biggest.get("file_name") or "document"
+    base = vault_store.new_media_basename(orig)
+    dest = os.path.join(vault_store.media_dir(), base)
+    try:
+        tg.download_file(tg.get_file_path(file_id), dest)
+    except Exception as e:
+        _log(f"document download failed: {e}")
+        tg.send_message(chat_id, "⚠️ Couldn't download that file — try again?")
+        return False
+    from domain import capture
+    res = capture.route_capture(conn, caption, source="telegram", forced="note",
+                                enrich="off", media="vault/.media/" + base)
+    name = vault_store.media_display_name(base)
+    tg.send_message(chat_id, f"📎 Saved: {name}" + (f" — {res.get('title')}" if caption else ""))
+    schedule_doc_scan()          # a just-arrived booking becomes queryable within seconds
+    return False
 
 
 _HELP_TEXT = (
@@ -727,8 +635,14 @@ def _handle_voice(conn, tg, msg, chat_id) -> bool:
             tg.send_chat_action(chat_id, "typing")
         except Exception:
             pass
-        out = router.route(conn, text, source="voice", audio_path=audio_ptr)
+        # A long memo → ask the router to summarise into a note + pull action items.
+        try:
+            long_memo = len(text) >= int(_get_setting(conn, "long_voice_chars", "700"))
+        except (TypeError, ValueError):
+            long_memo = len(text) >= 700
+        out = router.route(conn, text, source="voice", audio_path=audio_ptr, long_memo=long_memo)
         tg.send_message(chat_id, out["reply"], reply_markup=out.get("keyboard"))
+        _maybe_send_document(tg, chat_id, out)
         return bool(out.get("fell_back"))
     finally:
         import shutil

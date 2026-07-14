@@ -16,3 +16,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# visual-regression debug renders (baselines ARE committed)
+tests/baselines/*.actual.png

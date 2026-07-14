@@ -16,11 +16,14 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from envload import load_env
+load_env()   # so the web UI sees the same .env secrets the daemon does (e.g. Telegram token)
+
 from core.web_core import app, DB_PATH
 from core import db_init
-from routes import main, tasks, notes, journal, goals, settings
+from routes import main, tasks, notes, journal, goals, settings, docs, design
 
-for _bpmod in (main, tasks, notes, journal, goals, settings):
+for _bpmod in (main, tasks, notes, journal, goals, settings, docs, design):
     app.register_blueprint(_bpmod.bp)
 
 
@@ -86,7 +89,7 @@ def main():
     # inherited bound fd would fail to re-bind. Relies on the supervisor to respawn:
     # launchd KeepAlive here, the container restart policy on the NAS.
     import reloader
-    _code_baseline = reloader.code_mtime()
+    _code_baseline = reloader.snapshot()
     threading.Thread(
         target=lambda: reloader.watch_loop(
             _code_baseline, lambda m: print(f"[web] {m}", flush=True), restart=reloader.exit_and_respawn

@@ -53,6 +53,8 @@
       if (hasAudio) { elAudioRow.hidden = true; elAudio.src = "/notes/" + slug + "/audio"; }
       else { elAudio.removeAttribute("src"); elAudioRow.hidden = true; }
     }
+    var elAttach = document.getElementById("ed-attach");
+    if (elAttach) initAttach(elAttach);
     var current = null, creating = false, savedTimer = null;
     function flashSaved() {
       elSaved.textContent = "saved ✓";
@@ -66,6 +68,7 @@
         elTitle.value = n.title; elTags.value = (n.tags || []).join(", ");
         elBody.value = n.body;
         elSaved.textContent = "";
+        if (elAttach) setAttach(elAttach, (n.media || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean));
         setAudio(!!n.audio, slug);
         var d = document.getElementById("ed-delete"); if (d._disarm) d._disarm();
         ov.classList.add("on"); elBody.focus();
@@ -78,6 +81,7 @@
       current = null; creating = false;
       elTitle.value = ""; elTags.value = ""; elBody.value = "";
       elSaved.textContent = "";
+      if (elAttach) setAttach(elAttach, []);
       setAudio(false);
       var d = document.getElementById("ed-delete"); if (d._disarm) d._disarm();
       ov.classList.add("on"); elTitle.focus();
@@ -108,7 +112,8 @@
       if (current) {
         elSaved.textContent = "saving…";
         return post("/notes/" + current + "/save", {
-          title: elTitle.value, tags: elTags.value, body: elBody.value
+          title: elTitle.value, tags: elTags.value, body: elBody.value,
+          media: elAttach ? getAttach(elAttach).join(",") : ""
         }).then(function () { flashSaved(); patchNoteCard(); });
       }
       // no note yet: only create once there is real content (guard against a
@@ -117,7 +122,8 @@
       if (!elTitle.value.trim() && !elBody.value.trim()) return Promise.resolve();
       creating = true; elSaved.textContent = "saving…";
       return post("/notes/new", {
-        title: elTitle.value, tags: elTags.value, body: elBody.value
+        title: elTitle.value, tags: elTags.value, body: elBody.value,
+        media: elAttach ? getAttach(elAttach).join(",") : ""
       }).then(function (res) {
         creating = false;
         if (res.data && res.data.slug) {

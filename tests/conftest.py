@@ -18,6 +18,15 @@ os.environ["LIFEOS_ENRICH_LINKS"] = "0"
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolate_google_token(tmp_path, monkeypatch):
+    """Point the Google OAuth token at a throwaway path so tests never observe a REAL
+    connected token on the dev machine (which would flip is_configured() to True and
+    break the 'not connected' assertions). Tests that need a token write to this path."""
+    from ai import google_client
+    monkeypatch.setattr(google_client, "_TOKEN", str(tmp_path / "google_token.json"))
+
+
 @pytest.fixture()
 def client():
     """Fresh DB + vault per test, with a CSRF-aware Flask test client."""
@@ -36,8 +45,8 @@ def client():
     db_init.init_db(os.environ["LIFEOS_DB_PATH"])
 
     # register blueprints once
-    from routes import main, tasks, notes, journal, goals, settings
-    for mod in (main, tasks, notes, journal, goals, settings):
+    from routes import main, tasks, notes, journal, goals, settings, docs, design
+    for mod in (main, tasks, notes, journal, goals, settings, docs, design):
         if mod.bp.name not in web_core.app.blueprints:
             web_core.app.register_blueprint(mod.bp)
 

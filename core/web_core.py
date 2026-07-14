@@ -15,14 +15,21 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, jsonify, session, abort,
 )
 
-from core.db import connect, now_iso, today_iso, now_sg, get_tz, DB_PATH
+from core.db import connect, now_iso, today_iso, now_sg, get_tz, time_format, DB_PATH
+from core.dates import parse_iso_utc, fmt_date, due_label
+# Health + integration-status subsystem lives in core.health (Flask-free, pure over conn).
+# Re-exported here because routes/settings and several tests import these from web_core.
+from core.health import (  # noqa: F401
+    health_status, health_ages, health_reasons, ai_health,
+    _integration_pending, health_context,
+)
 
 # Repo root (this module lives in core/), so templates/static/data resolve there
 # rather than relative to the package dir.
@@ -31,6 +38,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__,
             template_folder=os.path.join(_ROOT, "web", "templates"),
             static_folder=os.path.join(_ROOT, "web", "static"))
+app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024   # 30 MB cap on image-attachment uploads
 
 _DATA_DIR = os.path.join(_ROOT, "data")
 
@@ -116,27 +124,15 @@ def make_test_client():
 
 
 # ── Jinja filters ─────────────────────────────────────────────────────────────
-def _fmt_date(value):
-    """ISO date → '9 Jul 2026'. Empty → em dash."""
-    if not value:
-        return "—"
-    try:
-        d = datetime.strptime(str(value)[:10], "%Y-%m-%d")
-        return f"{d.day} {d.strftime('%b')} {d.year}"
-    except Exception:
-        return value
-
-
 def _fmt_stamp(value):
     """UTC ISO audit timestamp → app-tz '10 Jul 21:07' (year shown only when it isn't
     this year). Used for the heartbeat 'ran ...' lines. Empty → 'never'."""
     if not value:
         return "never"
-    try:
-        dt = (datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S")
-              .replace(tzinfo=timezone.utc).astimezone(get_tz()))
-    except Exception:
+    parsed = parse_iso_utc(value)
+    if parsed is None:
         return value
+    dt = parsed.astimezone(get_tz())
     stamp = f"{dt.day} {dt.strftime('%b')} {dt.strftime('%H:%M')}"
     if dt.year != now_sg().year:
         stamp = f"{dt.day} {dt.strftime('%b')} {dt.year}, {dt.strftime('%H:%M')}"
@@ -155,32 +151,34 @@ def _days_ago(value):
 
 
 def _due_label(value):
-    """Human due label relative to today, compact + glanceable: today / yesterday /
-    '3d over' (severity without date math) / tomorrow / weekday inside a week /
-    '13 Jul' (the year only when it isn't this year)."""
-    n = _days_ago(value)
-    if n is None:
-        return _fmt_date(value)
-    if n == 0:
-        return "today"
-    if n == 1:
-        return "yesterday"
-    if n > 1:
-        return f"{n}d over"
-    if n == -1:
-        return "tomorrow"
-    d = datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
-    if n >= -6:
-        return d.strftime("%a")
-    if d.year == now_sg().year:
-        return f"{d.day} {d.strftime('%b')}"
-    return _fmt_date(value)
+    """The `due_label` Jinja filter — the single-source due vocabulary in core.dates,
+    resolved against the app-tz 'today'."""
+    return due_label(value, today_iso())
 
 
-app.jinja_env.filters["fdate"] = _fmt_date
+def _fmt_time(value):
+    """A stored 'HH:MM' clock time → the user's preferred format: 24h '13:35' (default)
+    or 12h '1:35pm' (dropping ':00', matching the calendar agenda). The stored value stays
+    24h — this is display only, so entry keys (data-time, audio URLs) are untouched."""
+    s = str(value or "")
+    if ":" not in s or len(s) < 4 or time_format() != "12h":
+        return value
+    try:
+        hh, mm = s[:5].split(":")
+        h = int(hh)
+        int(mm)
+    except ValueError:
+        return value
+    ap = "am" if h < 12 else "pm"
+    h12 = h % 12 or 12
+    return f"{h12}{ap}" if mm == "00" else f"{h12}:{mm}{ap}"
+
+
+app.jinja_env.filters["fdate"] = fmt_date
 app.jinja_env.filters["fstamp"] = _fmt_stamp
 app.jinja_env.filters["days_ago"] = _days_ago
 app.jinja_env.filters["due_label"] = _due_label
+app.jinja_env.filters["ftime"] = _fmt_time
 
 
 # ── request helpers ───────────────────────────────────────────────────────────
@@ -213,147 +211,21 @@ def db():
     return connect(_DB_PATH)
 
 
-# ── background-job health (staleness dots) ────────────────────────────────────
-# The capture daemon and triage runner stamp settings keys each run; the sidebar
-# dots go 'stale' (red) when a heartbeat is older than its budget, 'off' (grey)
-# when a job has never run. Budgets: capture 10 min (long-poll cycle ≈ 50 s), triage
-# and backup 26 h (daily jobs + slack).
-_HEALTH_CHECKS = (
-    ("capture", "capture_last_ran", 10),
-    ("triage", "triage_last_ran", 26 * 60),
-    ("backup", "backup_last_ran", 26 * 60),
-)
-
-
-def _parse_iso_utc(value):
-    if not value:
-        return None
-    try:
-        return datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def health_status(conn, now=None) -> dict:
-    """Per-job dot state from the settings heartbeats: 'ok' | 'stale' | 'off'.
-    Pure enough to unit-test: pass a seeded conn and a fixed `now`."""
-    now = now or datetime.now(timezone.utc)
-    out = {}
-    for name, key, budget_min in _HEALTH_CHECKS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        ts = _parse_iso_utc(row["value"]) if row else None
-        if ts is None:
-            out[name] = "off"
-        elif (now - ts).total_seconds() > budget_min * 60:
-            out[name] = "stale"
-        else:
-            out[name] = "ok"
-    return out
-
-
-def _fmt_age(seconds) -> str:
-    """Compact last-ran age for the sidebar dots: 40s ago / 12m ago / 5h ago / 3d ago."""
-    s = int(seconds)
-    if s < 60:
-        return f"{s}s ago"
-    if s < 3600:
-        return f"{s // 60}m ago"
-    if s < 86400:
-        return f"{s // 3600}h ago"
-    return f"{s // 86400}d ago"
-
-
-def health_ages(conn, now=None) -> dict:
-    """Per-job 'time since last run' label ('40s'|'5h'|…), or None if never ran."""
-    now = now or datetime.now(timezone.utc)
-    out = {}
-    for name, key, _ in _HEALTH_CHECKS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        ts = _parse_iso_utc(row["value"]) if row else None
-        out[name] = _fmt_age((now - ts).total_seconds()) if ts else None
-    return out
-
-
-# Human "why is this red" copy per job — {age}/{budget} filled in when stale.
-_HEALTH_WHY = {
-    "capture": ("No heartbeat for {age} — the capture daemon looks stopped",
-                "Capture daemon hasn't started yet"),
-    "triage": ("Hasn't run in {age} (expected within {budget})",
-               "Hasn't run yet"),
-    "backup": ("No backup in {age} (expected within {budget})",
-               "No backup has run yet"),
-}
-
-
-def health_reasons(conn, now=None) -> dict:
-    """Per-job explanation of a non-'ok' dot ('' when ok) — so the red dot can SAY why
-    it's red instead of just being red. Pairs the state with the last-seen age + the
-    staleness budget it blew. Pure/unit-testable."""
-    status = health_status(conn, now)
-    ages = health_ages(conn, now)
-    budgets = {name: b for name, _key, b in _HEALTH_CHECKS}
-    out = {}
-    for name in ("capture", "triage", "backup"):
-        st = status.get(name)
-        stale_msg, off_msg = _HEALTH_WHY[name]
-        if st == "off":
-            out[name] = off_msg
-        elif st == "stale":
-            b = budgets[name]
-            budget = f"{b} min" if b < 60 else f"{b // 60} h"
-            age = (ages.get(name) or "a while").replace(" ago", "")   # "3d ago" → "3d"
-            out[name] = stale_msg.format(age=age, budget=budget)
-        else:
-            out[name] = ""
-    return out
-
-
-def ai_health(conn) -> dict:
-    """State of the Claude CLI / OAuth token from its call heartbeats:
-      'ok'    — last call succeeded (and no newer failure)
-      'error' — the most recent call failed; `detail` says why ('auth' ⇒ token lapsed)
-      'off'   — never called yet
-    Written by ai.claude_cli._stamp_health on every call. Pure/unit-testable."""
-    def _row(key):
-        r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        return r["value"] if r else None
-    ok_raw, err_raw = _row("claude_last_ok"), _row("claude_last_err")
-    ok_ts = _parse_iso_utc(ok_raw)
-    # err value is "ISO | reason"
-    err_ts = _parse_iso_utc((err_raw or "").split("|", 1)[0].strip()) if err_raw else None
-    detail = (err_raw or "").split("|", 1)[1].strip() if (err_raw and "|" in err_raw) else ""
-    if err_ts and (ok_ts is None or err_ts > ok_ts):
-        return {"state": "error", "detail": detail or "call failed",
-                "auth": detail.lower().startswith("auth")}
-    if ok_ts is not None:
-        return {"state": "ok", "detail": "", "auth": False}
-    return {"state": "off", "detail": "", "auth": False}
-
-
 @app.context_processor
 def inject_health():
-    """Make the health dots + last-ran ages available to every template."""
-    status = {"capture": "off", "triage": "off", "backup": "off"}
-    ages = {"capture": None, "triage": None, "backup": None}
-    ai = {"state": "off", "detail": "", "auth": False}
+    """Make the health dots + last-ran ages + nav alert count available to every template.
+    Just the Flask glue — opens a conn, delegates the actual computation to
+    core.health.health_context, and falls back to a safe default on any error."""
     try:
         conn = db()
-        status = health_status(conn)
-        ages = health_ages(conn)
-        ai = ai_health(conn)
+        ctx = health_context(conn)
         conn.close()
+        return ctx
     except Exception:
-        pass
-    # map AI 'error'→'stale' so it reuses the red dot styling; keep raw state under ai.
-    status["ai"] = {"ok": "ok", "error": "stale", "off": "off"}.get(ai["state"], "off")
-    # nav badge: how many things need attention now. Background jobs count only when
-    # stale ('off'/never-run is setup-pending, they auto-start). AI counts whenever it's
-    # not 'ok' — i.e. no token yet (not connected) OR a failing token — because wiring up
-    # AI is itself an action the user needs to take. Drives the Settings nav count.
-    alerts = sum(1 for k in ("capture", "triage", "backup") if status.get(k) == "stale")
-    if ai["state"] != "ok":
-        alerts += 1
-    return {"health": status, "health_age": ages, "ai_health": ai, "nav_alerts": alerts}
+        return {"health": {"capture": "off", "triage": "off", "backup": "off"},
+                "health_age": {"capture": None, "triage": None, "backup": None},
+                "ai_health": {"state": "off", "detail": "", "auth": False},
+                "nav_alerts": 0}
 
 
 @app.context_processor

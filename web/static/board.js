@@ -281,6 +281,8 @@
       saved: document.getElementById("te-saved"), subs: document.getElementById("te-subs")
     };
     var current = null, planned = false, newCol = null;
+    var teAttach = document.getElementById("te-attach");
+    if (teAttach) initAttach(teAttach);
     // populate goal dropdown
     (window.LIFEOS_GOALS || []).forEach(function (g) {
       var o = document.createElement("option"); o.value = g.id; o.textContent = g.title; f.goal.appendChild(o);
@@ -355,6 +357,7 @@
       f.saved.textContent = "";
       syncControls();
       var d = document.getElementById("te-delete"); if (d._disarm) d._disarm();
+      if (teAttach) setAttach(teAttach, []);
       renderSubs("[]");
       ov.classList.add("on"); f.title.focus();
     }
@@ -373,6 +376,7 @@
       f.saved.textContent = "";
       syncControls();
       var d = document.getElementById("te-delete"); if (d._disarm) d._disarm();
+      if (teAttach) setAttach(teAttach, (el.dataset.media || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean));
       renderSubs(el.dataset.subs);
       ov.classList.add("on"); f.title.focus();
     }
@@ -497,7 +501,7 @@
           title: title, col: f.col.value || newCol || "backlog",
           due_date: f.due.value, priority: f.priority.value,
           category: f.category.value, recur_rule: f.recur.value,
-          goal_id: f.goal.value
+          goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : ""
         };
         if (planned) data.planned_on = window.LIFEOS_TODAY || "";
         post("/tasks/new", data).then(function () {
@@ -508,7 +512,7 @@
       post("/tasks/" + current + "/edit", {
         title: f.title.value, due_date: f.due.value, priority: f.priority.value,
         category: f.category.value, col: f.col.value, recur_rule: f.recur.value,
-        goal_id: f.goal.value
+        goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : ""
       }).then(function () { f.saved.textContent = "saved ✓"; patchOrReload(); });
     });
     confirmClick(document.getElementById("te-delete"), function () {

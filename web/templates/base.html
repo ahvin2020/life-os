@@ -103,6 +103,11 @@
       <audio id="ed-audio" preload="none"></audio>
     </div>
     <textarea id="ed-body" placeholder="Write markdown…" aria-label="Note body"></textarea>
+    <div class="attach" data-attach id="ed-attach">
+      <div class="athumbs"></div>
+      <button type="button" class="mini atadd">📎 Attach</button>
+      <input type="file" multiple hidden aria-label="Attach files">
+    </div>
     <div class="erow">
       <button class="mini danger" id="ed-delete" type="button">Delete</button>
       <span class="saved" id="ed-saved"></span>
@@ -161,6 +166,11 @@
     <div class="erow"><button class="mini" id="te-plan" type="button">☀ Do today</button><span class="saved" id="te-saved"></span></div>
     <div id="te-subs" class="subs" style="margin-left:0"></div>
     <div class="erow"><input class="txt" id="te-subnew" style="flex:1" placeholder="add subtask…"><button class="mini" id="te-subadd" type="button">＋</button></div>
+    <div class="attach" data-attach id="te-attach">
+      <div class="athumbs"></div>
+      <button type="button" class="mini atadd">📎 Attach</button>
+      <input type="file" multiple hidden aria-label="Attach files">
+    </div>
     <div class="erow"><button class="mini danger" id="te-delete" type="button">Delete</button><button class="qgo" id="te-save" type="button" style="margin-left:auto">Save</button></div>
   </div>
 </div>

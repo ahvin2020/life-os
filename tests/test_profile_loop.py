@@ -1,0 +1,125 @@
+"""Profile-suggestion loop: correction-signal capture, append_learned_rule (writes to a
+TMP profile — NEVER the real one), the weekly suggester, and the confirm→append path.
+
+IMPORTANT: vault_store.PROFILE_PATH points at the REAL repo vault (it ignores
+LIFEOS_VAULT_DIR), so every test here monkeypatches it to a tmp file.
+"""
+
+import os
+
+import capture_daemon as cd
+from ai import router, proactive
+from domain import vault_store
+from core.db import connect, record_correction, recent_corrections
+
+
+def _db():
+    return connect(os.environ["LIFEOS_DB_PATH"])
+
+
+class FakeTG:
+    def __init__(self):
+        self.sent = []
+    def send_message(self, chat_id, text, reply_markup=None):
+        self.sent.append(text); return {"ok": True}
+
+
+def test_record_and_read_corrections(client):
+    conn = _db()
+    record_correction(conn, "refile", "note->task")
+    record_correction(conn, "clarify", "which task?")
+    got = recent_corrections(conn, 7)
+    conn.close()
+    assert len(got) == 2 and got[0]["kind"] == "refile"
+
+
+def test_append_learned_rule_creates_section_and_dedupes(client, tmp_path, monkeypatch):
+    prof = tmp_path / "profile.md"
+    prof.write_text("# Profile\n\nKelvin is a YouTuber.\n")
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    assert vault_store.append_learned_rule("gym captures → personal, high priority")
+    body = prof.read_text()
+    assert "# Learned rules" in body and "gym captures" in body
+    # dedupe: same rule again is a no-op
+    assert vault_store.append_learned_rule("gym captures → personal, high priority") is False
+
+
+def test_append_learned_rule_cap(client, tmp_path, monkeypatch):
+    prof = tmp_path / "p.md"
+    prof.write_text("# Learned rules\n" + "".join(f"- rule {i}\n" for i in range(15)))
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    assert vault_store.append_learned_rule("one more") is False    # full at 15
+
+
+def test_upsert_contact_creates_section_and_merges(client, tmp_path, monkeypatch):
+    prof = tmp_path / "profile.md"
+    prof.write_text("# Identity\nWife: Jane Tan\n")
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    # first email → new bullet under a new # Contacts section
+    assert vault_store.upsert_contact("Wife Jane Tan", ["jane.tan@example.com"])
+    body = prof.read_text()
+    assert "# Contacts" in body and "jane.tan@example.com" in body
+    # second email, same label → MERGES into one line (not a duplicate person)
+    assert vault_store.upsert_contact("Wife Jane Tan", ["jane.t@example.net"])
+    body = prof.read_text()
+    assert body.count("jane.tan@example.com") == 1
+    assert "jane.t@example.net" in body
+    assert body.count("- Wife Jane Tan") == 1        # merged, single bullet
+    # a garbage save (no valid email) is rejected
+    assert vault_store.upsert_contact("Nobody", ["not-an-email"]) is False
+    # the identity section is preserved
+    assert "# Identity" in prof.read_text()
+
+
+def test_router_remember_contact_writes_profile(client, tmp_path, monkeypatch):
+    import json
+    prof = tmp_path / "profile.md"
+    prof.write_text("# Identity\nWife: Jane Tan\n")
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    conn = _db()
+    res = router.route(conn, "remember my wife's other email is jane.t@example.net",
+                       claude_fn=lambda p: json.dumps(
+                           {"action": "remember_contact", "label": "Wife Jane Tan",
+                            "emails": ["jane.t@example.net"]}))
+    conn.close()
+    assert res["applied"] == ["remember_contact"]
+    assert "jane.t@example.net" in prof.read_text()
+
+
+def test_refile_records_correction(client):
+    # a note refiled to a task on the Today feed logs a correction signal
+    vault_store.create_note(title="Buy milk", body="", tags=["unsorted"])
+    slug = vault_store.list_notes()[0]["slug"]
+    client.post("/capture/refile", data={"kind": "note", "ref": slug, "to": "task"})
+    conn = _db()
+    got = recent_corrections(conn, 7)
+    conn.close()
+    assert any(s["kind"] == "refile" for s in got)
+
+
+def test_suggester_proposes_and_arms_pending(client, tmp_path, monkeypatch):
+    prof = tmp_path / "profile.md"
+    prof.write_text("# Profile\n")
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    conn = _db()
+    for i in range(3):
+        record_correction(conn, "refile", f"note->task {i}")
+    tg = FakeTG()
+    fired = proactive.maybe_suggest_profile_rule(
+        conn, tg, "123",
+        claude_fn=lambda p: '{"rule": "gym captures → personal category"}')
+    assert fired and any("Add this to your profile" in s for s in tg.sent)
+    assert router.peek_pending(conn)["kind"] == "profile_append"
+    # confirming appends the rule to the tmp profile
+    msg = router.execute_pending(conn, router.peek_pending(conn))
+    conn.close()
+    assert "gym captures" in prof.read_text() and "Added" in msg
+
+
+def test_suggester_needs_three_signals(client):
+    conn = _db()
+    record_correction(conn, "refile", "one")
+    fired = proactive.maybe_suggest_profile_rule(conn, FakeTG(), "123",
+                                                 claude_fn=lambda p: '{"rule": "x"}')
+    conn.close()
+    assert fired is False                              # <3 signals → no suggestion

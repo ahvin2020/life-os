@@ -30,7 +30,7 @@ DB_PATH = os.environ.get("LIFEOS_DB_PATH") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app.db"
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 9
 
 
 def connect(db_path: str = DB_PATH) -> sqlite3.Connection:
@@ -101,6 +101,33 @@ def reload_tz() -> None:
     _TZ_CACHE = None
 
 
+_TIME_FMT_CACHE = None                  # "24h"/"12h"; cleared by reload_time_format()
+
+
+def time_format() -> str:
+    """Preferred clock format for display, '24h' (default) or '12h' (settings key
+    `time_format`). Cached like the timezone; call reload_time_format() after a save."""
+    global _TIME_FMT_CACHE
+    if _TIME_FMT_CACHE is None:
+        val = "24h"
+        try:
+            conn = connect()
+            row = conn.execute("SELECT value FROM settings WHERE key='time_format'").fetchone()
+            conn.close()
+            if row and row["value"] in ("12h", "24h"):
+                val = row["value"]
+        except sqlite3.Error:
+            pass
+        _TIME_FMT_CACHE = val
+    return _TIME_FMT_CACHE
+
+
+def reload_time_format() -> None:
+    """Drop the cached clock format so the next call re-reads it (call after a save)."""
+    global _TIME_FMT_CACHE
+    _TIME_FMT_CACHE = None
+
+
 def now_iso() -> str:
     """UTC timestamp for created/updated audit columns (sortable, unambiguous)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -138,3 +165,33 @@ def set_setting(conn, key, value):
 def delete_setting(conn, key):
     with conn:
         conn.execute("DELETE FROM settings WHERE key=?", (key,))
+
+
+def record_correction(conn, kind, detail, cap=50):
+    """Log one 'the AI got it wrong and Kelvin fixed it' signal (a refile, a quick recat/
+    rename of a just-created task, a repeated clarify). Feeds the weekly profile-rule
+    suggestion. Best-effort — must never break the action it rides on."""
+    import json as _json
+    try:
+        raw = get_setting(conn, "correction_signals", "") or "[]"
+        signals = _json.loads(raw)
+        if not isinstance(signals, list):
+            signals = []
+        signals.append({"ts": now_iso(), "kind": str(kind), "detail": str(detail)[:80]})
+        set_setting(conn, "correction_signals", _json.dumps(signals[-cap:]))
+    except Exception:
+        pass
+
+
+def recent_corrections(conn, days=7):
+    """Correction signals from the last `days`, newest last. [] if none/unparseable."""
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    try:
+        signals = _json.loads(get_setting(conn, "correction_signals", "") or "[]")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(signals, list):
+        return []
+    floor = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    return [s for s in signals if isinstance(s, dict) and str(s.get("ts", "")) >= floor]

@@ -57,25 +57,15 @@ class FakeTelegram:
         self.downloaded.append((file_path, dest))
         return dest
 
-
-# ── voice transcription routing ───────────────────────────────────────────────
-def test_voice_unprefixed_lands_unsorted_with_audio(client, tmp_path):
-    conn = _db()
-    oga = tmp_path / "clip.oga"
-    oga.write_bytes(b"fake-audio-bytes")
-    result = cd.route_voice(conn, "some rambling thought about the market", str(oga))
-    conn.close()
-    assert result["kind"] == "note" and "unsorted" in result["tags"]
-    note = vault_store.read_note(result["slug"])
-    assert note["audio"].endswith(".oga")                    # frontmatter pointer set
-    assert os.path.exists(os.path.join(vault_store.audio_dir(), result["slug"] + ".oga"))
+    def send_document(self, chat_id, path):
+        self.uploaded = getattr(self, "uploaded", [])
+        self.uploaded.append((chat_id, path))
+        return {"ok": True}
 
 
-def test_voice_spoken_task_prefix_makes_task(client):
-    conn = _db()
-    result = cd.route_voice(conn, "task buy milk on the way home", None)
-    conn.close()
-    assert result["kind"] == "task"
+# Voice routing note: the live path is `_handle_voice` → `router.route` (audio preserved
+# via `_preserve_audio`), covered by tests/test_router.py + tests/test_bughunt.py. The
+# old spoken-keyword `route_voice` was removed, so its two tests went with it.
 
 
 def test_transcribe_passes_language_and_condition(monkeypatch):
@@ -205,7 +195,7 @@ def test_daemon_routes_text_through_router(client, monkeypatch):
     from ai import router
     conn = _db()
     tg = FakeTelegram()
-    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram", **kw: {
         "reply": "✓ Done: Publish CPF Life video",
         "keyboard": {"inline_keyboard": [[{"text": "↩ Undo", "callback_data": "u|comp|7"}]]},
         "fell_back": False, "applied": ["complete_task"]})
@@ -224,7 +214,7 @@ def test_daemon_fallback_schedules_sweep(client, monkeypatch):
     from ai import router
     conn = _db()
     tg = FakeTelegram()
-    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram", **kw: {
         "reply": router.FALLBACK_REPLY, "keyboard": None, "fell_back": True,
         "applied": ["fallback_note"]})
     upd = {"update_id": 2, "message": {"from": {"id": 12345678},
@@ -289,17 +279,41 @@ def test_image_document_also_routes_as_photo(client, monkeypatch):
     assert seen["image_path"] and seen["image_path"].endswith("-uDOC.jpg")
 
 
-def test_non_image_document_not_treated_as_photo(client):
+def test_maybe_send_document_uploads_multiple_and_single(client):
+    """The lookup loop's multi-file fetch delivers via out['documents'] (a list); the legacy
+    find_document delivers via out['document'] (single). _maybe_send_document sends ALL, always
+    to the allowlisted chat — never a recipient the model chose."""
+    tg = FakeTelegram()
+    cd._maybe_send_document(tg, "999", {"documents": ["/x/a.pdf", "/x/b.pdf"], "document": "/x/c.pdf"})
+    assert getattr(tg, "uploaded", []) == [("999", "/x/a.pdf"), ("999", "/x/b.pdf"), ("999", "/x/c.pdf")]
+    # nothing to send → no upload, no crash
+    tg2 = FakeTelegram()
+    cd._maybe_send_document(tg2, "999", {"reply": "just text"})
+    assert getattr(tg2, "uploaded", []) == []
+
+
+def test_non_image_document_saved_as_note(client):
+    """A non-image document (PDF/Word) can't be viewed by Claude, so it's downloaded and
+    filed directly as a note with the file attached — no vision call, real filename kept."""
+    from domain import vault_store
     conn = _db()
     tg = FakeTelegram()
     upd = {"update_id": 22, "message": {
         "from": {"id": 12345678}, "chat": {"id": 12345678},
+        "caption": "the jan invoice",
         "document": {"file_id": "pdf1", "file_unique_id": "uPDF",
                      "mime_type": "application/pdf", "file_name": "invoice.pdf"}}}
     cd._process_update(conn, tg, "12345678", upd, None)
     conn.close()
-    assert tg.file_requests == []                               # not downloaded
-    assert "text, links, photos and voice" in tg.sent[-1][1]    # generic fallback reply
+    assert tg.file_requests == ["pdf1"]                        # downloaded
+    assert "📎 Saved" in tg.sent[-1][1]
+    # a note now exists carrying the media pointer to the saved PDF
+    notes = [n for n in vault_store.list_notes() if n.get("media")]
+    assert notes and notes[0]["media"].endswith("__invoice.pdf")
+    assert vault_store.media_items(notes[0]["media"])[0] == {
+        "name": "invoice.pdf",
+        "url": "/media/" + notes[0]["media"].split("/")[-1],
+        "is_image": False}
 
 
 # ── query mode: intent detection + handlers ───────────────────────────────────
@@ -348,13 +362,80 @@ def test_query_handlers_output(client):
     conn.close()
 
 
+def test_queries_journal_topic_falls_through(client):
+    """'what did I write about X' is a PAST recall question — it must NOT be answered
+    with today's journal; it falls through (None) to the router's vault_recall."""
+    from domain import queries
+    conn = _db()
+    assert queries.answer_query(conn, "what did I write about the reno?") is None
+    conn.close()
+
+
+# ── step-0 memory fix: the deterministic fast paths now record exchanges ───────
+def test_prefix_capture_records_exchange(client):
+    from ai import router
+    conn = _db()
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "t: pay the water bill")
+    pair = router.load_exchanges(conn)[-1]
+    conn.close()
+    assert pair["u"] == "t: pay the water bill"
+    assert pair["b"]                                        # the capture confirmation stored
+
+
+def test_query_answer_recorded_with_large_cap(client):
+    """A long task-list answer is recorded (so 'complete the second one' resolves) and
+    is NOT truncated at the default 400-char cap."""
+    from ai import router
+    conn = _db()
+    with conn:
+        for i in range(15):
+            create_task(conn, f"Task number {i} with a fairly long descriptive title",
+                        col="week", due_date=today_iso())
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "what are my tasks today")
+    pair = router.load_exchanges(conn)[-1]
+    conn.close()
+    assert len(pair["b"]) > 400                             # not truncated at the small cap
+    assert "Task number 14" in pair["b"]                    # the last item survived
+
+
+def test_triage_fastpath_records_exchange(client, monkeypatch):
+    from ai import router, proactive as pro
+    conn = _db()
+    monkeypatch.setattr(pro, "backlog_triage", lambda c: "🧹 Triage: nothing stale.")
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "triage my backlog")
+    pair = router.load_exchanges(conn)[-1]
+    conn.close()
+    assert pair["u"] == "triage my backlog"
+    assert "Triage" in pair["b"]
+
+
+def test_followup_sees_query_list(client):
+    """After the query fast path records the list, the router's next-turn context carries
+    it — the material an ordinal follow-up ('the second one') resolves against."""
+    from ai import router
+    conn = _db()
+    with conn:
+        create_task(conn, "Alpha task", col="week", due_date=today_iso())
+        create_task(conn, "Bravo task", col="week", due_date=today_iso())
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "what are my tasks today")
+    ctx = router.build_context(conn)
+    conn.close()
+    # The recorded list is replayed into the router's context under RECENT CONVERSATION.
+    assert "RECENT CONVERSATION" in ctx["text"]
+    assert "Alpha task" in ctx["text"]
+
+
 def test_open_question_goes_to_router_answer(client, monkeypatch):
     """An open question with no deterministic handler goes to the router, whose
     `answer` action replies inline — the SINGLE claude entry point (no separate Q&A)."""
     from ai import router
     conn = _db()
     tg = FakeTelegram()
-    monkeypatch.setattr(router, "route", lambda c, t, source="telegram": {
+    monkeypatch.setattr(router, "route", lambda c, t, source="telegram", **kw: {
         "reply": "Your week looked productive — 3 videos done.",
         "keyboard": None, "fell_back": False, "applied": ["answer"]})
     upd = {"update_id": 21, "message": {"from": {"id": 12345678},

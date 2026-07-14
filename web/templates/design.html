@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Design{% endblock %}
+
+{# Kitchen-sink style guide. The ONLY page-scoped CSS allowed to live here is the
+   swatch/spec grid used to DISPLAY tokens — every component below is drawn by the
+   shipped app.css classes + _macros.html, never re-styled here. If a component
+   looks wrong on this page, the bug is in app.css/_macros, not in design.html. #}
+{% block content %}
+<style>
+  .dg { max-width: 960px; }
+  .dg h1 { font-size: 24px; font-weight: 600; margin: 4px 0 2px; }
+  .dg .lede { color: var(--muted); margin: 0 0 28px; }
+  .dg section { border-top: 1px solid var(--border); padding: 22px 0 6px; }
+  .dg h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 14px; }
+  .dg .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .dg .stack { display: flex; flex-direction: column; gap: 8px; max-width: 460px; }
+  /* token swatches — bound to the vars so they can never disagree with the tokens */
+  .sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .sw > div { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .sw .chip { height: 46px; }
+  .sw .lab { padding: 6px 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .sw .lab b { color: var(--text); font-weight: 500; display: block; }
+  .type-mono { font-family: var(--mono); }
+  .note { max-width: 260px; }   /* note_card is grid-sized in situ; cap it here */
+</style>
+
+<div class="dg">
+  <h1>Design reference</h1>
+  <p class="lede">Every shared component, drawn by the shipped <span class="type-mono">app.css</span> + <span class="type-mono">_macros.html</span>. This page can't drift — if something looks wrong here, fix the CSS/macro, not this page. Judge new screens against it at 1440px <b>and</b> 390px.</p>
+
+  <section>
+    <h2>Colour tokens</h2>
+    <div class="sw">
+      {% for var, label in swatches %}
+      <div>
+        <div class="chip" style="background: var({{ var }})"></div>
+        <div class="lab"><b>{{ label }}</b>{{ var }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Type</h2>
+    <div class="stack">
+      <div style="font-size:24px;font-weight:600">Sans — Avenir Next, for prose &amp; titles</div>
+      <div>Body copy sits at 16px / 1.5. Sans is for anything you read as language.</div>
+      <div class="type-mono">Mono — dates · counts · slugs · 3d over · 12/48</div>
+      <div class="cat">category caps (bare muted, list rows)</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Buttons</h2>
+    <div class="row">
+      <button class="qgo">Primary (qgo)</button>
+      <button class="mini">Mini</button>
+      <button class="mini danger">Mini danger</button>
+    </div>
+    <div class="row">
+      <button class="planbtn">☀ Do today</button>
+      <button class="planbtn on">☀ On today ✓</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Priority &amp; category marks</h2>
+    <div class="row">
+      <span class="pri high" title="high"></span> high
+      <span class="pri med" title="med"></span> med
+      <span class="cat">content</span>
+    </div>
+  </section>
+
+  {# Segmented pickers + .fld controls are .editor-scoped in app.css — render them
+     inside a real .editor panel so they show with their true styling, not bare. #}
+  <section>
+    <h2>Editor controls (segmented pickers · form fields)</h2>
+    <div class="editor" style="width:min(460px,100%)">
+      <div class="fld">priority
+        <div class="seg">
+          <button class="segbtn" data-val="">—</button>
+          <button class="segbtn on" data-val="low">low</button>
+          <button class="segbtn" data-val="med">med</button>
+          <button class="segbtn" data-val="high">high</button>
+        </div>
+      </div>
+      <div class="fld">category
+        <div class="seg">
+          <button class="segbtn on" data-val="content"><span class="cdot content"></span>content</button>
+          <button class="segbtn" data-val="business"><span class="cdot business"></span>business</button>
+          <button class="segbtn" data-val="personal"><span class="cdot personal"></span>personal</button>
+        </div>
+      </div>
+      <div class="erow egrid2">
+        <label class="fld">due date<input class="txt" type="date"></label>
+        <label class="fld">title<input class="txt" placeholder="Task title"></label>
+      </div>
+      <label class="fld">select<select><option>Option A</option><option>Option B</option></select></label>
+      <textarea placeholder="Write markdown…"></textarea>
+    </div>
+  </section>
+
+  <section>
+    <h2>Today rows</h2>
+    <div class="stack" style="max-width:560px">
+      {{ m.today_item(tasks.plain, today) }}
+      {{ m.today_item(tasks.priority, today) }}
+      {{ m.today_item(tasks.due, today) }}
+      {{ m.today_item(tasks.done, today) }}
+      {{ m.today_item(tasks.parent, today) }}
+    </div>
+  </section>
+
+  <section>
+    <h2>This-week rows</h2>
+    <div class="stack" style="max-width:560px">
+      {{ m.week_item(cards.plain, today) }}
+      {{ m.week_item(cards.stale, today) }}
+    </div>
+  </section>
+
+  <section>
+    <h2>Kanban cards</h2>
+    <div class="row" style="align-items:flex-start">
+      {{ m.kcard(cards.plain, today) }}
+      {{ m.kcard(cards.pinned, today) }}
+      {{ m.kcard(cards.stale, today) }}
+      {{ m.kcard(cards.recur, today) }}
+      {{ m.kcard(cards.parent, today) }}
+    </div>
+  </section>
+
+  <section>
+    <h2>Note cards</h2>
+    <div class="row" style="align-items:flex-start">
+      {% for n in notes %}{{ m.note_card(n) }}{% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Toast &amp; motion</h2>
+    <div class="row">
+      <button class="mini" onclick="toast('Deleted', function(){})">Trigger undo toast</button>
+      <span class="type-mono" style="color:var(--muted)">durations 120/180/260ms · ease cubic-bezier(.2,.8,.2,1) · reduced-motion kills all</span>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -9,7 +9,7 @@
    player row ships hidden; core.js reveals it only once the recording loads. #}
 {% macro journal_entry(e, day) -%}
 <div class="jentry" data-day="{{ day }}" data-time="{{ e.time }}" data-idx="{{ e.idx }}">
-  <div class="due">{{ e.time }}{% if e.source %} · {{ e.source }}{% endif %}
+  <div class="due">{{ e.time|ftime }}{% if e.source %} · {{ e.source }}{% endif %}
     <span class="jacts">
       <button class="jmore" type="button" aria-label="Entry actions">⋯</button>
       <button class="jact jedit" type="button">Edit</button>
@@ -17,6 +17,14 @@
     </span>
   </div>
   <p class="jtext">{{ e.text }}</p>
+  {% if e.media_items %}
+  <div class="jgallery">
+    {% for im in e.media_items %}
+    {% if im.is_image %}<img class="jgimg" loading="lazy" src="{{ im.url }}" data-full="{{ im.url }}" data-name="{{ im.name }}" alt="">
+    {% else %}<button type="button" class="jgfile" data-full="{{ im.url }}" data-name="{{ im.name }}"><span class="jgficon">📎</span><span class="jgfname">{{ im.name }}</span></button>{% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
   {% if e.audio %}
   <div class="erow nplay" hidden><span class="plabel">🎙 your recording</span>
     <audio preload="none" src="/journal/{{ day }}/entry/{{ e.time }}/audio?i={{ e.idx }}"></audio></div>
@@ -32,6 +40,7 @@ data-task-id="{{ t.id }}" data-title="{{ t.title|e }}" data-due="{{ t.due_date o
 data-priority="{{ t.priority or '' }}" data-category="{{ t.category or '' }}"
 data-col="{{ t.col }}" data-recur="{{ t.recur_rule or '' }}" data-goal-id="{{ t.goal_id or '' }}"
 data-planned="{{ _onday(t, today) }}"
+data-media="{{ t.media or '' }}"
 data-subs='{{ t.subtasks|tojson }}'
 {%- endmacro %}
 

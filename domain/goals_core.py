@@ -31,6 +31,25 @@ def current_period_start(timeframe: str, today: str = None) -> str:
     return d.isoformat()
 
 
+def create_goal(conn, title, timeframe, *, target=None, current=0, unit=None,
+                end_date=None):
+    """Insert a goal from its shape-deriving fields — the ONE source shared by the web
+    form (`routes/goals.goal_new`) and the bot router (`create_goal` action). `period`
+    and `kind` are written only for the legacy CHECK constraint's back-compat; the real
+    shape derives from target/unit/links at read time. `end_date` is kept only for a
+    `by_date` goal. Caller owns the transaction. Returns the new goal id."""
+    period = "week" if timeframe == "week" else "month"       # legacy CHECK-compatible
+    kind = "number" if (target is not None or unit) else "rollup"
+    if timeframe != "by_date":
+        end_date = None
+    cur = conn.execute(
+        "INSERT INTO goals (title, period, period_start, kind, target_num, "
+        "current_num, timeframe, end_date, unit, created) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (title, period, current_period_start(timeframe), kind, target, current or 0,
+         timeframe, end_date, unit, now_iso()))
+    return cur.lastrowid
+
+
 def goal_progress(conn, g) -> dict:
     """Derive progress from which fields exist (not from deprecated `kind`). Returns a
     dict the template switches on via `shape` ('measure'|'rollup'|'milestone'|'both'),

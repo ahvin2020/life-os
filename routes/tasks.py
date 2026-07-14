@@ -16,10 +16,10 @@ from domain.capture import create_task
 # Pure task-domain helpers live in domain/tasks_core (Blueprint-free so the bot
 # daemon / proactive AI can import them). Re-exported here for back-compat.
 from domain.tasks_core import (
-    _WEEKDAYS, _row_to_task, _WEEK_SINCE_SQL, set_task_col, _progress,
-    subtask_progress, task_dict, next_due_date, _respawn_recurring, complete_task,
-    _reconcile_parent, _setting_days, archive_old_done, purge_deleted, today_tasks,
-    today_task_rows, week_tasks, bump_reschedule, day_score,
+    _WEEKDAYS, _row_to_task, _WEEK_SINCE_SQL, set_task_col, promote_planned_to_week,
+    _progress, subtask_progress, task_dict, next_due_date, _respawn_recurring,
+    complete_task, _reconcile_parent, _setting_days, archive_old_done, purge_deleted,
+    today_tasks, today_task_rows, week_tasks, bump_reschedule, day_score,
 )
 
 bp = Blueprint("tasks", __name__)
@@ -79,6 +79,7 @@ def task_new():
             recur_rule=f.get("recur_rule") or None,
             goal_id=int(f["goal_id"]) if f.get("goal_id") else None,
             parent_id=int(f["parent_id"]) if f.get("parent_id") else None,
+            media=f.get("media") or None,
         )
     conn.close()
     return respond(True, "Task added", to="/tasks", extra={"id": tid})
@@ -96,7 +97,7 @@ def task_edit(task_id):
         if old and old["due_date"] and new_due and new_due > old["due_date"]:
             postponed = True
     fields, params = [], []
-    for col in ("title", "priority", "category", "due_date", "recur_rule"):
+    for col in ("title", "priority", "category", "due_date", "recur_rule", "media"):
         if col in f:
             val = f.get(col) or None
             fields.append(f"{col}=?")
@@ -180,10 +181,7 @@ def task_plan(task_id):
         # promotes a backlog task into the week column, and un-planning leaves it
         # there — not-today does NOT mean not-this-week. Runs on both toggles so
         # legacy planned-while-backlog rows also settle into week on untick.
-        cur = conn.execute("SELECT col, done, parent_id FROM tasks WHERE id=?",
-                           (task_id,)).fetchone()
-        if cur and cur["parent_id"] is None and not cur["done"] and cur["col"] == "backlog":
-            set_task_col(conn, task_id, "week")
+        promote_planned_to_week(conn, task_id)
         if new_val is None and r["planned_on"]:      # a set plan was cleared → a postpone
             bump_reschedule(conn, task_id)
             # Un-planning surfaces the task at the TOP of its home column (it was

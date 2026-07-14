@@ -173,7 +173,10 @@ def answer_query(conn, text: str):
         return _answer_overdue(conn, today)
     if "goal" in t:
         return _answer_goals(conn)
-    if "journal" in t or "what did i write" in t:
+    # Bare "journal" / "what did I write [today]" → today's page. But "what did I write
+    # ABOUT the reno" is a recall question about the PAST — let it fall through to the
+    # router's vault_recall, don't answer with today's journal.
+    if "journal" in t or re.fullmatch(r"what did i write( today)?\??", t):
         return _answer_journal(today)
     if "backlog" in t:
         return _answer_column(conn, today, "backlog", "🗂 Backlog")

@@ -28,6 +28,7 @@ def _row_to_task(r) -> dict:
         "done": bool(r["done"]), "completed_at": r["completed_at"],
         "archived_at": r["archived_at"], "week_since": r["week_since"],
         "reschedule_count": r["reschedule_count"],
+        "media": (r["media"] if "media" in r.keys() else "") or "",
     }
 
 
@@ -44,6 +45,18 @@ def set_task_col(conn, task_id, col):
     conn.execute(
         f"UPDATE tasks SET {_WEEK_SINCE_SQL}, col=?, updated=? WHERE id=?",
         (col, today_iso(), col, now_iso(), task_id))
+
+
+def promote_planned_to_week(conn, task_id):
+    """Enforce the on-today ⊆ this-week rule: a planned (or unplanned) backlog PARENT
+    task moves into 'week'. No-op for subtasks, done, or non-backlog rows. Call right
+    after writing planned_on (re-reads col so a mid-transaction reopen settles too).
+    The ONE source of this promotion — used by the task editor's ☀ toggle and the bot
+    router's plan/unplan paths."""
+    cur = conn.execute("SELECT col, done, parent_id FROM tasks WHERE id=?",
+                       (task_id,)).fetchone()
+    if cur and cur["parent_id"] is None and not cur["done"] and cur["col"] == "backlog":
+        set_task_col(conn, task_id, "week")
 
 
 def _progress(done, total) -> dict:

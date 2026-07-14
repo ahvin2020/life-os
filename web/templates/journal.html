@@ -17,6 +17,11 @@
         <div class="empty">No entry yet. Write how the day went — what you did, ate, felt.</div>
       {% endif %}
       <textarea id="j-text" class="jadd" data-day="{{ today }}" placeholder="Add a timestamped entry…" rows="4"></textarea>
+      <div class="attach" data-attach id="j-attach">
+        <div class="athumbs"></div>
+        <button type="button" class="mini atadd">📎 Attach</button>
+        <input type="file" multiple hidden aria-label="Attach files">
+      </div>
       <div class="erow"><span class="spacer" style="flex:1"></span><button class="qgo" id="j-add" type="button">＋ Add entry</button></div>
     </div>
 

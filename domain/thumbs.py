@@ -133,6 +133,7 @@ def _media_path(note: dict):
     media = note.get("media")
     if not media:
         return None
+    media = media.split(",")[0].strip()             # first image is the card thumbnail
     rel = media.split("vault/", 1)[-1].lstrip("/")  # "vault/.media/x.jpg" -> ".media/x.jpg"
     p = os.path.join(vault_store.VAULT_DIR, rel)
     return p if os.path.exists(p) else None

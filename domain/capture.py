@@ -20,6 +20,7 @@ import requests
 
 from core.db import now_iso, today_iso
 from domain import vault_store
+from domain.vault_store import first_url  # single-source URL extractor (re-exported here)
 
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _IDEA_DOMAINS = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
@@ -67,7 +68,7 @@ def next_sort_order(conn, col: str, parent_id=None) -> int:
 
 def create_task(conn, title, *, col="backlog", priority=None, category=None,
                 due_date=None, planned_on=None, recur_rule=None, goal_id=None,
-                parent_id=None, at_top=False) -> int:
+                parent_id=None, at_top=False, media=None) -> int:
     """Insert a task (or subtask when parent_id is set). Returns the new id.
     Single source of truth for task inserts. at_top=True surfaces the new task at
     the TOP of its column — used by the capture paths (bot / composer / refile),
@@ -90,10 +91,10 @@ def create_task(conn, title, *, col="backlog", priority=None, category=None,
         """INSERT INTO tasks
              (title, col, sort_order, priority, category, due_date, planned_on,
               recur_rule, goal_id, parent_id, done, completed_at, archived_at,
-              week_since, created, updated)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?)""",
+              week_since, media, created, updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?,?)""",
         (title.strip(), col, sort_order, priority, category, due_date, planned_on,
-         recur_rule, goal_id, parent_id, week_since, ts, ts),
+         recur_rule, goal_id, parent_id, week_since, media, ts, ts),
     )
     return cur.lastrowid
 
@@ -153,37 +154,47 @@ def split_capture_lines(text: str):
 
 
 def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
-                  enrich: str = "async") -> dict:
+                  enrich: str = "async", media: str | None = None) -> dict:
     """Classify `text` and file it immediately. Returns a dict describing where it
     went: {kind, id|slug, label, title?, tags?}. `forced` overrides prefix detection when
     the user picks a type chip ('task'|'note'|'journal'); 'auto' respects prefixes/URLs.
     `enrich` controls link enrichment: 'async' (default → web/voice) schedules the
     background rewrite; 'off' skips it so a caller (the Telegram bot) can enrich inline
-    and edit its own reply."""
+    and edit its own reply. `media` is an optional comma-separated list of vault/.media
+    pointers to attach to whatever the capture becomes; a lone attachment (no text) files
+    as a note."""
     text = (text or "").strip()
-    if not text:
+    media = (media or "").strip() or None
+    if not text and not media:
         return {"kind": "none", "label": "nothing to add"}
 
     body = text
 
     # --- explicit type chip wins over prefix sniffing ---
     if forced == "task":
-        return _as_task(conn, _strip_prefix(body, "t:"))
+        return _as_task(conn, _strip_prefix(body, "t:"), media=media)
     if forced == "journal":
-        return _as_journal(_strip_prefix(body, "j:"))
+        return _as_journal(_strip_prefix(body, "j:"), media=media)
     if forced == "note":
-        return _as_note(conn, _strip_prefix_any(body), tags=[])
+        return _as_note(conn, _strip_prefix_any(body), tags=[], media=media)
+
+    # --- attachment with no text → a note (its filename becomes the title) ---
+    if not body:
+        return _as_note(conn, "", tags=[], media=media)
 
     # --- auto: prefixes, then URL, then unsorted note ---
     low = body.lower()
     if low.startswith("t:"):
-        return _as_task(conn, _strip_prefix(body, "t:"))
+        return _as_task(conn, _strip_prefix(body, "t:"), media=media)
     if low.startswith("n:"):
-        return _as_note(conn, _strip_prefix(body, "n:"), tags=[])
+        return _as_note(conn, _strip_prefix(body, "n:"), tags=[], media=media)
     if low.startswith("i:"):
-        return _as_note(conn, _strip_prefix(body, "i:"), tags=["idea"])
+        return _as_note(conn, _strip_prefix(body, "i:"), tags=["idea"], media=media)
     if low.startswith("j:"):
-        return _as_journal(_strip_prefix(body, "j:"))
+        return _as_journal(_strip_prefix(body, "j:"), media=media)
+    if media:
+        # free-text + a file: keep them together as one note rather than guessing a task
+        return _as_note(conn, body, tags=[], media=media)
     if _looks_like_url(body):
         # Dedupe by normalised URL: a re-shared link touches the existing #link note
         # instead of minting a twin (strip utm/igsh/etc first).
@@ -219,7 +230,7 @@ def _strip_prefix_any(text):
     return text
 
 
-def _as_task(conn, text) -> dict:
+def _as_task(conn, text, media=None) -> dict:
     priority = None
     if text.rstrip().endswith("!"):
         priority = "high"
@@ -227,27 +238,30 @@ def _as_task(conn, text) -> dict:
     title = text or "Untitled task"
     with conn:
         tid = create_task(conn, title, col="week", priority=priority,
-                          at_top=True)
+                          at_top=True, media=media)
     label = "Tasks" + (" · high" if priority else "")
     return {"kind": "task", "id": tid, "label": label, "title": title,
             "priority": priority}
 
 
-def _as_note(conn, text, tags, title=None) -> dict:
+def _as_note(conn, text, tags, title=None, media=None) -> dict:
     tags = tags or []
     if title is None:
-        first = text.strip().splitlines()[0] if text.strip() else "Untitled"
-        title = first[:60]
-    note = vault_store.create_note(title=title, body=text, tags=tags)
+        first = text.strip().splitlines()[0] if text.strip() else ""
+        # an attachment-only capture is titled by its (first) filename
+        if not first and media:
+            first = vault_store.media_display_name(media.split(",")[0])
+        title = first[:60] or "Attachment"
+    note = vault_store.create_note(title=title, body=text, tags=tags, media=media)
     tag_str = " ".join("#" + t for t in tags) if tags else ""
     label = "Notes" + (f" · {tag_str}" if tag_str else "")
     return {"kind": "note", "slug": note["slug"], "label": label,
             "title": note["title"], "tags": tags}
 
 
-def _as_journal(text) -> dict:
+def _as_journal(text, media=None) -> dict:
     day = today_iso()
-    vault_store.append_journal_entry(day, text, source="")
+    vault_store.append_journal_entry(day, text, source="", media=media)
     return {"kind": "journal", "id": day, "label": "today's Journal"}
 
 
@@ -268,12 +282,8 @@ def _url_title(text):
     if not m:
         return fallback
     try:
-        resp = requests.get(
-            url, timeout=3, allow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; LifeOS/1.0)"})
-        page = resp.text or ""
-        mt = _OG_TITLE_RE.search(page) or _OG_TITLE_RE2.search(page) or _TITLE_RE.search(page)
-        title = _html.unescape(re.sub(r"\s+", " ", mt.group(1)).strip()) if mt else ""
+        # reuse the single og:/<title> scraper (same 3s timeout) — no duplicate fetch/parse
+        title = (_fetch_og(url, 3).get("title") or "").strip()
         if title:
             return title[:120]
     except Exception:
@@ -289,14 +299,6 @@ def _url_title(text):
 # instant save so capture stays instant; any network/claude failure leaves the note
 # untouched (same never-block-capture contract as triage).
 _ADD_TO_NOTE_RE = re.compile(r"^\s*add to note\s*", re.I)
-
-
-def first_url(text: str):
-    """First http(s) URL in `text`, or None. Trailing punctuation trimmed."""
-    m = _URL_RE.search(text or "")
-    if not m:
-        return None
-    return m.group(0).rstrip(").,;'\"")
 
 
 def normalize_url(url: str) -> str:

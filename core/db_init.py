@@ -71,6 +71,7 @@ TABLES = [
             deleted_at   TEXT,
             reschedule_count INTEGER NOT NULL DEFAULT 0,
             week_since   TEXT,
+            media        TEXT,                 -- comma-sep vault/.media/ image pointers
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -79,6 +80,28 @@ TABLES = [
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT
+        )
+    """),
+    ("reminders", """
+        CREATE TABLE IF NOT EXISTS reminders (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            text     TEXT NOT NULL,
+            fire_at  TEXT NOT NULL,       -- UTC ISO; the daemon pushes when now >= this
+            created  TEXT NOT NULL,
+            fired_at TEXT                 -- NULL until sent, then the send timestamp
+        )
+    """),
+    ("doc_facts", """
+        CREATE TABLE IF NOT EXISTS doc_facts (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            path         TEXT NOT NULL,        -- absolute file path at extraction time
+            label        TEXT NOT NULL,        -- "Passport", "Scoot booking", "Cruise (Sep)"
+            category     TEXT NOT NULL DEFAULT 'fact',  -- 'expiry'|'renewal'|'booking'|'fact'
+            value        TEXT,                 -- the answer text ("SQ ref ABC123", "$2,480")
+            event_date   TEXT,                 -- ISO date for expiry/renewal/booking, else NULL
+            extracted_at TEXT NOT NULL,
+            dismissed_at TEXT,
+            UNIQUE(path, label, category)
         )
     """),
 ]
@@ -153,6 +176,40 @@ def migrate(conn) -> list:
         if "deleted_at" not in gcols:
             conn.execute("ALTER TABLE goals ADD COLUMN deleted_at TEXT")
             applied.append("v6: goals.deleted_at")
+
+    # v7: doc_facts — the document facts cache (booking refs, prices, expiry/renewal
+    # dates) extracted in the background so document questions answer instantly.
+    if 0 < disk < 7:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS doc_facts (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                path         TEXT NOT NULL,
+                label        TEXT NOT NULL,
+                category     TEXT NOT NULL DEFAULT 'fact',
+                value        TEXT,
+                event_date   TEXT,
+                extracted_at TEXT NOT NULL,
+                dismissed_at TEXT,
+                UNIQUE(path, label, category)
+            )
+        """)
+        applied.append("v7: doc_facts")
+
+    # v8: image attachments for tasks (notes/journal carry theirs in vault frontmatter).
+    if 0 < disk < 8 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "media" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN media TEXT")
+            applied.append("v8: tasks.media")
+
+    # v9: timed reminders (the daemon fires a Telegram push at fire_at). The table is
+    # created unconditionally by TABLES; the version bump just records the step.
+    if 0 < disk < 9:
+        conn.execute("""CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, fire_at TEXT NOT NULL,
+            created TEXT NOT NULL, fired_at TEXT)""")
+        applied.append("v9: reminders")
     return applied
 
 

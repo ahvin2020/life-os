@@ -15,6 +15,7 @@
   <span class="qplus">＋</span>
   {# short enough to survive mid widths uncropped; bare-URL capture still works #}
   <input type="text" id="qin" placeholder="Add a task, note, or journal entry…" aria-label="Quick add">
+  <button class="qclip" id="qclip" type="button" title="Attach a file" aria-label="Attach a file">📎</button>
   <div class="qtypes" id="qtypes">
     <button class="qt active" data-t="auto" type="button">Auto</button>
     <button class="qt" data-t="task" type="button">Task</button>
@@ -22,6 +23,11 @@
     <button class="qt" data-t="journal" type="button">Journal</button>
   </div>
   <button class="qgo" id="qgo" type="button">Add</button>
+  {# hidden shared attach widget — drag/drop onto the bar or the 📎 opens the picker #}
+  <div class="attach qattach" data-attach id="q-attach">
+    <div class="athumbs"></div>
+    <input type="file" multiple hidden aria-label="Attach files">
+  </div>
 </div>
 
 {% if first_run %}
@@ -60,12 +66,24 @@
     {% if week %}
     <div class="card weekpool">
       <div class="chead"><h2>This week</h2><a href="/tasks">→</a></div>
-      {% for t in week %}{{ m.week_item(t, today) }}{% endfor %}
+      {# lead with the first few; the rest fold away so the column can't run a mile long #}
+      {% for t in week[:6] %}{{ m.week_item(t, today) }}{% endfor %}
+      {% if week | length > 6 %}
+      <details class="donefold morefold">
+        <summary><span class="mf-more">{{ week | length - 6 }} more</span><span class="mf-less">Show less</span></summary>
+        {% for t in week[6:] %}{{ m.week_item(t, today) }}{% endfor %}
+      </details>
+      {% endif %}
     </div>
     {% endif %}
   </div>
 
   <div class="rcol">
+    <div class="card sub2 agendacard" id="agendacard">
+      <div class="chead"><h2>Up next</h2><button class="calopen" id="calopen" type="button">Full calendar →</button></div>
+      <div class="agbody" id="agbody"><div class="empty">Loading…</div></div>
+    </div>
+
     <div class="card sub2">
       <div class="chead"><h2>Goals</h2><a href="/goals">→</a></div>
       {% if goals %}
@@ -89,15 +107,6 @@
       {% endif %}
     </div>
 
-    <div class="card sub2" id="capfeed">
-      <div class="chead"><h2>Captured today</h2><a href="/notes">→</a></div>
-      {% if feed %}
-        {% for c in feed %}{{ m.cap_item(c) }}{% endfor %}
-      {% else %}
-        <div class="empty">Nothing captured today yet.</div>
-      {% endif %}
-    </div>
-
     {% if journal_empty %}
     <div class="card sub2">
       <div class="chead"><h2>Journal</h2><a href="/journal">→</a></div>
@@ -105,6 +114,23 @@
     </div>
     {% endif %}
   </div>
+</div>
+
+<div class="card calcard" id="calcard" hidden>
+  <div class="calbar">
+    <div class="calnav">
+      <button class="calnavbtn" type="button" data-cal="prev" aria-label="Previous">‹</button>
+      <button class="calnavbtn" type="button" data-cal="next" aria-label="Next">›</button>
+      <button class="caltoday" type="button" data-cal="today">Today</button>
+      <span class="callabel" id="callabel">…</span>
+    </div>
+    <div class="seg calviews" id="calviews">
+      <button class="segbtn calview" type="button" data-view="day">Day</button>
+      <button class="segbtn calview" type="button" data-view="week">Week</button>
+      <button class="segbtn calview" type="button" data-view="month">Month</button>
+    </div>
+  </div>
+  <div class="calbody" id="calbody"><div class="empty">Loading…</div></div>
 </div>
 {% endblock %}
 {% block scripts %}

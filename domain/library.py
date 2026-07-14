@@ -30,6 +30,7 @@ import json
 import os
 import re
 
+from core.text import tokenize
 from domain import vault_store
 from ai.claude_cli import call_claude
 
@@ -92,7 +93,6 @@ _MAX_COUNT = 5
 _BODY_SNIPPET = 100
 CLAUDE_TIMEOUT = 60
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
 # Filler that carries no topic meaning — stripped before OR-keyword matching. "video"
 # is filler here because ~everything in the library is a video.
 _KW_STOP = {
@@ -129,15 +129,11 @@ def shelf_summary() -> str:
 
 
 # ── topic → cluster(s) ─────────────────────────────────────────────────────────
-def _words(text: str) -> list:
-    return _WORD_RE.findall((text or "").lower())
-
-
 def match_clusters(topic: str) -> list:
     """Best-matching cluster(s) for a free-text topic, ordered by strength (aliases and
     name-token hits first). Multi-concept topics can return several ("editing with ai"
     → creator-craft + ai-investing-tools). [] when nothing maps."""
-    toks = _words(topic)
+    toks = tokenize(topic)
     out: list = []
     joined = "-".join(toks)
     # Whole-topic == a cluster slug (e.g. "market investing").
@@ -159,7 +155,7 @@ def concept_keywords(topic: str) -> list:
     """The meaningful concept words in a topic, filler removed ('editing with ai' →
     ['editing', 'ai']). Used for OR-keyword recall across the whole library."""
     seen, out = set(), []
-    for w in _words(topic):
+    for w in tokenize(topic):
         if w in _KW_STOP or w in seen:
             continue
         seen.add(w)
@@ -187,7 +183,7 @@ def _kw_hits(keywords: list, note: dict) -> bool:
     half' — a naive equality/AND filter would miss it."""
     if not keywords:
         return False
-    words = set(_words(note.get("title", "") + " " + (note.get("body") or "")))
+    words = set(tokenize(note.get("title", "") + " " + (note.get("body") or "")))
     for k in keywords:
         if k in words:
             return True

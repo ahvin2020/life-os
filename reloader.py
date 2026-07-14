@@ -10,6 +10,13 @@ Each process watches its own .py files and os.execv's into fresh code once a cha
 has SETTLED (no .py touched for SETTLE_S) — the guard against re-execing mid-sync
 into a half-written, internally inconsistent code set. Same PID; supervisor-
 independent, so it behaves identically under launchd (Mac) and Docker (NAS).
+
+It also self-heals the one thing a .py watch misses: connecting an integration while
+we run. That drops a NEW token/secret file and often pip-installs deps — neither
+touches our .py, so the stale process stays blind (a Google-calendar lookup answered
+"no event" for an event that WAS in gcal, 2026-07-14). So a trigger file (below)
+that newly APPEARS since start also forces a reload, re-execing into a process that
+re-imports the fresh deps and re-reads state.
 """
 from __future__ import annotations
 
@@ -20,6 +27,16 @@ import time
 SETTLE_S = 15                                   # a change must be this quiet before we act
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _SKIP_DIRS = {"__pycache__", "node_modules"}    # dot-dirs (.venv/.git/.trash) pruned separately
+
+# Non-.py files whose first APPEARANCE means an integration was just connected. We watch
+# APPEARANCE (absent→present since start), never every write: connecting via the Settings
+# OAuth callback writes the token, and _creds() REWRITES it on each ~hourly refresh — mtime-
+# watching it would reexec the daemon every hour. An allowlist, because data/ is otherwise
+# pruned on purpose (app.db churns constantly and must never trigger a reload).
+_TRIGGER_FILES = (
+    os.path.join(_ROOT, "data", "google_token.json"),
+    os.path.join(_ROOT, "data", "google_client_secret.json"),
+)
 
 
 def code_mtime() -> float:
@@ -38,10 +55,39 @@ def code_mtime() -> float:
     return latest
 
 
-def should_reload(baseline: float) -> bool:
-    """True once a .py newer than `baseline` has settled (no edit for SETTLE_S)."""
+def _present_triggers() -> frozenset:
+    """The trigger files that exist right now."""
+    return frozenset(p for p in _TRIGGER_FILES if os.path.exists(p))
+
+
+def snapshot() -> tuple:
+    """Baseline for should_reload: (newest .py mtime, trigger files present now). A later
+    reload fires on a settled .py change OR a trigger file that has appeared since this."""
+    return (code_mtime(), _present_triggers())
+
+
+def should_reload(baseline) -> bool:
+    """True once a change past `baseline` has settled (no touch for SETTLE_S). `baseline`
+    is a snapshot() tuple; a bare float is still accepted (watches .py only) for back-compat.
+
+    Fires on either a .py newer than baseline, or a trigger file that has newly APPEARED
+    since baseline — the signal that an integration (e.g. Google) was just connected while
+    we were running. Both are gated on SETTLE_S so we never reexec mid-write."""
+    if isinstance(baseline, tuple):
+        py_baseline, present0 = baseline
+    else:                                        # legacy float: watch .py only, no trigger arm
+        py_baseline, present0 = baseline, _present_triggers()
+    now = time.time()
     latest = code_mtime()
-    return latest > baseline and (time.time() - latest) >= SETTLE_S
+    if latest > py_baseline and (now - latest) >= SETTLE_S:
+        return True
+    for p in _present_triggers() - present0:     # trigger files that appeared since start
+        try:
+            if (now - os.path.getmtime(p)) >= SETTLE_S:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def reexec(on_reload=None) -> None:

@@ -111,11 +111,12 @@ def journal_page():
 @bp.route("/journal/entry", methods=["POST"])
 def journal_entry():
     text = (request.form.get("text") or "").strip()
-    if not text:
+    media = request.form.get("media") or None
+    if not text and not media:
         return respond(False, "Nothing to add", fallback="/journal")
     day = request.form.get("day") or today_iso()
     source = request.form.get("source") or ""
-    vault_store.append_journal_entry(day, text, source)
+    vault_store.append_journal_entry(day, text, source, media=media)
     if is_ajax():
         return jsonify({"status": "ok", "day": day})
     return respond(True, "Entry added", to="/journal")

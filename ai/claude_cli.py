@@ -156,7 +156,7 @@ def _looks_like_auth_error(text: str) -> bool:
 
 
 def call_claude(prompt: str, timeout: int = 60, tools: str = "", token: str | None = None,
-                record: bool = True) -> str:
+                record: bool = True, add_dir=None) -> str:
     """Run `claude -p` headlessly (subscription auth, no API key) and return stdout.
 
     On failure returns "" (so callers fall back) but ALWAYS logs the real reason to
@@ -188,10 +188,16 @@ def call_claude(prompt: str, timeout: int = 60, tools: str = "", token: str | No
     last_err = ""
     for attempt in range(2):
         binp = claude_bin()
+        cmd = [binp, "-p", "--tools", tools, "--append-system-prompt", _SYSTEM_PROMPT]
+        # Read-tool calls on a file OUTSIDE the repo (an external document root, a Dropbox
+        # temp download) need that dir added to the workspace, or Read is denied in print
+        # mode. Read-only scope grant — NOT --dangerously-skip-permissions.
+        for d in ([add_dir] if isinstance(add_dir, str) else (add_dir or [])):
+            if d:
+                cmd += ["--add-dir", d]
         try:
             proc = subprocess.run(
-                [binp, "-p", "--tools", tools, "--append-system-prompt", _SYSTEM_PROMPT],
-                input=prompt, capture_output=True, text=True, timeout=timeout, env=env)
+                cmd, input=prompt, capture_output=True, text=True, timeout=timeout, env=env)
         except FileNotFoundError as e:
             last_err = f"binary '{binp}' not found ({e})"
             print(f"[claude_cli] {last_err}; retrying", file=sys.stderr, flush=True)

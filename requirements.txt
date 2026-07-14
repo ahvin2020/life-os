@@ -1,2 +1,13 @@
 flask>=3.0
 requests>=2.31
+
+# Phase 4 Google (Gmail read + draft, Calendar read + event write). OPTIONAL — the app
+# stays Flask-only until you configure OAuth; all google imports are deferred, so these
+# are only needed once you run scripts/google_auth.py.
+google-api-python-client>=2.100
+google-auth>=2.23
+google-auth-oauthlib>=1.1
+
+# Dropbox document access via the Dropbox API (portable — no Synology sync needed).
+# OPTIONAL, deferred import; only needed once you connect Dropbox in Settings.
+dropbox>=11.36
