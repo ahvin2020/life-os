@@ -42,6 +42,7 @@ _COMMON_TZS = [
 ]
 
 DEFAULTS = {
+    "display_name": "",
     "time_format": "24h",
     "digest_hour": "07:00",
     "reflection_hour": "21:30",
@@ -701,6 +702,9 @@ def settings_save():
     # stages None (= delete the row → reset to the code default). Field order preserved so
     # the first-failing message a user sees is unchanged.
     try:
+        # display_name: what the greeting calls you; blank OK (→ derive from profile), ≤40 chars
+        staged["display_name"] = (f.get("display_name") or "").strip()[:40] or None
+
         # time_format: 12h/24h clock for display; anything else → reset to default (24h)
         raw = (f.get("time_format") or "").strip()
         staged["time_format"] = raw if raw in ("12h", "24h") else None

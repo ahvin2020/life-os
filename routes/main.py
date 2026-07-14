@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, render_template, render_template_string, request, jsonify, send_file, abort
 
 from core.web_core import db, today_iso
-from core.db import now_sg
+from core.db import now_sg, get_setting
 from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
                      convert_note_to_journal, convert_task_to_journal)
 from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done, task_dict
@@ -56,6 +56,9 @@ def home():
                 "Good evening" if 18 <= hour < 23 else "Still up")
     # Lead with yesterday's wins (Sunsama's ritual): start from a win, not a to-do list.
     conn2 = db()
+    # Greeting name: the user-set display name (Settings) wins, else derive from the profile
+    # identity, else nameless — nothing hardcoded, so it's right for whoever runs the app.
+    owner_name = get_setting(conn2, "display_name") or vault_store.owner_display_name()
     sg_mid = datetime.fromisoformat(today).replace(tzinfo=now.tzinfo)
     y_start = (sg_mid - timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     y_end = sg_mid.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -69,7 +72,7 @@ def home():
     return render_template(
         "today.html", active="home",
         weekday=now.strftime("%A"), greeting=greeting,
-        owner_name=vault_store.owner_display_name(),
+        owner_name=owner_name,
         yesterday_done=yesterday_done, all_done=all_done,
         # date only — a static render-time clock goes stale on screen, and the tz
         # name is settings info, not something to re-read every morning

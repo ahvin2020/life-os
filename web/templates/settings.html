@@ -5,6 +5,14 @@
 
 <form method="post" action="/settings/save" class="setform">
 
+  <div class="sect"><span>You</span><span class="rule"></span></div>
+  <div class="setgroup">
+    <div class="setrow">
+      <div class="sinfo"><div class="slabel">What should I call you?</div><div class="sdesc">The name in your home greeting. Blank uses your profile name.</div></div>
+      <div class="sctrls"><input class="ctrl" type="text" name="display_name" value="{{ values.display_name or '' }}" maxlength="40" style="min-width:180px" placeholder="e.g. Kelvin" aria-label="What should I call you?"></div>
+    </div>
+  </div>
+
   <div class="sect"><span>Proactive AI &amp; schedule</span><span class="rule"></span></div>
   <div class="setgroup">
     <div class="setrow">
