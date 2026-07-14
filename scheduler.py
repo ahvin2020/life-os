@@ -301,7 +301,12 @@ def maybe_daily_sweep(conn, tg, chat_id) -> bool:
         _log(f"orphan-attachment purge failed: {e}")
     from capture_daemon import capture_has_unsorted, run_triage_now
     if capture_has_unsorted():
-        run_triage_now(conn, tg, chat_id)
+        run_triage_now(conn, tg, chat_id)   # stamps triage_last_ran itself
+    else:
+        # Empty inbox is still a completed sweep — stamp the heartbeat so the
+        # health dot means "ran", not "found work" (else it goes stale on quiet days).
+        from core.db import now_iso
+        _set_setting(conn, "triage_last_ran", now_iso())
     return True
 
 

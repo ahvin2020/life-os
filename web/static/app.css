@@ -558,10 +558,12 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 /* ---------- quick capture + today grid ---------- */
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(var(--accent-rgb),.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background-color var(--dur) var(--ease); }
 .qcap:focus-within { border-color: rgba(var(--accent-rgb),.7); box-shadow: 0 0 0 3px var(--accent-dim); }
-/* file drag-over: the WHOLE drop zone lights up — brighter border + a blue tint + a soft glow
-   ring, tweened in so a drag feels like a live target. One rule for every scope initAttach
-   binds: the capture bar, the note/task editors, and the standalone attach widget. */
-.qcap.atdrag, .editor.atdrag, .attach.atdrag {
+/* file drag-over: brighter border + a blue tint + a soft glow ring, tweened in. WHERE it
+   lights up depends on the zone: the capture bar is small and its attach widget is hidden, so
+   the whole bar highlights; in an editor the drop target is the always-visible Attach box, so
+   only THAT lights up (not the whole modal) — even though a drop anywhere in the editor still
+   works. The journal composer's scope IS the attach box, so it highlights directly. */
+.qcap.atdrag, .editor.atdrag .attach, .attach.atdrag {
   border-color: var(--link);
   background: color-mix(in srgb, var(--surface) 88%, var(--link) 12%);
   box-shadow: 0 0 0 3px var(--link-dim), 0 0 24px -4px var(--link);
@@ -662,7 +664,7 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
 /* ---------- editor modal ---------- */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 15; padding: 20px; }
 .overlay.on { display: grid; animation: fade-in var(--dur) var(--ease); }
-.editor { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(640px, 100%); max-height: 85vh; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.editor { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(640px, 100%); max-height: 85vh; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
 .overlay.on .editor { animation: pop-in var(--dur-slow) var(--ease); }
 .editor .ehead { display: flex; gap: 10px; align-items: center; }
 .editor .ehead input { flex: 1; background: none; border: none; color: var(--text); font: inherit; font-size: 18px; font-weight: 600; min-width: 0; }
