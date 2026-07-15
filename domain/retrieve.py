@@ -19,10 +19,12 @@ same validated domain helpers the router uses (soft-delete + undo), are capped (
 only touch Sam's OWN store — no external effect. Delivery recipient is fixed by the daemon.
 """
 
+import concurrent.futures as _cf
 import json
 import os
 
-from core.text import tokenize
+from core.db import DB_PATH, connect, db_path_of
+from core.text import STOP, WEAK, content_terms, tokenize
 from domain import docs, recall, vault_store
 
 
@@ -39,49 +41,90 @@ def _terms(query: str) -> list:
     return [t for t in tokenize(query) if len(t) > 2][:6]
 
 
-# Words that are QUESTION scaffolding or too-generic to help a Gmail AND-search — Gmail
-# ANDs every term, so a question word or a month the email doesn't literally contain zeroes
-# the result ("scoot august" → 0, but "scoot booking" → 5).
-_GMAIL_STOP = {
-    "what", "whats", "when", "where", "which", "who", "how", "why", "the", "and",
-    "for", "you", "your", "mine", "with", "was", "are", "any", "did", "does", "has",
-    "have", "from", "about", "please", "number",
-}
-_GMAIL_WEAK = {
-    "january", "february", "march", "april", "may", "june", "july", "august",
-    "september", "october", "november", "december",
-    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
-    "today", "tomorrow", "yesterday", "week", "month", "year", "next", "last", "this",
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-}
+# Gmail ANDs every term, so a question word or a month the email doesn't literally contain
+# zeroes the result ("scoot august" → 0, but "scoot booking" → 5). The vocabulary is shared
+# with every other keyword search (core.text) — two private copies had already drifted apart.
+_GMAIL_STOP = STOP
+_GMAIL_WEAK = WEAK
 
 
 def _gmail_terms(query: str) -> list:
     """Content terms for a Gmail search: drop question scaffolding, keep order."""
-    out = []
-    for t in tokenize(query):
-        if len(t) >= 3 and t not in _GMAIL_STOP and not t.isdigit():
-            out.append(t)
-    return out[:6]
+    return content_terms(query)
+
+
+def _gmail_variants(query: str) -> list:
+    """The widening ladder for a Gmail search, MOST SPECIFIC FIRST: the whole question's content
+    terms, then without the time words, then peeling the trailing term. Deriving the whole
+    ladder up front is the point — every rung is knowable before the first call, so there's no
+    reason to discover emptiness one round trip at a time."""
+    terms = _gmail_terms(query)
+    if not terms:
+        return [query.strip()] if query.strip() else []
+    out = [" ".join(terms)]
+    strong = [t for t in terms if t not in _GMAIL_WEAK]
+    if strong and strong != terms:
+        out.append(" ".join(strong))
+        terms = strong
+    while len(terms) > 1:
+        terms = terms[:-1]
+        out.append(" ".join(terms))
+    seen, res = set(), []
+    for v in out:
+        if v and v not in seen:
+            seen.add(v)
+            res.append(v)
+    return res
 
 
 def _gmail_hits(query: str, n: int = 5) -> list:
-    """Search Gmail, widening on a miss. Gmail ANDs every term, so a full natural-language
-    question usually returns nothing. Try the content terms; if empty, drop the 'weak' ones
-    (months/relative-time that a confirmation email won't literally contain); if still empty,
-    peel trailing terms until something matches. [] on any failure."""
+    """Search Gmail, widening on a miss — but PROBE the whole ladder at once.
+
+    Sequentially, this measured 3.8s over five searches, four of which were always going to be
+    empty. Racing the full searches instead would multiply Gmail's per-second quota by the
+    ladder's length (~130 units each against a 250/s ceiling), so probe every rung concurrently
+    for ~5 units apiece and fetch only the most specific rung that actually matches. [] on any
+    failure."""
     from ai import google_client
-    terms = _gmail_terms(query)
-    if not terms:                                    # nothing meaningful → raw query
-        return google_client.gmail_search(query, n=n, body=True)
-    hits = google_client.gmail_search(" ".join(terms), n=n, body=True)
-    if not hits:
-        strong = [t for t in terms if t not in _GMAIL_WEAK]
-        if strong and strong != terms:
-            hits, terms = google_client.gmail_search(" ".join(strong), n=n, body=True), strong
-    while not hits and len(terms) > 1:               # peel trailing terms
-        terms = terms[:-1]
-        hits = google_client.gmail_search(" ".join(terms), n=n, body=True)
+    variants = _gmail_variants(query)
+    if not variants:
+        return []
+    counts = [None] * len(variants)
+    if len(variants) > 1:
+        with _cf.ThreadPoolExecutor(max_workers=len(variants)) as pool:
+            futs = [pool.submit(google_client.gmail_probe, v) for v in variants]
+            for i, f in enumerate(futs):
+                try:
+                    counts[i] = f.result()
+                except Exception:
+                    counts[i] = None
+        if all(c is not None for c in counts):       # every rung answered — trust the probes
+            for v, c in zip(variants, counts):       # list order = most specific first
+                if c:
+                    return _tagged(google_client.gmail_search(v, n=n, body=True), variants[0], v)
+            return []                                # genuinely nothing matches, at any width
+    # Probing failed somewhere, so we know NOTHING — and a probe failing is not evidence of
+    # absence (collapsing those two is the bug this module exists to avoid). Walk the ladder
+    # for real: sequential, but only on the rare path where the cheap answer was unavailable.
+    for v in variants:
+        hits = google_client.gmail_search(v, n=n, body=True)
+        if hits:
+            return _tagged(hits, variants[0], v)
+    return []
+
+
+def _tagged(hits: list, asked: str, used: str) -> list:
+    """Record which rung of the ladder actually ran, so the caller can admit it to the model.
+
+    Widening is LOSSY and it cannot know relevance — only emptiness. Measured: "booking fight
+    august" (Sam's typo for flight) matches nothing, so the ladder widened to bare "booking"
+    and handed back 201 unrelated booking emails; the model answered from rank 1 and named a
+    September trip as the August one — fast, sourced, and wrong. Nothing in the evidence said
+    the question's key word had been dropped. Same failure as truncation-reading-as-absence,
+    one layer down: silent degradation is indistinguishable from a real answer, so say it."""
+    for h in hits:
+        h["asked"] = asked
+        h["query"] = used
     return hits
 
 
@@ -104,16 +147,17 @@ def _calendar_window(days_back: int = 1, days_ahead: int = 90) -> list:
         return []
 
 
-# The sources that read SQLite. They must run on the calling thread — the connection isn't
-# shareable — which is also why merging always happens there: `candidates`/`ev` are mutated by
-# exactly one thread, so the concurrency below needs no locking.
-_CONN_SOURCES = ("docs", "facts", "tasks", "goals")
+# Sources cheap enough to stay on the calling thread: a local indexed SQLite read, sub-millisecond.
+# Everything else is network-bound and races. `docs` is NOT here despite needing the DB — it was,
+# and it cost 6.7s of the 9.3s pre-seed because it reaches Dropbox's API and so never overlapped
+# Gmail. It now opens its own connection in the pool (see _fetch).
+_CONN_SOURCES = ("facts", "tasks", "goals")
 
 
-def _fetch(source: str, query: str) -> list:
-    """Fetch one connection-free source. Pure and thread-safe: it returns data and touches no
-    shared state, so several of these can race. [] on any failure, so one dead connector never
-    sinks the answer."""
+def _fetch(source: str, query: str, db_path: str | None = None) -> list:
+    """Fetch one network-bound source. Returns data and touches no shared state, so several of
+    these can race; merging happens on the caller's thread. [] on any failure, so one dead
+    connector never sinks the answer."""
     try:
         if source == "gmail":
             from ai import google_client
@@ -122,26 +166,29 @@ def _fetch(source: str, query: str) -> list:
             return recall.search_vault(_terms(query))[:5]
         if source == "calendar":
             return _calendar_window()             # a window, not a keyword search — query unused
+        if source == "docs":
+            # Its own connection: SQLite connections aren't shareable across threads, and this
+            # is a reader (WAL allows concurrent readers). Wider than the read cap so a
+            # multi-entity ask ("everyone's passports") has the whole set to choose from.
+            conn = connect(db_path or DB_PATH)
+            try:
+                return docs.search_documents(conn, query, limit=10)
+            finally:
+                conn.close()
     except Exception:
         pass
     return []
 
 
 def gather(conn, query: str) -> dict:
-    """Fan out across every available source. The I/O-bound ones (Gmail API, Calendar API,
-    vault grep) run CONCURRENTLY — Gmail alone is several round-trips, so racing them beside
-    the others cuts the pre-seed latency. `docs` stays on this thread (see _CONN_SOURCES)."""
-    import concurrent.futures as _cf
+    """Fan out across every available source, all of them CONCURRENTLY — each is a network
+    round trip (Gmail, Calendar, Dropbox-backed docs) and they're independent, so the pre-seed
+    should cost the slowest source, not their sum."""
     ev = {"gmail": [], "docs": [], "vault": [], "calendar": []}
-    try:
-        # Wider than the read cap so a multi-entity ask ("everyone's passports") has the
-        # whole set to choose from; filenames are cheap, the planner picks the subset to read.
-        ev["docs"] = docs.search_documents(conn, query, limit=10)
-    except Exception:
-        pass
-    jobs = ("vault", "gmail", "calendar")
+    jobs = ("vault", "gmail", "calendar", "docs")
+    path = db_path_of(conn)
     with _cf.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        futs = {k: pool.submit(_fetch, k, query) for k in jobs}
+        futs = {k: pool.submit(_fetch, k, query, path) for k in jobs}
         for k, f in futs.items():
             try:
                 ev[k] = f.result() or []
@@ -156,11 +203,18 @@ def _evidence_text(ev: dict) -> str:
         # Say so when this is only a slice of the matches. Without it, a model that can't see
         # match #21 reports "you have no cruise booking" — reading truncation as absence is
         # exactly how the real failure sounded, and it sounds identical to a true negative.
-        shown, total = len(ev["gmail"]), ev["gmail"][0].get("total")
+        shown, first = len(ev["gmail"]), ev["gmail"][0]
+        total, asked, used = first.get("total"), first.get("asked"), first.get("query")
         more = (f" — showing {shown} of ~{total}; narrow the query if what you want isn't here"
                 if isinstance(total, int) and total > shown else "")
-        lines.append(f"GMAIL (matching emails{more}. Entries without a `body:` line are "
-                     "headlines — the subject alone often holds the date/reference):")
+        # Widening is lossy: admit it, or a generic fallback set reads as a precise answer.
+        widened = (f' — ⚠ NOTHING matched "{asked}", so these are results for the WIDER '
+                   f'"{used}" and may be about something else entirely. Check each one against '
+                   f"the question (dates, names, route) before citing it; if none of them "
+                   f"actually fit, say so instead of naming the closest."
+                   if asked and used and asked != used else "")
+        lines.append(f"GMAIL (matching emails{more}{widened}. Entries without a `body:` line "
+                     "are headlines — the subject alone often holds the date/reference):")
         for m in ev["gmail"]:
             lines.append(f"- from {m.get('from', '')} | {m.get('subject', '')} | "
                          f"{m.get('date', '')} | {m.get('snippet', '')}")
@@ -332,15 +386,8 @@ def _sig(obj: dict) -> str:
 
 
 def _merge_local(conn, source: str, query: str, candidates: list, ev: dict) -> None:
-    """Merge one SQLite-backed search (calling thread only — see _CONN_SOURCES)."""
-    if source == "docs":
-        have = {(h.get("name"), h.get("path")) for h in candidates}
-        for h in docs.search_documents(conn, query, limit=10):
-            key = (h.get("name"), h.get("path"))
-            if key not in have:
-                have.add(key)
-                candidates.append(h)
-    elif source == "facts":
+    """Merge one cheap SQLite-backed search (calling thread only — see _CONN_SOURCES)."""
+    if source == "facts":
         try:
             ev.setdefault("facts", []).extend(docs.query_facts(conn, query, limit=5))
         except Exception:
@@ -352,8 +399,15 @@ def _merge_local(conn, source: str, query: str, candidates: list, ev: dict) -> N
 
 
 def _merge_remote(source: str, res: list, candidates: list, ev: dict) -> None:
-    """Merge one already-fetched connection-free source (see _fetch)."""
-    if source == "gmail":
+    """Merge one already-fetched network-bound source (see _fetch)."""
+    if source == "docs":
+        have = {(h.get("name"), h.get("path")) for h in candidates}
+        for h in res:
+            key = (h.get("name"), h.get("path"))
+            if key not in have:
+                have.add(key)
+                candidates.append(h)
+    elif source == "gmail":
         ev.setdefault("gmail", []).extend(res)
         _merge_attachments(candidates, res)      # attachments become readable candidates
     elif source == "vault":
@@ -372,15 +426,15 @@ def _search_many(conn, specs: list, candidates: list, ev: dict) -> None:
     Searches are independent and read-only, so serialising them bought nothing and cost a
     _MAX_HOPS slot AND a ~3-10s planning call EACH (see CLAUDE.md's latency numbers) just to
     ask the next question. Probing four angles at once now costs about what one used to."""
-    import concurrent.futures as _cf
     specs = [(s, q) for s, q in ((s, (q or "").strip()) for s, q in specs) if q]
     if not specs:
         return
     remote = [(s, q) for s, q in specs if s not in _CONN_SOURCES]
     fetched = {}
     if remote:
+        path = db_path_of(conn)
         with _cf.ThreadPoolExecutor(max_workers=len(remote)) as pool:
-            futs = [(s, q, pool.submit(_fetch, s, q)) for s, q in remote]
+            futs = [(s, q, pool.submit(_fetch, s, q, path)) for s, q in remote]
             for s, q, f in futs:
                 try:
                     fetched[(s, q)] = f.result() or []

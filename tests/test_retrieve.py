@@ -362,6 +362,55 @@ def test_a_reworded_search_does_not_burn_the_hops(client, monkeypatch):
     assert len(plan.prompts) == 3, "reworded searches should stop the loop, not spin it"
 
 
+def test_first_non_empty_prefers_list_order_not_completion_order(client):
+    """The ladder races its rungs but must still return the MOST SPECIFIC hit — a slow
+    specific rung beats a fast broad one. A rung that raises counts as empty."""
+    import time
+    from core.text import first_non_empty
+
+    def slow_specific():
+        time.sleep(0.05)
+        return ["specific"]
+    got = first_non_empty([lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+                           slow_specific, lambda: ["broad"]])
+    assert got == ["specific"]                     # not "broad", despite finishing first
+    assert first_non_empty([lambda: [], lambda: None]) is None
+
+
+def test_dropbox_ladder_never_searches_a_stopword(client):
+    """The old ladder peeled EVERY term and ended up searching 'up' on a real question, then
+    handed back whichever file contained it as genuine evidence — 8 sequential calls to
+    manufacture noise. A rung that can't identify anything is not a search."""
+    from core.text import tokenize
+    q = "I have a cruise coming up later this year, what date"
+    variants = docs._dropbox_variants(q, tokenize(q))
+    assert variants[0] == q.strip()                # most specific first: the whole question
+    for junk in ("up", "have", "this", "year", "coming", "later", "what", "date"):
+        assert junk not in variants, f"ladder would search the stopword {junk!r}"
+    assert "cruise" in " ".join(variants)          # the one word that identifies anything
+
+
+def test_widened_gmail_search_warns_the_model(client, monkeypatch):
+    """Widening is LOSSY and can only know emptiness, never relevance: Sam's typo ("fight")
+    made the ladder drop "august" and widen to bare "booking", which matched 201 unrelated
+    emails — and the model named a September trip as the August one, fast and sourced. The
+    evidence must admit the question's words were dropped."""
+    monkeypatch.setattr(google_client, "gmail_probe",
+                        lambda v, service=None: 0 if "fight" in v else 3)
+    monkeypatch.setattr(google_client, "gmail_search",
+                        lambda v, n=5, body=False: [{"subject": "some booking", "from": "x",
+                                                     "date": "1 Jul", "snippet": "s"}])
+    hits = retrieve._gmail_hits("booking number for my fight in august")
+    assert hits[0]["asked"] != hits[0]["query"]      # recorded that it widened
+    text = retrieve._evidence_text({"gmail": hits})
+    assert "NOTHING matched" in text and hits[0]["query"] in text
+    # and a clean match must NOT cry wolf
+    monkeypatch.setattr(google_client, "gmail_probe", lambda v, service=None: 3)
+    clean = retrieve._gmail_hits("scoot booking")
+    assert clean[0]["asked"] == clean[0]["query"]
+    assert "NOTHING matched" not in retrieve._evidence_text({"gmail": clean})
+
+
 def test_read_and_deliver_sets_are_capped(client, monkeypatch):
     """A broad ask can't fan out to an unbounded, slow read/deliver — the set is capped."""
     conn = _db()

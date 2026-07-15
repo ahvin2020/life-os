@@ -289,6 +289,23 @@ def _batch_get(svc, ids: list, fmt: str, headers: list | None = None) -> dict:
     return out
 
 
+def gmail_probe(query: str, service=None) -> int | None:
+    """Roughly how many messages match, via ONE list call and nothing else — no metadata, no
+    bodies. ~5 quota units against Gmail's 250/second ceiling, where a full gmail_search is
+    ~130, which is what lets a widening ladder test all its rungs AT ONCE instead of proving
+    them empty one round trip at a time.
+
+    Returns 0 for "Gmail says nothing matches" and **None for "the probe itself failed"**. They
+    are not the same fact and callers must not collapse them: 0 means stop, None means you
+    still know nothing and have to go and look properly."""
+    try:
+        svc = service or _service("gmail", "v1")
+        r = svc.users().messages().list(userId="me", q=query or "", maxResults=1).execute()
+        return int(r.get("resultSizeEstimate") or 0) if r.get("messages") else 0
+    except Exception:
+        return None
+
+
 def gmail_search(query: str, n: int = 5, service=None, body: bool = False) -> list:
     """Full-text Gmail search (Google's own search over the whole mailbox) — DATA for the
     retrieval brain answering 'what's my flight date / booking ref'.

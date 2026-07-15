@@ -46,6 +46,19 @@ def connect(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def db_path_of(conn) -> str:
+    """The file a connection is attached to. A SQLite connection can't be shared across
+    threads, so a worker that needs the DB opens its OWN connection to the same path — WAL
+    (set in connect()) allows concurrent readers. Falls back to DB_PATH."""
+    try:
+        for row in conn.execute("PRAGMA database_list"):
+            if row[1] == "main" and row[2]:
+                return row[2]
+    except sqlite3.Error:
+        pass
+    return DB_PATH
+
+
 def machine_tz_name() -> str:
     """Best-effort IANA name of the host's timezone, for the first-run default.
     Honours the TZ env var, then the /etc/localtime symlink (works on macOS + the

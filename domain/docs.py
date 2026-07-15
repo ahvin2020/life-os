@@ -30,8 +30,8 @@ import json
 import os
 from urllib.parse import quote
 
-from core.db import get_setting, set_setting, now_iso, today_iso
-from core.text import tokenize
+from core.db import connect, db_path_of, get_setting, set_setting, now_iso, today_iso
+from core.text import STOP, WEAK, first_non_empty, tokenize
 from domain import vault_store
 from ai.claude_cli import call_claude, extract_json
 
@@ -209,43 +209,57 @@ def prefer_owner(conn, hits: list, query: str) -> list:
 
 
 # Attribute/question words that describe what you want FROM a document but won't be in its
-# filename — they over-constrain Dropbox's server search (name+content AND) to zero.
-_DOC_STOP = {
-    "my", "mine", "me", "the", "when", "what", "whats", "where", "which", "is", "are",
-    "does", "do", "no", "number", "date", "expire", "expires", "expiry", "expiration",
-    "renew", "renewal", "for", "of", "how", "much", "many",
+# filename — they over-constrain Dropbox's server search (name+content AND) to zero. The base
+# vocabulary is shared with every other keyword search (core.text.STOP/WEAK); these are the
+# document-specific extras.
+_DOC_STOP = STOP | WEAK | {
+    "expire", "expires", "expiry", "expiration", "renew", "renewal", "cost", "paid", "price",
 }
 
 
+def _dropbox_variants(query: str, qtokens: list) -> list:
+    """The widening ladder for Dropbox, MOST SPECIFIC FIRST: the whole question, then only its
+    content words, then the single most distinctive content word.
+
+    It never peels down to a stopword. The old ladder tried EVERY term one at a time and, on a
+    real question, ended up searching 'up' — then handed back whichever file happened to
+    contain it as genuine evidence. A rung that can't identify anything isn't a search; it
+    manufactures noise, and it cost 8 sequential API calls (5.6s) to do it."""
+    out = [(query or "").strip()]
+    strong = [t for t in qtokens if t not in _DOC_STOP and len(t) >= 3]
+    if strong:
+        out.append(" ".join(strong))
+        out.append(max(strong, key=len))          # most distinctive single CONTENT word
+    seen, res = set(), []
+    for v in out:
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            res.append(v)
+    return res
+
+
 def _dropbox_hits(conn, query: str, qtokens: list, limit: int) -> list:
-    """Search Dropbox, widening on a miss. Its server search ANDs terms over name+content,
-    so 'passport expire' finds nothing (no file contains 'expire'); drop the attribute words
-    to 'passport', and if still empty try the single strongest term. [] on any failure."""
+    """Search Dropbox, widening on a miss — running the whole (short) ladder AT ONCE and taking
+    the most specific rung that matched. Its server search ANDs terms over name+content, so
+    'passport expire' finds nothing (no file contains 'expire'); dropping to 'passport' does.
+    Sequentially this measured 5.6s of pure waiting. [] on any failure."""
     from ai import dropbox_client
+    path = db_path_of(conn)
 
-    def run(qs):
-        try:
-            return dropbox_client.search(conn, qs, limit) if qs.strip() else []
-        except Exception:
-            return []
+    def rung(qs):
+        # Each rung opens its OWN connection: dropbox_client.search reads settings, and a
+        # SQLite connection can't be shared across threads (WAL allows concurrent readers).
+        def go():
+            c = connect(path)
+            try:
+                return dropbox_client.search(c, qs, limit)
+            except Exception:
+                return []
+            finally:
+                c.close()
+        return go
 
-    hits = run(query)
-    if hits:
-        return hits
-    strong = [t for t in qtokens if t not in _DOC_STOP]
-    if strong and " ".join(strong) != query.strip().lower():
-        hits = run(" ".join(strong))
-    if hits or not strong:
-        return hits
-    seen, merged = set(), []                      # last resort: strongest single term
-    for t in sorted(strong, key=len, reverse=True):
-        for h in run(t):
-            if h["dbx_path"] not in seen:
-                seen.add(h["dbx_path"])
-                merged.append(h)
-        if merged:                                # stop at the first term that hits
-            break
-    return merged[:limit]
+    return first_non_empty([rung(v) for v in _dropbox_variants(query, qtokens)]) or []
 
 
 def local_path_for_hit(conn, hit) -> str | None:
