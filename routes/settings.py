@@ -130,10 +130,13 @@ def settings_page():
         except ValueError:
             pass
     toggles = {k: get_setting(conn, k, "1") != "0" for k in TOGGLES}
+    # No "default offsite dir" is passed to the card on purpose. It used to show
+    # <root>/data-backups as the value blank falls back to; blank actually mirrors NOWHERE
+    # (backup_db.run_backup skips the mirror unless a destination is named), and inside the
+    # container <root> is the ephemeral /app that every Watchtower pull wipes — which is the
+    # very reason run_backup refuses to write there. The card promised the one thing the
+    # backup code deliberately won't do.
     backup_location = get_setting(conn, "backup_location") or ""
-    # the resolved default offsite dir (shown per-machine so blank stays portable
-    # across the Mac↔NAS sync — mirrors backup_db.synced_dir())
-    backup_dir_default = os.path.join(_ROOT, "data-backups")
     triage_day = get_setting(conn, "triage_day") or "sun"
     weekly_day = get_setting(conn, "weekly_day") or "sun"
     docscan_day = get_setting(conn, "docscan_day") or "daily"
@@ -196,7 +199,6 @@ def settings_page():
                            machine_tz=machine_tz, tz_options=tz_options,
                            backup_location=backup_location, triage_day=triage_day,
                            weekly_day=weekly_day, docscan_day=docscan_day,
-                           backup_dir_default=backup_dir_default,
                            triage_days=_TRIAGE_DAYS, ai=ai,
                            ai_providers=AI_PROVIDERS, active_provider=active_provider,
                            document_roots_text=document_roots_text, app_base_url=app_base_url,
