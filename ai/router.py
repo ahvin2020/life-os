@@ -29,6 +29,7 @@ from domain import capture
 from domain import vault_store
 from ai.claude_cli import call_claude, extract_json
 from core.db import data_dir, now_iso, today_iso, now_sg
+from core.evidence import source_block
 from core.dates import due_label
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -294,6 +295,16 @@ def _upcoming_events(days_ahead: int = 14, cap: int = 20, now=None) -> list:
     return events
 
 
+def _google_ready() -> bool:
+    """Whether Google could be consulted at all. Distinct from "it returned nothing" — that
+    distinction is the entire reason core.evidence exists. False on any import/probe failure."""
+    try:
+        from ai import google_client
+        return bool(google_client.is_configured())
+    except Exception:
+        return False
+
+
 def _reask_of(message: str, exchanges: list) -> str | None:
     """If `message` closely repeats a recent USER turn, return that prior turn — the signal
     that the earlier answer didn't satisfy him (so the model must re-derive, not echo it).
@@ -390,14 +401,21 @@ def build_context(conn, message: str | None = None) -> dict:
         "COMPLETED TODAY: " + (", ".join(done_today) or "(none)"),
     ]
 
-    events = _upcoming_events()
-    if events:
-        lines += ["", "UPCOMING CALENDAR (read-only — your Google Calendar events with their "
-                  "date/time/location; answer any appointment/event/'what's on'/'where is the "
-                  "event tomorrow' question from THESE, matching by date):"]
-        for e in events:
-            loc = f" @ {e['location']}" if e.get("location") else ""
-            lines.append(f"- {e.get('start', '')}: {e.get('summary', '')}{loc}")
+    # The block is ALWAYS emitted — see core.evidence. It used to appear only `if events`, so a
+    # calendar that couldn't be read (no token in this container, an API failure) vanished from
+    # the prompt entirely and the bot answered "what's on tomorrow" from tasks alone, silently
+    # calendar-blind. Nothing told it to doubt itself, because nothing was there.
+    events, cal_ran = _upcoming_events(), _google_ready()
+    lines += ["", source_block(
+        "UPCOMING CALENDAR (read-only — your Google Calendar events with their date/time/"
+        "location; answer any appointment/event/'what's on'/'where is the event tomorrow' "
+        "question from THESE, matching by date):",
+        events,
+        lambda e: f"- {e.get('start', '')}: {e.get('summary', '')}"
+                  + (f" @ {e['location']}" if e.get("location") else ""),
+        ran=cal_ran,
+        unavailable="Google Calendar is not connected on this host",
+        empty="(nothing on your calendar for the next 14 days)")]
 
     if jentries:
         lines += ["", "TODAY'S JOURNAL:"] + [f"  {e['time']} {e['text'][:160]}" for e in jentries]
@@ -462,7 +480,7 @@ derive_identity {"action":"derive_identity"}   # "who am I? / set up my profile 
 create_event   {"action":"create_event","title":str,"date":ISO-date,"start":"HH:MM"|null,"end":"HH:MM"|null,"guests":[email,...]|null}   # add something to his Google Calendar ("put dentist on Friday 10am", "block Tuesday 2-4pm for filming"). Give a time when he states one, else it's all-day. `guests` = any email addresses he wants invited ("add guest x@y.com", "invite alice@…") — Google emails them the invite. A guest named by relation/name ("add her hotmail", "invite my wife") → resolve to the address in the profile's # Contacts.
 draft_email    {"action":"draft_email","to":str,"subject":str,"body":str}   # draft an email for him to review + send ("draft a reply to the sponsor saying yes"). NEVER sends — only saves a Gmail draft. Resolve a person referred to by relation/name ("her hotmail", "my wife's email", "send Mei Fang…") to the address in the profile's # Contacts; if it's not there, clarify instead of guessing.
 set_name       {"action":"set_name","name":str}   # "call me X" / "my name is X" / "you can call me X" — save what to call him; used in the home greeting and how you address him. NOT for a task/note.
-remember_contact {"action":"remember_contact","label":str,"emails":[str,...]}   # durably SAVE a person's email(s) to his profile so he can later say "email her hotmail" / "add her to the event". Use when he tells you a contact detail to keep ("my wife's hotmail is X", "remember her two emails are A and B", "John's email is …"). `label` = who, human-readable incl. name/relation ("Wife <name>"); `emails` = the address(es). Saving a second email for someone already listed MERGES — reuse the same label you see in # Contacts.
+remember_contact {"action":"remember_contact","label":str,"emails":[str,...],"replace":bool}   # durably SAVE a person's email(s) to his profile so he can later say "email her hotmail" / "add her to the event". Use when he tells you a contact detail to keep ("my wife's hotmail is X", "remember her two emails are A and B", "John's email is …"). `label` = who, human-readable incl. name/relation ("Wife <name>"); `emails` = the address(es). Default MERGES a new address into an existing person — reuse the same label you see in # Contacts. To REMOVE an address ("drop her gmail", "her email is now only X"), send `replace:true` with the FULL list of the addresses that should remain (copy the keepers from # Contacts) — replace SETS the line to exactly that list. `replace:true` with `emails:[]` deletes the person entirely. Never claim you removed an address without replace:true; a plain save cannot delete anything.
 answer         {"action":"answer","text":str}                   # a QUESTION about his data — answer from the context below (see FORMATTING)
 clarify        {"action":"clarify","question":str}              # genuinely ambiguous — ask one short question
 multi          {"action":"multi","actions":[ ...two or more of the above... ]}   # compound message
@@ -970,14 +988,20 @@ def apply_action(conn, act, ctx) -> tuple:
     if kind == "remember_contact":
         label = (act.get("label") or "").strip()
         emails = act.get("emails")
+        replace = bool(act.get("replace"))
         if isinstance(emails, str):
             emails = [emails]
         emails = [e for e in (emails or []) if isinstance(e, str) and "@" in e]
-        if not label or not emails:
+        if not label or (not emails and not replace):
             return ("❓ Whose email, and what address?", None)
-        if vault_store.upsert_contact(label, emails):
+        if vault_store.upsert_contact(label, emails, replace=replace):
+            if replace:
+                return ((f"📇 {label} is now: {', '.join(emails)}" if emails
+                         else f"📇 Removed {label} from your contacts."), None)
             return (f"📇 Saved to your contacts — {label}: {', '.join(emails)}", None)
-        return ("Couldn't save that contact (your contacts list may be full).", None)
+        return (("Couldn't update that contact — I don't have anyone matching that name."
+                 if replace else
+                 "Couldn't save that contact (your contacts list may be full)."), None)
 
     if kind == "vault_recall":
         from domain import recall

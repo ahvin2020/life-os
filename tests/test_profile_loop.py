@@ -71,6 +71,62 @@ def test_upsert_contact_creates_section_and_merges(client, tmp_path, monkeypatch
     assert "# Identity" in prof.read_text()
 
 
+def test_upsert_contact_replace_can_remove_an_address(client, tmp_path, monkeypatch):
+    """Merging is right for "her other email is X" and WRONG for "remove X" — and for a while
+    merging was the only mode. Asked to drop two of five addresses, the bot offered to re-save
+    the person with the remaining three, merged them straight back into the same five, and said
+    "✅ Saved". The write succeeded; it just couldn't do what was asked. replace=True SETS."""
+    prof = tmp_path / "profile.md"
+    prof.write_text("# Identity\nMum: Jane Tan\n")
+    monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
+    keep, drop = ["mum1@example.com", "mum2@example.net"], ["old@example.org", "gone@example.com"]
+    assert vault_store.upsert_contact("Mum", keep + drop)
+    assert all(e in prof.read_text() for e in keep + drop)
+
+    # the ask: "remove those two" → re-save with ONLY the keepers
+    assert vault_store.upsert_contact("Mum", keep, replace=True)
+    body = prof.read_text()
+    assert all(e in body for e in keep)
+    for e in drop:
+        assert e not in body, f"{e} survived a replace — this is the original bug"
+    assert body.count("- Mum") == 1                  # still one bullet, not a duplicate person
+    assert "# Identity" in body                      # other sections untouched
+
+    # a plain (merge) save must NOT resurrect them
+    assert vault_store.upsert_contact("Mum", ["mum3@example.com"])
+    assert all(e not in prof.read_text() for e in drop)
+
+    # replace with an empty list removes the person outright
+    assert vault_store.upsert_contact("Mum", [], replace=True)
+    assert "- Mum" not in prof.read_text()
+    # ...and forgetting someone who was never listed reports failure, not a phantom success
+    assert vault_store.upsert_contact("Ghost", [], replace=True) is False
+
+
+def test_brief_says_free_day_vs_cant_see_calendar(client, monkeypatch):
+    """A clear day and a dead connector are different facts. Both rendered "(not connected)",
+    so the brief could not tell "nothing scheduled" from "I couldn't look" — the same conflation
+    that had the bot reporting no cruise booking about mail it never searched."""
+    from ai import proactive, google_client
+    from core.db import connect
+    import os
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+
+    # connected + genuinely empty → a FACT the brief may rely on
+    monkeypatch.setattr(google_client, "is_configured", lambda: True)
+    monkeypatch.setattr(google_client, "calendar_today", lambda d, service=None: [])
+    monkeypatch.setattr(google_client, "gmail_highlights", lambda *a, **k: [])
+    text = proactive.build_brief_context(conn)["text"]
+    assert "nothing scheduled today" in text and "NOT CHECKED" not in text
+
+    # not connected → must NOT read as a clear day
+    monkeypatch.setattr(google_client, "is_configured", lambda: False)
+    text = proactive.build_brief_context(conn)["text"]
+    assert "NOT CHECKED" in text and "NOT evidence of absence" in text
+    assert "nothing scheduled today" not in text
+    conn.close()
+
+
 def test_router_remember_contact_writes_profile(client, tmp_path, monkeypatch):
     import json
     prof = tmp_path / "profile.md"

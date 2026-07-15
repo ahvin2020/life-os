@@ -585,3 +585,43 @@ def test_search_goals_excludes_archived_and_deleted(client):
     found = retrieve._search_goals(conn, "ship the kayak")
     conn.close()
     assert [g["id"] for g in found] == [live], "an archived or deleted goal surfaced as live evidence"
+
+
+def test_every_connector_backed_block_states_whether_it_ran(client):
+    """THE tripwire for a bug class that has now cost four production failures in four files:
+    truncated≡absent, widened≡relevant, connector-dead≡nothing-found, free-day≡Google-broken.
+    Each was fixed at its own site, which is why a fifth appeared (the router's calendar block
+    was simply OMITTED when Google was down — the bot went silently calendar-blind).
+
+    Local SQLite reads are exempt on purpose: with no connector to fail, "(none)" cannot lie.
+    Only sources that might not have RUN must declare it — and core.evidence.source_block makes
+    `ran` a required argument so a call site cannot forget."""
+    import inspect
+    from core import evidence
+    from ai import router, proactive
+
+    # `ran` is REQUIRED — the enforcement, not the formatting
+    sig = inspect.signature(evidence.source_block)
+    assert sig.parameters["ran"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["ran"].default is inspect.Parameter.empty
+
+    # a source that didn't run never renders as emptiness
+    dead = evidence.source_block("CAL:", [], ran=False, unavailable="Google is not connected",
+                                 empty="(nothing today)")
+    assert "NOT CHECKED" in dead and "NOT evidence of absence" in dead
+    assert "(nothing today)" not in dead
+    # ...and it is never a blank block: an absent block is how the router went blind
+    assert dead.strip()
+
+    # a source that ran and is empty states that as a usable fact
+    live = evidence.source_block("CAL:", [], ran=True, empty="(nothing today)")
+    assert "(nothing today)" in live and "NOT CHECKED" not in live
+
+    # a degraded hit still carries its caveat
+    noted = evidence.source_block("CAL:", ["x"], ran=True, note="showing 5 of ~201")
+    assert "showing 5 of ~201" in noted and "x" in noted
+
+    # every Google-backed block in the prompt builders goes through the primitive
+    for mod in (router, proactive):
+        src = inspect.getsource(mod)
+        assert "source_block(" in src, f"{mod.__name__} renders a connector source by hand"

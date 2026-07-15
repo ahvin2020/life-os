@@ -93,20 +93,28 @@ def _norm_label(label: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", (label or "").lower()))
 
 
-def upsert_contact(label: str, emails, cap: int = 40) -> bool:
+def upsert_contact(label: str, emails, cap: int = 40, replace: bool = False) -> bool:
     """Add or update ONE contact under a '# Contacts' section in profile.md (created at EOF
     if absent) — durable people→email(s) the assistant can use for draft_email `to` and
     create_event `guests`. Injected into every prompt (it's part of profile.md), so a saved
     contact is always in context. Merges: a matching line (same normalized label OR a shared
     email) gains the new address instead of duplicating; a new person appends a bullet. Only
-    touches that section. False on no valid email or when the section is full (`cap`)."""
+    touches that section. False on no valid email or when the section is full (`cap`).
+
+    `replace=True` SETS the contact's addresses to exactly `emails` rather than merging — the
+    only way to REMOVE one. Merging is right for "her other email is X" and wrong for "remove
+    X", and there was no second mode: asked to drop two of Mum's five addresses, the bot
+    proposed re-saving her with the remaining three, merged them back into the same five, and
+    reported "✅ Saved". The write really did succeed; it just could not do what was asked.
+    An empty `emails` with replace=True deletes the contact line outright ("forget her email").
+    """
     clean = []
     for e in ([emails] if isinstance(emails, str) else (emails or [])):
         m = _EMAIL_RE.search(str(e))
         if m and m.group(0).lower() not in [c.lower() for c in clean]:
             clean.append(m.group(0))
     label = " ".join((label or "").split()).strip().rstrip(":").strip()
-    if not clean or not label:
+    if not label or (not clean and not replace):
         return False
     try:
         with open(PROFILE_PATH, encoding="utf-8") as f:
@@ -134,16 +142,25 @@ def upsert_contact(label: str, emails, cap: int = 40) -> bool:
         existing_emails = _EMAIL_RE.findall(rest)
         if _norm_label(lbl) == nlabel or (set(e.lower() for e in existing_emails)
                                           & set(e.lower() for e in clean)):
+            best_label = label if len(label) >= len(lbl.strip()) else lbl.strip()
+            if replace:
+                if not clean:                                  # "forget her email" → drop the line
+                    del lines[j]
+                else:
+                    lines[j] = f"- {best_label}: {', '.join(clean)}"
+                match = j
+                break
             merged, seen = [], set()
             for e in existing_emails + clean:                  # keep order, dedup
                 if e.lower() not in seen:
                     seen.add(e.lower())
                     merged.append(e)
-            best_label = label if len(label) >= len(lbl.strip()) else lbl.strip()
             lines[j] = f"- {best_label}: {', '.join(merged)}"
             match = j
             break
     if match is None:
+        if not clean:                    # asked to forget someone who isn't listed → nothing done
+            return False
         bullets = sum(1 for j in range(hdr + 1, end)
                       if lines[j].strip().startswith("- "))
         if bullets >= cap:
