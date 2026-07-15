@@ -456,7 +456,7 @@ You are Sam's Life OS assistant. He sends you ONE message; decide what he wants
 and reply with ONE JSON object (no prose, no code fences). Don't just file words —
 ACT on instructions. Pick the single best action:
 
-create_task    {"action":"create_task","title":str,"due":ISO-date|null,"category":"content|business|personal"|null,"priority":"high|med|low"|null,"subtasks":[str,...]}
+create_task    {"action":"create_task","title":str,"due":ISO-date|null,"category":"content|business|personal"|null,"priority":"high|med|low"|null,"link":url|null,"subtasks":[str,...]}
 create_note    {"action":"create_note","title":str,"tags":[str,...],"body":str}
 append_journal {"action":"append_journal","text":str}           # past-tense reflection about his day
 complete_task  {"action":"complete_task","id":int}              # "mark X done", "finished X"
@@ -496,6 +496,11 @@ Rules:
   can't find in the context, use clarify — NEVER guess an id.
 - Dates are ISO YYYY-MM-DD in Sam's local timezone (see TODAY). "tomorrow"/"Friday"/
   "next week" → resolve against TODAY in the context.
+- A task that CITES a url ("add task, connect to my invoicing <reel>") puts the url in
+  create_task's `link`, NEVER in the title: `link` is the task's reference material and
+  `title` is only the thing to DO ("connect to my invoicing"). You see the whole message,
+  so you know which url belongs to which action — in a multi ("save this reel <url> and
+  add a task to call mum") the url is the NOTE's, and the task's link is null.
 - Actionable ("reply to the sponsor", "renew passport") → create_task. Past-tense
   reflection ("felt drained, skipped gym") → append_journal. Reference/idea/link to
   keep → create_note. A question about his tasks/goals/day ("how many videos this week?",
@@ -788,10 +793,18 @@ def apply_action(conn, act, ctx) -> tuple:
         pri = act.get("priority") if act.get("priority") in _PRIORITIES else None
         due = (act.get("due") or "").strip() or None
         subs = [s for s in (act.get("subtasks") or []) if isinstance(s, str) and s.strip()]
+        # A url the task REFERENCES belongs in tasks.link, not the title — the same shape the
+        # deterministic path files (capture._as_task), so the two can't drift. The model is
+        # ASKED for `link` because only it knows which url goes with which action in a multi;
+        # split_off_link is the belt-and-braces for when it buries the url in the title anyway.
+        link = (act.get("link") or "").strip() or None
+        title, buried = capture.split_off_link(title)
+        link = link or buried
+        title = title or link or "Untitled task"
         with conn:
             tid = capture.create_task(conn, title, col="week", priority=pri,
                                       category=cat, due_date=due, at_top=True,
-                                      media=ctx.get("media_pointer"))
+                                      media=ctx.get("media_pointer"), link=link)
             for s in subs:
                 capture.create_task(conn, s.strip(), parent_id=tid)
         # surface the new id so the web capture can splice the card in place (no reload)
@@ -806,7 +819,10 @@ def apply_action(conn, act, ctx) -> tuple:
         if subs:
             bits.append(f"+{len(subs)} subtask" + ("s" if len(subs) > 1 else ""))
         tail = (" — " + " · ".join(bits)) if bits else ""
-        return (f"⏰ Task: {title}{tail}", None)
+        # echo a lifted url on its own line, exactly as the deterministic path's reply does
+        # (capture_daemon.format_reply) — the title no longer carries it, and a reply that
+        # silently omits what he sent reads as "it dropped my reel"
+        return (f"⏰ Task: {title}{tail}" + (f"\n   {link}" if link else ""), None)
 
     if kind == "create_note":
         title = (act.get("title") or "").strip()

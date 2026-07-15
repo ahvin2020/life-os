@@ -29,6 +29,7 @@ def _row_to_task(r) -> dict:
         "archived_at": r["archived_at"], "week_since": r["week_since"],
         "reschedule_count": r["reschedule_count"],
         "media": (r["media"] if "media" in r.keys() else "") or "",
+        "link": (r["link"] if "link" in r.keys() else "") or "",
     }
 
 

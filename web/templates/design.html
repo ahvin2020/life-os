@@ -120,6 +120,7 @@
       {{ m.today_item(tasks.priority, today) }}
       {{ m.today_item(tasks.due, today) }}
       {{ m.today_item(tasks.done, today) }}
+      {{ m.today_item(tasks.linked, today) }}
       {{ m.today_item(tasks.parent, today) }}
     </div>
   </section>
@@ -129,6 +130,7 @@
     <div class="stack" style="max-width:560px">
       {{ m.week_item(cards.plain, today) }}
       {{ m.week_item(cards.stale, today) }}
+      {{ m.week_item(cards.linked, today) }}
     </div>
   </section>
 
@@ -140,6 +142,7 @@
       {{ m.kcard(cards.stale, today) }}
       {{ m.kcard(cards.recur, today) }}
       {{ m.kcard(cards.parent, today) }}
+      {{ m.kcard(cards.linked, today) }}
     </div>
   </section>
 

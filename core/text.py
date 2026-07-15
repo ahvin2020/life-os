@@ -8,6 +8,20 @@ def tokenize(text: str) -> list[str]:
     return _WORD_RE.findall((text or "").lower())
 
 
+def link_host(url: str) -> str:
+    """The bare host of a url ('instagram.com'), for labelling a link with WHERE it goes.
+    Design contract: labels, not glyphs — a 🔗 says a link exists, the host says what it is,
+    and it's data so it renders mono."""
+    from urllib.parse import urlparse
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if "//" not in u:
+        u = "//" + u
+    host = (urlparse(u).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
 # ── search vocabulary ─────────────────────────────────────────────────────────
 # THE stop/weak sets, shared by every keyword search (Gmail, Dropbox, docs). They were two
 # divergent private lists and the drift was a live bug: Gmail's dropped "have"/"this", Dropbox's

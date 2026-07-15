@@ -72,6 +72,7 @@ TABLES = [
             reschedule_count INTEGER NOT NULL DEFAULT 0,
             week_since   TEXT,
             media        TEXT,                 -- comma-sep vault/.media/ image pointers
+            link         TEXT,                 -- one url the task REFERENCES (see capture._as_task)
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -210,6 +211,16 @@ def migrate(conn) -> list:
             id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, fire_at TEXT NOT NULL,
             created TEXT NOT NULL, fired_at TEXT)""")
         applied.append("v9: reminders")
+
+    # v10: tasks.link — ONE url the task references. "add task, connect to my invoicing
+    # <reel>" is a task whose reference material is a link; without a home for the url the
+    # only options were a title with a tracking url wedged in it or dropping the reel.
+    if 0 < disk < 10 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "link" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN link TEXT")
+            applied.append("v10: tasks.link")
     return applied
 
 

@@ -51,7 +51,7 @@ def next_sort_order(conn, col: str, parent_id=None) -> int:
 
 def create_task(conn, title, *, col="backlog", priority=None, category=None,
                 due_date=None, planned_on=None, recur_rule=None, goal_id=None,
-                parent_id=None, at_top=False, media=None) -> int:
+                parent_id=None, at_top=False, media=None, link=None) -> int:
     """Insert a task (or subtask when parent_id is set). Returns the new id.
     Single source of truth for task inserts. at_top=True surfaces the new task at
     the TOP of its column — used by the capture paths (bot / composer / refile),
@@ -74,18 +74,32 @@ def create_task(conn, title, *, col="backlog", priority=None, category=None,
         """INSERT INTO tasks
              (title, col, sort_order, priority, category, due_date, planned_on,
               recur_rule, goal_id, parent_id, done, completed_at, archived_at,
-              week_since, media, created, updated)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?,?)""",
+              week_since, media, link, created, updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?,?,?)""",
         (title.strip(), col, sort_order, priority, category, due_date, planned_on,
-         recur_rule, goal_id, parent_id, week_since, media, ts, ts),
+         recur_rule, goal_id, parent_id, week_since, media, link, ts, ts),
     )
     return cur.lastrowid
 
 
-def _looks_like_url(text: str) -> bool:
+def has_url(text: str) -> bool:
+    """True when `text` CONTAINS a url somewhere. It may still be prose that merely CITES
+    one — see is_bare_url."""
     return bool(_URL_RE.match(text.strip())) or any(
         d in text.lower() for d in ("instagram.com", "youtube.com", "youtu.be",
                                     "tiktok.com", "http://", "https://"))
+
+
+def is_bare_url(text: str) -> bool:
+    """True when `text` IS a url and nothing else — one token, no prose around it.
+
+    The has_url/is_bare_url split is the whole point: ONE contains-test used to answer both
+    questions, so every caller that meant "this message IS a shared link" silently accepted
+    "this message mentions a link somewhere". That is how "add task, connect to my invoicing
+    <reel>" was acked and filed as a saved link — a message can cite a url without being one.
+    """
+    body = (text or "").strip()
+    return bool(body) and not body.split()[1:] and has_url(body)
 
 
 # ── multi-item messages ─────────────────────────────────────────────────────────
@@ -99,7 +113,7 @@ def _looks_like_url(text: str) -> bool:
 
 def _is_capture_unit(line: str) -> bool:
     """True if `line` on its own is a distinct capture (a bare URL)."""
-    return bool(line.strip()) and _looks_like_url(line)
+    return is_bare_url(line)
 
 
 # Leading phrases that unambiguously mean "create a plain task" — each literally names a
@@ -108,7 +122,18 @@ def _is_capture_unit(line: str) -> bool:
 # are deliberately NOT here: those need the router to tell a task from a timed reminder.
 _TASK_VERBS = ("add a task", "add task", "new task", "create a task", "create task",
                "make a task", "make task", "todo", "to-do")
-_VERB_SEPS = " :-–—"   # a connective space/colon/dash between the verb and title
+
+# The wrapper, then a word boundary, then ANY run of punctuation as the separator. `\b` is the
+# real form of the "requires a word boundary" rule the enumerated separator list only
+# approximated ("todolist" / "add a taskforce" still can't match — no boundary after the verb),
+# and `\W*` means the separator can be a comma, colon, dash, semicolon, ellipsis or nothing at
+# all without anyone maintaining a list of characters. That list is what broke "add task,
+# connect to my invoicing": it held " :-–—" and no comma, so tier 1 missed and the URL branch
+# below took the message. Longest verb first so "add a task" wins over "add task".
+_TASK_VERB_RE = re.compile(
+    r"^(?:" + "|".join(r"\s+".join(re.escape(w) for w in v.split())
+                       for v in sorted(_TASK_VERBS, key=len, reverse=True)) + r")\b\W*",
+    re.I)
 
 
 # Tier 2 — bare action verbs that open a plain task ("buy milk", "call the dentist"). Kept
@@ -171,15 +196,21 @@ def task_imperative(text: str):
     'todolist' / 'add a taskforce' / 'called the dentist' don't match)."""
     body = (text or "").strip()
     low = body.lower()
+    m = _TASK_VERB_RE.match(body)               # tier 1: explicit "add a task X" wrapper
+    # The guards judge what's left AFTER the wrapper, because the wrapper already declared the
+    # kind — its own punctuation is not evidence about the title. Judged against the whole
+    # body, "add task, pay the invoice" tripped _MULTI_RE (", pay" reads as the second verb in
+    # "buy milk and call the dentist") and bailed a perfectly plain one-task capture to the
+    # router. On the title the guards still bite exactly as before: "to-do list is long" →
+    # "list is long" → prose; "add a task, buy milk and call the dentist" → "and call" → multi.
+    probe = body[m.end():].strip() if m else body
     # guards that outrank BOTH tiers ("todo list is long" is prose, not a todo)
-    if (_QUESTION_RE.search(body) or _PROSE_RE.search(body)
-            or _MULTI_RE.search(body)):
+    if (_QUESTION_RE.search(probe) or _PROSE_RE.search(probe)
+            or _MULTI_RE.search(probe)):
         return None
-    for v in _TASK_VERBS:                       # tier 1: explicit "add a task X" wrapper
-        if low.startswith(v) and body[len(v):len(v) + 1] in ("", *_VERB_SEPS):
-            title = body[len(v):].lstrip(_VERB_SEPS).strip()
-            # a date in an explicit add still goes to the router — it owns due-date parsing
-            return title if (title and not _WHEN_RE.search(title)) else None
+    if m:
+        # a date in an explicit add still goes to the router — it owns due-date parsing
+        return probe if (probe and not _WHEN_RE.search(probe)) else None
     if _WHEN_RE.search(body):
         return None
     # A priority word only needs the router on a BARE verb, where it's a modifier the router
@@ -198,16 +229,70 @@ def task_imperative(text: str):
     return None
 
 
-def is_explicit_capture(text: str) -> bool:
-    """True when the text already declares its kind deterministically — a bare URL, a
-    task-verb opener ('add a task …', 'todo …'), or a fully-parseable timed reminder
-    ('remind me in 10 minutes to call mum'). Such input is unambiguous, so both surfaces
-    keep it on the instant path instead of spending a claude call on the AI router.
-    (Colon prefixes like t:/n:/j: are no longer a thing — everything else is natural
-    language and goes to the router.)"""
+def declares_kind(text: str) -> bool:
+    """True when the message NAMES its own kind in words — "add a task …", "todo …",
+    "remind me …". Reuses reminders._TRIGGER_RE so there is one list of reminder openers.
+
+    This is what outranks the url branch. Every tier above that branch may DECLINE the
+    details it can't parse (a date only the router reads, an unparseable time) — the bail
+    guards in task_imperative exist precisely to hand those back to the router. But a
+    decline is not a rejection of the KIND, and the url branch below happily claimed the
+    fall-through: "add task: review this <reel>" bailed on when-language (`_WHEN_RE` reads
+    "this https" as "this friday"), and instead of reaching the router it came back a saved
+    #link note. When the kind is declared and the parser declines, the LADDER declines —
+    'unsorted' is not explicit, so both surfaces hand it to the router, which is what the
+    guard wanted all along."""
+    from domain.reminders import _TRIGGER_RE
+    body = (text or "").strip()
+    return bool(_TASK_VERB_RE.match(body) or _TRIGGER_RE.match(body))
+
+
+def classify(text: str, *, has_media: bool = False) -> str:
+    """Name the deterministic kind of `text`, in the ladder's PRECEDENCE order:
+    'reminder' | 'task' | 'note' | 'link' | 'unsorted'.
+
+    THIS FUNCTION IS THE LADDER'S ORDER, and it is the only copy of it. route_capture files
+    by it, is_explicit_capture gates on it, and the daemon's instant-ack link path asks it
+    for 'link' by name. Nothing may re-derive the order locally: every caller that did got
+    it wrong the same way — it asked a single cheap question ("contains a url?") that a tier
+    ABOVE the url branch would have answered differently. That is the whole bug behind "add
+    task, connect to my invoicing <reel>" coming back as a saved #link #idea note: the
+    ladder ranks the task verb above the url and always did, but the two gates in front of
+    it never consulted the ladder, so the url won before the task tier was ever reached.
+
+    Adding a tier means adding it HERE — never in one gate or one surface.
+    """
     from domain.reminders import parse_reminder
-    return (_is_capture_unit(text or "") or task_imperative(text) is not None
-            or parse_reminder(text) is not None)
+    body = (text or "").strip()
+    if not body:
+        return "note" if has_media else "unsorted"
+    # A reminder needs an explicit trigger AND a real clock time; an attachment can't be one.
+    if not has_media and parse_reminder(body) is not None:
+        return "reminder"
+    if task_imperative(body) is not None:
+        return "task"
+    if has_media:
+        # free text + a file: keep them together as one note rather than guessing a task
+        return "note"
+    # A url makes this a link ONLY if the message didn't already name itself something else
+    # and get declined for its details — that fall-through belongs to the router, not here.
+    if has_url(body) and not declares_kind(body):
+        return "link"
+    return "unsorted"
+
+
+# The kinds `text` names ITSELF — no claude needed to tell what it is. Everything else is
+# natural language, which is the AI router's job.
+_EXPLICIT_KINDS = ("reminder", "task", "link")
+
+
+def is_explicit_capture(text: str) -> bool:
+    """True when the text already declares its kind deterministically — a URL, a task-verb
+    opener ('add a task …', 'todo …'), or a fully-parseable timed reminder ('remind me in 10
+    minutes to call mum'). Such input is unambiguous, so both surfaces keep it on the instant
+    path instead of spending a claude call on the AI router. (Colon prefixes like t:/n:/j:
+    are no longer a thing — everything else is natural language and goes to the router.)"""
+    return classify(text) in _EXPLICIT_KINDS
 
 
 def split_capture_lines(text: str):
@@ -286,28 +371,24 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
     if not body:
         return _as_note(conn, "", tags=[], media=media)
 
-    # --- auto: a parseable timed reminder, then a task-verb opener ('add a task X'), then a
-    # URL, else an unsorted note. There are no t:/n:/j: prefixes anymore — natural language is
-    # the AI router's job; this deterministic path only catches the unambiguous shapes and
-    # files the rest as a note.
+    # --- auto: file by whatever `classify` names it. There are no t:/n:/j: prefixes anymore —
+    # natural language is the AI router's job; this deterministic path only catches the
+    # unambiguous shapes and files the rest as a note. The ladder's ORDER lives in classify()
+    # and nowhere else, so the gates in front of this (is_explicit_capture, the daemon's link
+    # ack) can't jump a tier.
     low = body.lower()
-    if not media:
-        # Needs an explicit trigger AND a real clock time, so "remind me on friday to renew
-        # the domain" (a date, no clock) still falls through to the router → task with a due
-        # date. See reminders.parse_reminder.
+    kind = classify(body, has_media=bool(media))
+    if kind == "reminder":
         from domain import reminders
         rem = reminders.parse_reminder(body)
-        if rem:
-            r = reminders.create_reminder(conn, rem["text"], rem["fire_local"])
-            return {"kind": "reminder", "id": r["id"], "title": r["text"],
-                    "label": "Reminders · " + r["label"], "reminder": r}
-    _verb_title = task_imperative(body)
-    if _verb_title is not None:
-        return _as_task(conn, _verb_title, media=media)
-    if media:
-        # free-text + a file: keep them together as one note rather than guessing a task
+        r = reminders.create_reminder(conn, rem["text"], rem["fire_local"])
+        return {"kind": "reminder", "id": r["id"], "title": r["text"],
+                "label": "Reminders · " + r["label"], "reminder": r}
+    if kind == "task":
+        return _as_task(conn, task_imperative(body), media=media)
+    if kind == "note":
         return _as_note(conn, body, tags=[], media=media)
-    if _looks_like_url(body):
+    if kind == "link":
         # Dedupe by normalised URL: a re-shared link touches the existing #link note
         # instead of minting a twin (strip utm/igsh/etc first).
         url = first_url(body)
@@ -331,18 +412,41 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
     return _as_note(conn, body, tags=["unsorted"])
 
 
+_TRAIL_JUNK = " \t-–—:,;.·|(){}[]<>\"'"   # what's left holding the gap a lifted url vacated
+
+
+def split_off_link(text: str) -> tuple:
+    """('clean title', 'url' | None) — lift the url OUT of a task's title.
+
+    A task may CITE a link ("add task, connect to my invoicing <reel>") and the url is the
+    task's reference, not part of what to DO. Wedged into the title it's ~70 chars of
+    tracking querystring that reads as noise on a card, buries the actual verb, and drags a
+    dead url through search; dropping it instead would lose the reel. So it moves to
+    tasks.link (schema v10) and the title says only the thing to do."""
+    url = first_url(text or "")
+    if not url:
+        return (text or "").strip(), None
+    title = (text or "").replace(url, " ")
+    # a lifted url leaves its punctuation behind — "watch this: <url>" must not end at ":"
+    title = " ".join(title.split()).strip(_TRAIL_JUNK)
+    return title, url
+
+
 def _as_task(conn, text, media=None) -> dict:
     priority = None
     if text.rstrip().endswith("!"):
         priority = "high"
         text = text.rstrip()[:-1].strip()
-    title = text or "Untitled task"
+    title, link = split_off_link(text)
+    # a task that is ONLY a url has no words left to be a title — keep the url as the title
+    # rather than filing an "Untitled task" whose one identifying detail is hidden in a chip
+    title = title or link or "Untitled task"
     with conn:
         tid = create_task(conn, title, col="week", priority=priority,
-                          at_top=True, media=media)
+                          at_top=True, media=media, link=link)
     label = "Tasks" + (" · high" if priority else "")
     return {"kind": "task", "id": tid, "label": label, "title": title,
-            "priority": priority}
+            "priority": priority, "link": link}
 
 
 def _as_note(conn, text, tags, title=None, media=None) -> dict:

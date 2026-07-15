@@ -249,10 +249,19 @@ a:hover { text-decoration: underline; }
 .tsub > * + *::before { content: "·"; margin-right: 7px; color: var(--muted); opacity: .55; }
 .tsub .cat { font-size: 10.5px; letter-spacing: normal; text-transform: capitalize; }
 .tsub .due { font-size: 10.5px; }
+.tsub .tlink { font-size: 10.5px; }
 .due { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
 .due.today { color: var(--accent); }
 .due.over { color: var(--bad); }
 .due.planned { color: var(--good); }
+/* the host of a task's referenced url (tasks.link). Sits with the other meta as DATA
+   (mono, muted) rather than shouting in link blue — the row's job is the task, and the
+   reel is reference material. It earns --link only on hover, where it's the target. */
+/* never shrink: a host is short by nature, and .tsub already wraps — letting flex squeeze it
+   rendered "instagram.c…" at 390px, an ellipsis that costs a character and buys nothing. */
+.tlink { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap;
+  flex: 0 0 auto; transition: color var(--dur) var(--ease); }
+.tlink:hover, .tlink:focus-visible { color: var(--link); text-decoration: underline; }
 /* fixed-width gutter for the priority dot — reserves its slot on every row so an
    empty (low/no-priority) row keeps its checkbox aligned with dotted rows */
 .prislot { width: 6px; height: 1.35em; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }

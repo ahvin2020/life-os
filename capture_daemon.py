@@ -129,7 +129,12 @@ def format_reply(result: dict) -> str:
     title = (result.get("title") or "").strip()
     if kind == "task":
         tail = " · high" if result.get("priority") == "high" else ""
-        return f"✓ Task: {title}{tail}" if title else "✓ " + result.get("label", "→ Tasks")
+        if not title:
+            return "✓ " + result.get("label", "→ Tasks")
+        # the url was lifted OUT of the title (capture.split_off_link) — echo it on its own
+        # line so the reply still shows Sam everything he sent, and doesn't read as dropped
+        link = result.get("link")
+        return f"✓ Task: {title}{tail}" + (f"\n   {link}" if link else "")
     if kind == "note":
         return f"📝 Saved: {title}" if title else "📝 " + result.get("label", "→ Notes")
     if kind == "journal":
@@ -345,8 +350,13 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
     language. Returns True if a router fallback fired (so the caller schedules a sweep)."""
     from ai.router import record_exchange
 
-    # Fast path 1: a bare link → instant ack, then edit into the enriched reply.
-    if _looks_like_url(text):
+    # Fast path 1: a link capture → instant ack, then edit into the enriched reply. Gated on
+    # the LADDER naming it a link (capture.classify), never on a local "contains a url?" test:
+    # a message that cites a link while asking for something else ("add task, connect to my
+    # invoicing <reel>") is claimed by a tier above the url branch, and this path used to jump
+    # over that tier and ack it as a saved link.
+    from domain.capture import classify
+    if classify(text) == "link":
         _handle_link(conn, tg, chat_id, text)
         return False
 
@@ -439,11 +449,6 @@ def _maybe_send_document(tg, chat_id, out) -> None:
         except Exception as e:
             _log(f"document send failed: {e}")
             tg.send_message(chat_id, "⚠️ Couldn't send that file.")
-
-
-def _looks_like_url(text: str) -> bool:
-    from domain.capture import _looks_like_url as _u
-    return _u(text)
 
 
 def format_link_reply(note: dict, summary: str = "") -> str:

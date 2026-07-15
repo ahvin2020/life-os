@@ -246,6 +246,99 @@ def test_task_verb_layer_instant_vs_router():
     # → router: a question is not a capture
     assert ti("call anyone about the invoice?") is None
 
+    # ANY punctuation is just a separator after an explicit wrapper — the wrapper already
+    # named the kind, so the rest is simply the title. This was an enumerated character list
+    # (" :-–—") that happened to omit the comma, so "add task, connect to my invoicing <reel>"
+    # missed tier 1 and fell to the URL branch as a #link note. Don't re-enumerate: the rule
+    # is a word boundary, and these are only witnesses to it.
+    for sep in (",", ":", " -", ";", "...", " —", ""):
+        assert ti(f"add task{sep} water the plants") == "water the plants", repr(sep)
+    assert ti("todo, water the plants") == "water the plants"
+    # ...and the word boundary still holds, which is what the character list was really for
+    assert ti("todolist") is None
+    assert ti("add a taskforce meeting") is None
+    # ...and every guard still outranks the wrapper, whatever the punctuation
+    assert ti("add a task, buy milk and call the dentist") is None
+    assert ti("add task: call the dentist tomorrow") is None
+
+    # The guards judge the TITLE, not the wrapper's punctuation. "add task, pay the invoice"
+    # is ONE plain task; judged against the whole body its comma tripped the multi-capture
+    # guard (", pay" reads like the "and call" in "buy milk and call the dentist") and bailed
+    # it to the router. The same guards must still bite on the title itself.
+    assert ti("add task, pay the invoice") == "pay the invoice"
+    assert ti("todo, call the dentist") == "call the dentist"
+    assert ti("add a task, buy milk and call the dentist") is None   # multi, on the title
+    assert ti("to-do list is long") is None                          # prose, on the title
+
+
+def test_a_task_that_cites_a_url_keeps_a_clean_title():
+    """The url is the task's REFERENCE, not the thing to do, so it lifts out of the title
+    into tasks.link (schema v10) — a card reads "Connect to my invoicing", not 70 chars of
+    tracking querystring. It must be LIFTED, never dropped: the reel is why the task exists."""
+    from domain.capture import route_capture, split_off_link
+    conn = _db()
+    url = "https://www.instagram.com/reel/EXAMPLE12345/?igsh=EXAMPLETOKEN"
+
+    res = route_capture(conn, f"Add task, connect to my invoicing {url}", enrich="off")
+    assert res["kind"] == "task"
+    assert res["title"] == "connect to my invoicing"     # clean
+    assert res["link"] == url                            # and the reel survives
+    row = conn.execute("SELECT title, link FROM tasks WHERE id=?", (res["id"],)).fetchone()
+    assert (row["title"], row["link"]) == ("connect to my invoicing", url)
+
+    # the punctuation a lifted url leaves behind goes with it — no title ending in ":" or "-"
+    assert split_off_link(f"watch this: {url}") == ("watch this", url)
+    assert split_off_link(f"read {url} later") == ("read later", url)
+    assert split_off_link("no url here") == ("no url here", None)
+
+    # a task that is ONLY a url has no words to be a title — keep the url visible rather than
+    # filing an "Untitled task" whose one identifying detail is hidden in a chip
+    r2 = route_capture(conn, f"add a task {url}", enrich="off")
+    assert r2["kind"] == "task" and r2["title"] == url
+
+    # priority still lifts, and the url doesn't block it
+    r3 = route_capture(conn, f"add task, pay the invoice {url}!", enrich="off")
+    assert r3["priority"] == "high" and r3["title"] == "pay the invoice" and r3["link"] == url
+
+
+def test_a_message_may_cite_a_url_without_being_one():
+    """The ladder ranks a timed reminder and a task verb ABOVE the url branch, and always did.
+    But its two gates (is_explicit_capture, the daemon's instant-ack link path) each asked a
+    LOCAL "contains a url?" question instead of asking the ladder — so a url won before the
+    tiers above it were reached, and "add task, connect to my invoicing <reel>" was filed and
+    acked as a saved #link #idea note. classify() is the single copy of the order; no gate may
+    re-derive it."""
+    from domain.capture import classify, is_bare_url, has_url, is_explicit_capture
+    url = "https://www.instagram.com/reel/EXAMPLE12345/?igsh=EXAMPLETOKEN"
+
+    # the reported bug, both phrasings — a tier above the url claims them
+    assert classify(f"Add task, connect to my invoicing {url}") == "task"
+    assert classify(f"add a task connect to invoicing {url}") == "task"
+    assert classify(f"remind me at 3pm to watch {url}") == "reminder"
+
+    # a real link capture is untouched — bare, and with a caption (the caption feeds enrichment)
+    assert classify(url) == "link"
+    assert classify(f"great reel on finance agents {url}") == "link"
+    # an attachment keeps its text as one note rather than guessing a task
+    assert classify("thoughts on this", has_media=True) == "note"
+    assert classify("mumbled prose") == "unsorted"
+
+    # A DECLARED kind outranks the url even when the parser declines the details. Each of
+    # these bails a tier above the url branch ("this https" reads as when-language; a date
+    # with no clock time isn't a reminder) — a decline hands the message to the ROUTER, and
+    # the url branch must not intercept it on the way there. 'unsorted' is how the ladder
+    # says "not mine": is_explicit_capture is False, so both surfaces route it to the router.
+    for t in (f"add task: review this {url}",              # _WHEN_RE bails on "this <word>"
+              f"todo buy milk and call the dentist {url}",   # only the router splits these
+              f"add a task, call with Sam went well {url}",  # prose, not an instruction
+              f"remind me on friday to watch {url}"):        # a date, no clock → router
+        assert classify(t) == "unsorted", t
+        assert not is_explicit_capture(t), t
+
+    # has_url CONTAINS, is_bare_url IS — one test used to answer both, which is the bug above
+    assert has_url(f"connect to my invoicing {url}") and not is_bare_url(f"connect to {url}")
+    assert is_bare_url(url) and is_bare_url(f"  {url}  ")
+
 
 def test_capture_endpoint(client, monkeypatch):
     # Auto natural-language text now runs the AI router (the web twin of the Telegram bot).

@@ -21,7 +21,7 @@ def _task(**over):
     touches, defaulted, so a sample only overrides what the state needs."""
     base = dict(
         id=0, title="Sample task", due_date=None, priority=None, category=None,
-        col="week", recur_rule=None, goal_id=None, planned_on=None, media=None,
+        col="week", recur_rule=None, goal_id=None, planned_on=None, media=None, link=None,
         subtasks=[], sub_total=0, sub_done=0, done=False, pinned=False,
         week_since=None, reschedule_count=0,
     )
@@ -61,6 +61,10 @@ def design():
         "priority": _task(id=2, title="File Q2 GST return", priority="high", category="business"),
         "due": _task(id=3, title="Renew domain", due_date=over, category="personal"),
         "done": _task(id=4, title="Book dentist", done=True),
+        # a task that CITES a url: the title is the thing to do, the reel is reference
+        # material behind a host-labelled chip (capture.split_off_link, tasks.link)
+        "linked": _task(id=11, title="Connect to my invoicing", category="business",
+                        link="https://www.instagram.com/reel/EXAMPLE12345/"),
         "parent": _task(id=5, title="Ship the design page", sub_total=3, sub_done=1,
                         category="content",
                         subtasks=[{"id": 51, "title": "route", "done": True},
@@ -69,6 +73,8 @@ def design():
     }
     cards = {
         "plain": _task(id=6, title="Draft the newsletter", category="content"),
+        "linked": _task(id=12, title="Connect to my invoicing", category="business",
+                        link="https://www.instagram.com/reel/EXAMPLE12345/"),
         "pinned": _task(id=7, title="Call the bank", pinned=True, planned_on=today,
                         priority="high", category="business"),
         "stale": _task(id=8, title="Sort the garage", col="week",

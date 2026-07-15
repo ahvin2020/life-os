@@ -24,6 +24,7 @@ from flask import (
 
 from core.db import connect, data_dir, now_iso, today_iso, now_sg, get_tz, time_format, DB_PATH
 from core.dates import parse_iso_utc, fmt_date, due_label, fmt_clock
+from core.text import link_host as _link_host
 # Health + integration-status subsystem lives in core.health (Flask-free, pure over conn).
 # Re-exported here because routes/settings and several tests import these from web_core.
 from core.health import (  # noqa: F401
@@ -177,6 +178,7 @@ app.jinja_env.filters["fstamp"] = _fmt_stamp
 app.jinja_env.filters["days_ago"] = _days_ago
 app.jinja_env.filters["due_label"] = _due_label
 app.jinja_env.filters["ftime"] = _fmt_time
+app.jinja_env.filters["link_host"] = _link_host
 
 
 # ── request helpers ───────────────────────────────────────────────────────────

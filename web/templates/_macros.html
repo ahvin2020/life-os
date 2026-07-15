@@ -40,7 +40,7 @@ data-task-id="{{ t.id }}" data-title="{{ t.title|e }}" data-due="{{ t.due_date o
 data-priority="{{ t.priority or '' }}" data-category="{{ t.category or '' }}"
 data-col="{{ t.col }}" data-recur="{{ t.recur_rule or '' }}" data-goal-id="{{ t.goal_id or '' }}"
 data-planned="{{ _onday(t, today) }}"
-data-media="{{ t.media or '' }}"
+data-media="{{ t.media or '' }}" data-link="{{ t.link or '' }}"
 data-subs='{{ t.subtasks|tojson }}'
 {%- endmacro %}
 
@@ -49,6 +49,13 @@ data-subs='{{ t.subtasks|tojson }}'
      ("☀ Do today" = reopen), hover-revealed, not a stale amber badge #}
   {% set on = (not t.done) and t.planned_on and t.planned_on <= today %}
   <button class="planbtn {{ extra_class }} {{ 'on' if on else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if on else '☀ Do today' }}</button>
+{%- endmacro %}
+
+{# The url a task REFERENCES (tasks.link, schema v10) — lifted out of the title at capture
+   so the title says only the thing to do. Labelled with its host, not a 🔗 glyph: "what is
+   this" beats "something is here", and a host is data, so it renders mono. #}
+{% macro link_chip(t) -%}
+  {% if t.link %}<a class="tlink" href="{{ t.link }}" target="_blank" rel="noopener" title="{{ t.link }}">{{ t.link | link_host }}</a>{% endif %}
 {%- endmacro %}
 
 {% macro due_span(t, today) -%}
@@ -93,10 +100,11 @@ data-subs='{{ t.subtasks|tojson }}'
       <label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}" {{ 'checked' if t.done else '' }}></label>
       <div class="tmain">
         <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
-        {% if not t.done and (t.category or t.due_date) %}
+        {% if not t.done and (t.category or t.due_date or t.link) %}
         <span class="tsub">
           {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
           {% if t.due_date %}{{ due_span(t, today) }}{% endif %}
+          {{ link_chip(t) }}
         </span>
         {% endif %}
       </div>
@@ -115,11 +123,12 @@ data-subs='{{ t.subtasks|tojson }}'
     {% if not has_subs %}<label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}"></label>{% endif %}
     <div class="tmain">
       <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
-      {% if has_subs or t.category or t.due_date %}
+      {% if has_subs or t.category or t.due_date or t.link %}
       <span class="tsub">
         {% if has_subs %}<span class="subcount">{{ t.sub_done }}/{{ t.sub_total }}</span>{% endif %}
         {% if t.category %}<span class="cat">{{ t.category }}</span>{% endif %}
         {% if t.due_date %}{{ due_span(t, today) }}{% endif %}
+        {{ link_chip(t) }}
       </span>
       {% endif %}
     </div>
@@ -177,8 +186,10 @@ data-subs='{{ t.subtasks|tojson }}'
     {% set meta_due = t.due_date and not t.done %}
     {% set meta_plan = (not t.done) and _onday(t, today) == '1' %}
     {# category now reads as the card's coloured left rail (see .kcard[data-cat]) #}
-    <div class="krow{% if not (meta_due or t.goal_id or stale or meta_plan) %} ghost{% endif %}">
+    {% set meta_link = t.link and not t.done %}
+    <div class="krow{% if not (meta_due or t.goal_id or stale or meta_plan or meta_link) %} ghost{% endif %}">
       {% if meta_due %}{{ due_span(t, today) }}{% endif %}
+      {% if meta_link %}{{ link_chip(t) }}{% endif %}
       {% if t.goal_id %}<span class="goalref">◎ goal</span>{% endif %}
       {% if stale %}<span class="kstale">{% if wage is not none and wage >= 7 %}{{ wage }}d{% endif %}{% if (t.reschedule_count or 0) >= 2 %}{{ ' · ' if wage is not none and wage >= 7 }}{{ t.reschedule_count }}× moved{% endif %}</span>{% endif %}
       {{ plan_pill(t, today, 'kplan') }}

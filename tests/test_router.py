@@ -163,6 +163,46 @@ def test_create_task_with_subtasks(client):
     assert row["category"] == "content" and row["priority"] == "high" and subs == 2
 
 
+def _newest(conn):
+    """The task just created — _db() reuses one DB, so 'the first row' is a stale twin."""
+    return conn.execute(
+        "SELECT title, link FROM tasks WHERE parent_id IS NULL ORDER BY id DESC LIMIT 1").fetchone()
+
+
+def test_router_task_lands_the_same_shape_as_the_deterministic_one(client):
+    """Both paths must file a cited url the SAME way — clean title + tasks.link. The AI path
+    is where the deterministic ladder DECLINES to ("add task: review this <reel>" bails on
+    when-language), so if only one path lifted the url the two would answer the same question
+    differently depending on which tier happened to catch it."""
+    url = "https://www.instagram.com/reel/EXAMPLE12345/?igsh=EXAMPLETOKEN"
+
+    # the model uses `link` as instructed
+    conn = _db()
+    router.route(conn, f"add task: review this {url}", claude_fn=_fn({
+        "action": "create_task", "title": "Review the invoicing reel", "link": url}))
+    row = _newest(conn)
+    conn.close()
+    assert (row["title"], row["link"]) == ("Review the invoicing reel", url)
+
+    # ...and when it ignores the instruction and buries the url in the title, we still lift it
+    conn = _db()
+    router.route(conn, f"add task: review this {url}", claude_fn=_fn({
+        "action": "create_task", "title": f"Review this {url}"}))
+    row = _newest(conn)
+    conn.close()
+    assert (row["title"], row["link"]) == ("Review this", url)
+
+    # a multi keeps the url with the action it belongs to: the NOTE's reel is not the task's
+    conn = _db()
+    router.route(conn, f"save {url} and add a task to call mum", claude_fn=_fn({
+        "action": "multi", "actions": [
+            {"action": "create_note", "title": "Finance reel", "tags": ["link"], "body": url},
+            {"action": "create_task", "title": "Call mum", "link": None}]}))
+    row = _newest(conn)
+    conn.close()
+    assert (row["title"], row["link"]) == ("Call mum", None)
+
+
 def test_create_note(client):
     conn = _db()
     out = router.route(conn, "interesting REIT thread", claude_fn=_fn({
