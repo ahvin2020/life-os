@@ -28,11 +28,14 @@ import sys
 from domain import capture
 from domain import vault_store
 from ai.claude_cli import call_claude, extract_json
-from core.db import now_iso, today_iso, now_sg
+from core.db import data_dir, now_iso, today_iso, now_sg
 from core.dates import due_label
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_RAW_LOG = os.path.join(_ROOT, "data", "capture_raw.log")
+# On the persistent mount (core.db.data_dir), NOT inside the image: this log is the
+# "never lose what Sam said" net — written BEFORE the claude call — and at /app/data it was
+# destroyed by every redeploy, which is exactly when a fallback is most likely.
+_RAW_LOG = os.path.join(data_dir(), "capture_raw.log")
 
 CLAUDE_TIMEOUT = 60
 # Reading an image adds a Read-tool round-trip, so photos get a longer budget.

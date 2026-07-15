@@ -35,9 +35,10 @@ from datetime import datetime, timezone
 
 # Heavy third-party imports (requests, mlx_whisper) are deferred into the
 # functions that need them so `import capture_daemon` stays cheap for the tests.
+from core.db import data_dir
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
-_LOG_PATH = os.path.join(_ROOT, "data", "capture_daemon.log")
+_LOG_PATH = os.path.join(data_dir(), "capture_daemon.log")      # persistent mount, not /app/data
 
 # Routing is now INLINE (router.py calls `claude -p` per message), so the old
 # debounced triage is gone. run_triage.py survives only as the --sweep safety net
@@ -59,7 +60,7 @@ def _log(msg: str) -> None:
 
 
 # ── last-ditch content preservation (safety rail when the normal path crashes) ─
-_RAW_LOG_PATH = os.path.join(_ROOT, "data", "capture_raw.log")
+_RAW_LOG_PATH = os.path.join(data_dir(), "capture_raw.log")     # persistent mount, not /app/data
 
 
 def _safety_log_raw(msg) -> None:

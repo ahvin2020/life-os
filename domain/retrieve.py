@@ -154,51 +154,71 @@ def _calendar_window(days_back: int = 1, days_ahead: int = 90) -> list:
 _CONN_SOURCES = ("facts", "tasks", "goals")
 
 
-def _fetch(source: str, query: str, db_path: str | None = None) -> list:
-    """Fetch one network-bound source. Returns data and touches no shared state, so several of
-    these can race; merging happens on the caller's thread. [] on any failure, so one dead
-    connector never sinks the answer."""
+def _fetch(source: str, query: str, db_path: str | None = None) -> tuple:
+    """Fetch one network-bound source. Returns (items, error) and touches no shared state, so
+    several of these can race; merging happens on the caller's thread.
+
+    An error is NOT the same as []. A source that threw — or isn't connected — knows NOTHING,
+    and reporting that as "no results" is precisely how "Gmail is unreachable on this host"
+    became "you have no cruise booking" for months: the bot ran in a container with no OAuth
+    token, is_configured() was False, and this function quietly returned []. One dead connector
+    still never sinks the answer (the loop carries on with every other source) — it just has to
+    SAY so, so the model reports an unavailable source instead of inventing a true negative."""
     try:
         if source == "gmail":
             from ai import google_client
-            return _gmail_hits(query) if google_client.is_configured() else []
+            if not google_client.is_configured():
+                return [], ("Google is NOT connected on this host — Gmail and Calendar were "
+                            "not searched at all")
+            return _gmail_hits(query), None
         if source == "vault":
-            return recall.search_vault(_terms(query))[:5]
+            return recall.search_vault(_terms(query))[:5], None
         if source == "calendar":
-            return _calendar_window()             # a window, not a keyword search — query unused
+            return _calendar_window(), None       # a window, not a keyword search — query unused
         if source == "docs":
             # Its own connection: SQLite connections aren't shareable across threads, and this
             # is a reader (WAL allows concurrent readers). Wider than the read cap so a
             # multi-entity ask ("everyone's passports") has the whole set to choose from.
             conn = connect(db_path or DB_PATH)
             try:
-                return docs.search_documents(conn, query, limit=10)
+                return docs.search_documents(conn, query, limit=10), None
             finally:
                 conn.close()
-    except Exception:
-        pass
-    return []
+    except Exception as e:
+        return [], f"{source} search failed — {type(e).__name__}: {e}"[:200]
+    return [], None
 
 
 def gather(conn, query: str) -> dict:
     """Fan out across every available source, all of them CONCURRENTLY — each is a network
     round trip (Gmail, Calendar, Dropbox-backed docs) and they're independent, so the pre-seed
     should cost the slowest source, not their sum."""
-    ev = {"gmail": [], "docs": [], "vault": [], "calendar": []}
+    ev = {"gmail": [], "docs": [], "vault": [], "calendar": [], "errors": {}}
     jobs = ("vault", "gmail", "calendar", "docs")
     path = db_path_of(conn)
     with _cf.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         futs = {k: pool.submit(_fetch, k, query, path) for k in jobs}
         for k, f in futs.items():
             try:
-                ev[k] = f.result() or []
-            except Exception:
-                ev[k] = []
+                ev[k], err = f.result()
+            except Exception as e:
+                ev[k], err = [], f"{k} search failed — {type(e).__name__}: {e}"[:200]
+            if err:
+                ev["errors"][k] = err
     return ev
 
 
 def _evidence_text(ev: dict) -> str:
     lines = []
+    # FIRST, so it can't be skimmed past. A source that failed searched NOTHING, and the model
+    # must never turn that into "you don't have one" — the failure mode this whole module keeps
+    # relearning: an unavailable source is indistinguishable from an empty one unless you say so.
+    if ev.get("errors"):
+        lines.append("⚠ SOURCES THAT DID NOT RUN — they were NOT searched. This is NOT evidence "
+                     "of absence. Do NOT conclude the thing doesn't exist because of these; say "
+                     "the source is unavailable and name it:")
+        for src, err in ev["errors"].items():
+            lines.append(f"- {src}: {err}")
     if ev.get("gmail"):
         # Say so when this is only a slice of the matches. Without it, a model that can't see
         # match #21 reports "you have no cruise booking" — reading truncation as absence is
@@ -437,9 +457,11 @@ def _search_many(conn, specs: list, candidates: list, ev: dict) -> None:
             futs = [(s, q, pool.submit(_fetch, s, q, path)) for s, q in remote]
             for s, q, f in futs:
                 try:
-                    fetched[(s, q)] = f.result() or []
-                except Exception:
-                    fetched[(s, q)] = []
+                    fetched[(s, q)], err = f.result()
+                except Exception as e:
+                    fetched[(s, q)], err = [], f"{s} search failed — {type(e).__name__}: {e}"[:200]
+                if err:
+                    ev.setdefault("errors", {})[s] = err
     for s, q in specs:                           # merge on THIS thread, in the planner's order
         if s in _CONN_SOURCES:
             _merge_local(conn, s, q, candidates, ev)
@@ -459,7 +481,7 @@ def _state_text(candidates: list, ev: dict, readings: list, did: list | None = N
     else:
         lines.append("  (none yet — search source=docs to find some)")
     lines.append("\nEMAIL / NOTES / FACTS (already readable — use directly):")
-    body = _evidence_text({k: ev.get(k) for k in ("gmail", "vault", "calendar")})
+    body = _evidence_text({k: ev.get(k) for k in ("gmail", "vault", "calendar", "errors")})
     if ev.get("facts"):
         body += "\nFACTS (from your document cache):\n" + "\n".join(
             f"- {f.get('label', '')}: {f.get('value', '')}"

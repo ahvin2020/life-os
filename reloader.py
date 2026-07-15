@@ -24,6 +24,8 @@ import os
 import sys
 import time
 
+from core.db import data_dir
+
 SETTLE_S = 15                                   # a change must be this quiet before we act
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _SKIP_DIRS = {"__pycache__", "node_modules"}    # dot-dirs (.venv/.git/.trash) pruned separately
@@ -34,8 +36,8 @@ _SKIP_DIRS = {"__pycache__", "node_modules"}    # dot-dirs (.venv/.git/.trash) p
 # watching it would reexec the daemon every hour. An allowlist, because data/ is otherwise
 # pruned on purpose (app.db churns constantly and must never trigger a reload).
 _TRIGGER_FILES = (
-    os.path.join(_ROOT, "data", "google_token.json"),
-    os.path.join(_ROOT, "data", "google_client_secret.json"),
+    os.path.join(data_dir(), "google_token.json"),
+    os.path.join(data_dir(), "google_client_secret.json"),
 )
 
 

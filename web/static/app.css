@@ -157,7 +157,6 @@ a:hover { text-decoration: underline; }
 .nav-btn.active .ico { color: var(--accent); }
 .count { margin-left: auto; font-family: var(--mono); font-size: 11px; background: var(--surface2); border: 1px solid var(--border); padding: 0 7px; border-radius: 99px; color: var(--muted); }
 .nav-btn.active .count { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
-.side .setlink { margin-top: auto; }
 .side .foot { padding: 6px 10px 0; font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.7; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--muted); margin-right: 6px; }
 .dot.ok { background: var(--good); }        /* health fails to grey, not to "fine" — green is explicit */

@@ -16,7 +16,10 @@
 ## Layer 2 — Project facts (a fresh session can't guess these)
 ### What this is
 - Sam's personal **life-os**: tasks / notes / journal / goals. **Single user, no login** (Tailscale is the perimeter), **phone-first**.
-- Runs on his **Synology DS423+ via Docker** (Container Manager). The **Mac copy is dev-only**, synced to the NAS by **Synology Drive — the sync IS the deploy channel**; a container restart on the NAS picks up code changes.
+- Runs on his **Synology DS423+ via Docker** (Container Manager). The **Mac copy is dev-only**.
+- **DEPLOY = `git push` → GitHub Actions → ghcr.io → Watchtower auto-pulls on the NAS. The IMAGE is the artifact; code is NOT bind-mounted and Synology Drive is NOT the deploy channel** (it syncs only `vault/`). An uncommitted or unpushed change is simply not on prod, and a push takes ~2min of CI + Watchtower's poll to land. (This line used to claim the sync deployed the code; a whole misdiagnosis was reasoned off that. See `deploy/docker-compose.yml`, which is authoritative.)
+- **Prod is TWO containers from ONE image** (`life-os-app` web, `life-os-capture` the bot), sharing exactly one thing: the volume at **`/data`** (`LIFEOS_DB_PATH=/data/app.db`). They do NOT share a filesystem otherwise. **Anything durable must go through `core.db.data_dir()`** (= the DB's directory), never `<repo>/data` — that's `/app/data`, which `.dockerignore` excludes from the image, so it's container-local and wiped by every Watchtower pull. This bit hard: the OAuth token lived there, so the WEB container had one (Settings said "Google: Connected ✓") while the BOT had none — `is_configured()` was False, Gmail was never searched, and the bot answered "nothing here mentions a cruise" about mail in the inbox. The secret key (sessions/CSRF churned every deploy) and `capture_raw.log` (the never-lose-input net) had the same defect. `tests/test_retrieve.py::test_data_dir_follows_the_mount_not_the_image` is the tripwire.
+- **Dev and prod are SEPARATE bots and SEPARATE databases** — the Mac daemon talks to `@kelvin_lifeos_dev_bot` with its own `data/app.db`. Divergent task counts between them are expected, not corruption. Verifying a fix on the Mac says NOTHING about prod.
 - Stack: Flask + SQLite + Jinja + vanilla JS, **no build step**, port **5070**.
 
 ### Run / test

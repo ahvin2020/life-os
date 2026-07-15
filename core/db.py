@@ -33,6 +33,32 @@ DB_PATH = os.environ.get("LIFEOS_DB_PATH") or os.path.join(
 SCHEMA_VERSION = 9
 
 
+def data_dir() -> str:
+    """THE directory for persistent user data — app.db, the secret key, the OAuth token, the
+    raw-capture log, the daemon log. Anchored to LIFEOS_DB_PATH, never to the repo.
+
+    `<repo>/data` is WRONG in production and silently so. The web app and the bot are two
+    separate containers built from one image; `.dockerignore` excludes `data/`, so `<repo>/data`
+    resolves to `/app/data` — a directory that isn't in the image, isn't shared between the two
+    containers, and is destroyed every time Watchtower pulls a new one. Only the mounted volume
+    survives, and LIFEOS_DB_PATH (`/data/app.db`) already points into it, so anything that must
+    outlive a deploy belongs beside the DB.
+
+    This was not theoretical. The OAuth token lived at `/app/data/google_token.json`: the WEB
+    container had one (you did the OAuth there) and cheerfully showed "Google: Connected ✓",
+    while the BOT container had none, so `is_configured()` was False and Gmail was never
+    searched — the bot answered "nothing here mentions a cruise" about mail sitting in the
+    inbox. The secret key and capture_raw.log had the same defect.
+
+    Falls back to `<repo>/data` for the Mac/dev layout, where the two are the same place."""
+    db = os.environ.get("LIFEOS_DB_PATH")
+    if db:
+        d = os.path.dirname(os.path.abspath(db))
+        if d:
+            return d
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+
 def connect(db_path: str = DB_PATH) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)

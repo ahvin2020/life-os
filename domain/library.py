@@ -30,12 +30,13 @@ import json
 import os
 import re
 
+from core.db import data_dir
 from core.text import tokenize
 from domain import vault_store
 from ai.claude_cli import call_claude
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_CLUSTER_LOG = os.path.join(_ROOT, "data", "cluster_log.json")
+_CLUSTER_LOG = os.path.join(data_dir(), "cluster_log.json")   # persistent mount, not /app/data
 
 # The fixed taxonomy (also listed in vault/profile.md). One tag per imported note.
 CLUSTERS = (

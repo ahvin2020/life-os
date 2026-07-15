@@ -22,7 +22,7 @@ from flask import (
     flash, jsonify, session, abort,
 )
 
-from core.db import connect, now_iso, today_iso, now_sg, get_tz, time_format, DB_PATH
+from core.db import connect, data_dir, now_iso, today_iso, now_sg, get_tz, time_format, DB_PATH
 from core.dates import parse_iso_utc, fmt_date, due_label, fmt_clock
 # Health + integration-status subsystem lives in core.health (Flask-free, pure over conn).
 # Re-exported here because routes/settings and several tests import these from web_core.
@@ -47,7 +47,9 @@ app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024   # 30 MB cap on image-attac
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
-_DATA_DIR = os.path.join(_ROOT, "data")
+_DATA_DIR = data_dir()          # the persistent mount, not /app/data — see core.db.data_dir.
+                                # The secret key lives here: inside the image it was regenerated
+                                # on every deploy, silently invalidating sessions + CSRF tokens.
 
 
 def _load_or_create_secret_key() -> str:

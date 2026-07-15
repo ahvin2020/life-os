@@ -411,6 +411,39 @@ def test_widened_gmail_search_warns_the_model(client, monkeypatch):
     assert "NOTHING matched" not in retrieve._evidence_text({"gmail": clean})
 
 
+def test_a_dead_source_reports_instead_of_looking_empty(client, monkeypatch):
+    """THE production bug, and the costliest one: the bot ran in a container with no OAuth
+    token, so is_configured() was False and _fetch quietly returned [] — for MONTHS the bot
+    answered "nothing here mentions a cruise" about mail sitting in the inbox, while Settings
+    (a DIFFERENT container, which had the token) showed "Google: Connected ✓". A source that
+    did not run must never look like a source that found nothing."""
+    monkeypatch.setattr(google_client, "is_configured", lambda: False)
+    items, err = retrieve._fetch("gmail", "cruise")
+    assert items == [] and err and "NOT connected" in err
+    text = retrieve._evidence_text({"gmail": [], "errors": {"gmail": err}})
+    assert "NOT evidence of absence" in text and "gmail" in text
+
+    # a source that THROWS is a failure too, not an absence — and it must not sink the answer
+    def boom(*a, **k):
+        raise RuntimeError("HttpError 403 insufficient scope")
+    monkeypatch.setattr(google_client, "is_configured", lambda: True)
+    monkeypatch.setattr(retrieve, "_gmail_hits", boom)
+    items, err = retrieve._fetch("gmail", "cruise")
+    assert items == [] and "403" in err
+
+
+def test_data_dir_follows_the_mount_not_the_image(client, monkeypatch):
+    """Prod runs the web app and the bot as two containers from ONE image, and .dockerignore
+    excludes data/ — so <repo>/data is /app/data: absent from the image, unshared, and wiped by
+    every redeploy. Anything that must outlive a deploy (token, secret key, raw-capture log)
+    belongs beside the DB on the mounted volume."""
+    from core.db import data_dir
+    monkeypatch.setenv("LIFEOS_DB_PATH", "/data/app.db")
+    assert data_dir() == "/data"
+    monkeypatch.delenv("LIFEOS_DB_PATH")
+    assert data_dir().endswith("/data")          # dev falls back to <repo>/data, unchanged
+
+
 def test_read_and_deliver_sets_are_capped(client, monkeypatch):
     """A broad ask can't fan out to an unbounded, slow read/deliver — the set is capped."""
     conn = _db()

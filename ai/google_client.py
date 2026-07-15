@@ -21,9 +21,13 @@ from __future__ import annotations
 import os
 import re
 
+from core.db import data_dir
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SECRET = os.path.join(_ROOT, "data", "google_client_secret.json")
-_TOKEN = os.path.join(_ROOT, "data", "google_token.json")
+# On the persistent mount, NOT inside the image — see core.db.data_dir for why this matters
+# (the bot container had no token here and so never searched Gmail at all).
+_SECRET = os.path.join(data_dir(), "google_client_secret.json")
+_TOKEN = os.path.join(data_dir(), "google_token.json")
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
