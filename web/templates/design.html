@@ -23,6 +23,9 @@
   .sw .lab b { color: var(--text); font-weight: 500; display: block; }
   .type-mono { font-family: var(--mono); }
   .note { max-width: 260px; }   /* note_card is grid-sized in situ; cap it here */
+  /* the guide's own caption — names a component's states/caveats next to it */
+  .dg .spec { font-family: var(--mono); font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+  .dg .boxrow { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
 </style>
 
 <div class="dg">
@@ -51,12 +54,20 @@
     </div>
   </section>
 
+  {# .qgo is THE primary button — capture's Add, the onboarding CTA (.welgo is only a size
+     modifier on it), the reminder alarm's Dismiss. Its two transient states are driven by
+     JS on submit: .spin while the request is in flight, .did on success. #}
   <section>
     <h2>Buttons</h2>
     <div class="row">
       <button class="qgo">Primary (qgo)</button>
+      <button class="qgo spin">Add</button>
+      <button class="qgo did">Added ✓</button>
       <button class="mini">Mini</button>
       <button class="mini danger">Mini danger</button>
+    </div>
+    <div class="row">
+      <span class="spec">qgo · qgo.spin (label hidden, ring spins — label returns under reduced-motion) · qgo.did</span>
     </div>
     <div class="row">
       <button class="planbtn">☀ Do today</button>
@@ -136,6 +147,125 @@
     <h2>Note cards</h2>
     <div class="row" style="align-items:flex-start">
       {% for n in notes %}{{ m.note_card(n) }}{% endfor %}
+    </div>
+  </section>
+
+  {# goal_card derives its SHAPE from which fields exist, never from a stored `kind` —
+     measure (number bar) · rollup (linked tasks) · milestone (achieved toggle) · both.
+     A rollup/both goal always has linked tasks (the shape IS derived from having them),
+     so the macro's empty-linked hint can't occur in the product and isn't faked here. #}
+  <section>
+    <h2>Goal cards</h2>
+    <div class="goalgrid">
+      {% for g in goals %}{{ m.goal_card(g) }}{% endfor %}
+    </div>
+    <div class="row">
+      <span class="spec">measure · measure at 100% (.goal.achieved + .bar.full) · rollup · milestone · milestone achieved · both (+ end_date)</span>
+    </div>
+  </section>
+
+  {# First-run onboarding takeover. In situ it lives in an .overlay (#onboard) that feed.js
+     reparents to <body> and lights with .on; here the .welcome card is drawn bare — same as
+     the .editor above — so both steps are visible at once instead of one hidden behind JS.
+     What .overlay.on adds is only the pop-in animation, so nothing about the look is faked. #}
+  <section>
+    <h2>First-run onboarding (welcome takeover)</h2>
+    <div class="boxrow">
+      {# step 1 — name entry. Continue is disabled until a name is typed; the disabled look
+         recolours (not opacity: the .welstep rise animation pins opacity to 1). #}
+      <div class="welcome">
+        <div class="welstep">
+          <div class="welwave" aria-hidden="true">👋</div>
+          <h1 class="weltitle">Welcome to Life OS</h1>
+          <p class="welsub">Tasks, notes &amp; journal, with an assistant that helps.</p>
+          <label class="wellabel">What should I call you?</label>
+          <input class="ctrl welin" type="text" maxlength="40" placeholder="Your name" autocomplete="off" aria-label="What should I call you?">
+          <button class="qgo welgo" type="button" disabled>Continue</button>
+        </div>
+        <div class="weldots" aria-hidden="true"><span class="weldot on"></span><span class="weldot"></span></div>
+      </div>
+
+      {# step 2 — all set. The back arrow appears here only; second dot lights. #}
+      <div class="welcome">
+        <button class="welback-top" type="button" aria-label="Back">←</button>
+        <div class="welstep">
+          <div class="welwave" aria-hidden="true">✨</div>
+          <h1 class="weltitle">Nice to meet you, Ada.</h1>
+          <p class="welsub">Want the assistant too? Add it anytime in <b>Settings</b>.</p>
+          <button class="qgo welgo" type="button">Start using Life OS</button>
+        </div>
+        <div class="weldots" aria-hidden="true"><span class="weldot"></span><span class="weldot on"></span></div>
+      </div>
+    </div>
+    <div class="row">
+      <span class="spec">.welgo is a SIZE modifier on .qgo — never a second amber button. Card goes full-bleed ≤480px. Step 1 has no skip: the name is required, so Continue stays disabled until one is typed.</span>
+    </div>
+  </section>
+
+  {# Reminder alarm — the firing surface when there's no Telegram (base.html #remalert,
+     driven by feed.js). Drawn bare here for the same reason as .welcome above; the list
+     items are the JS-built .ra-item rows (one, and many). #}
+  <section>
+    <h2>Reminder alarm</h2>
+    <div class="boxrow">
+      <div class="remalertbox">
+        <div class="ra-icon" aria-hidden="true">⏰</div>
+        <h2 class="ra-h">Reminder</h2>
+        <div class="ra-list">
+          <div class="ra-item">
+            <div class="ra-text">Take the sourdough out of the oven</div>
+            <div class="ra-when">3:00 pm</div>
+          </div>
+        </div>
+        <button class="qgo ra-ok" type="button">Dismiss</button>
+      </div>
+
+      {# several reminders can come due together; the box stacks them and stays put until
+         it's manually dismissed — a missed alarm must never auto-close. #}
+      <div class="remalertbox">
+        <div class="ra-icon" aria-hidden="true">⏰</div>
+        <h2 class="ra-h">Reminder</h2>
+        <div class="ra-list">
+          <div class="ra-item">
+            <div class="ra-text">Call the clinic back</div>
+            <div class="ra-when">2:30 pm</div>
+          </div>
+          <div class="ra-item">
+            <div class="ra-text">Move the laundry</div>
+            <div class="ra-when">2:45 pm</div>
+          </div>
+          <div class="ra-item">
+            {# .ra-when is optional — feed.js omits it when there's no time to show #}
+            <div class="ra-text">Leave for the airport</div>
+          </div>
+        </div>
+        <button class="qgo ra-ok" type="button">Dismiss</button>
+      </div>
+    </div>
+  </section>
+
+  {# Nav chrome. These two are viewport-gated by app.css, and the guide does NOT re-declare
+     their CSS to force them visible — that would be exactly the drift this page exists to
+     prevent. So each renders only where it really ships; judge it at that width.
+       .mtop / .navtoggle / .mtop-brand / .mtop-alert  → ≤760px only  (blank at 1440px)
+       .navcollapse / .bars                            → ≥761px only  (blank at 390px)
+     Both hamburgers are the SAME CSS-drawn .bars (the ☰ glyph sits off-centre in most
+     fonts) — one hamburger, drawn once, shared by the rail toggle and the phone bar. #}
+  <section>
+    <h2>Nav chrome (phone top bar · desktop rail toggle)</h2>
+    <div class="spec">Phone top bar — renders at ≤760px only (the live one is already at the top of this page):</div>
+    <header class="mtop">
+      <button class="navtoggle" type="button" aria-label="Open menu"><span class="bars"></span></button>
+      <b class="mtop-brand">Life OS</b>
+      <a class="mtop-alert" href="/design" title="2 system issues need attention">2</a>
+    </header>
+    <div class="row">
+      <span class="spec">.mtop-alert is the needs-attention count, shown only when a health check is stale.</span>
+    </div>
+    <div class="spec">Desktop rail toggle — renders at ≥761px only:</div>
+    <div class="row">
+      <button class="navcollapse" type="button" aria-label="Toggle sidebar"><span class="bars"></span></button>
+      <span class="spec">.navcollapse + .bars — collapses the sidebar to an icon rail; hidden on phone (the drawer has its own).</span>
     </div>
   </section>
 

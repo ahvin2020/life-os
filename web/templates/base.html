@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {# Dark canvas from the FIRST paint — without this the UA paints its white default
+     until app.css lands, flashing white on every navigation. #}
+  <meta name="color-scheme" content="dark">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <title>{% block title %}Life OS{% endblock %} · Life OS</title>
@@ -43,13 +46,32 @@
     })();
   </script>
   <script>window.LIFEOS_TODAY = "{{ today }}";</script>
+  {# Apply the persisted desktop sidebar-collapsed state BEFORE first paint, so a
+     collapsed sidebar never flashes open then snaps shut on load. #}
+  <script>try{if(localStorage.getItem('lifeos_nav_collapsed')==='1')document.documentElement.classList.add('nav-collapsed');}catch(e){}</script>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_ver('app.css') if asset_ver is defined else '' }}">
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
 </head>
 <body>
+{# Phone-only top bar: the hamburger toggles the slide-in nav drawer (the same .side
+   sidebar shown persistently on desktop). The alert count rides here so the health
+   signal stays visible while the drawer is closed. Hidden on desktop via CSS. #}
+<header class="mtop">
+  {# Same CSS-drawn bars as the desktop rail toggle — the ☰ glyph sits off-centre in most fonts. #}
+  <button class="navtoggle" id="navtoggle" type="button" aria-label="Open menu"
+          aria-controls="sidenav" aria-expanded="false"><span class="bars"></span></button>
+  <b class="mtop-brand">Life OS</b>
+  {% if nav_alerts %}<a class="mtop-alert" href="/settings" title="{{ nav_alerts }} system issue{{ 's' if nav_alerts > 1 }} need attention">{{ nav_alerts }}</a>{% endif %}
+</header>
+<div class="scrim" id="navscrim" aria-hidden="true"></div>
 <div class="shell">
-  <nav class="side" aria-label="Main">
-    <div class="brand"><b>Life OS</b><span>DS423+</span></div>
+  <nav class="side" id="sidenav" aria-label="Main">
+    {# Hamburger toggles the desktop rail (icon-only) ⇄ full sidebar; it stays visible in
+       both states. The wordmark links home. #}
+    <div class="brand">
+      <button class="navcollapse" id="navcollapse" type="button" aria-label="Toggle sidebar"><span class="bars"></span></button>
+      <a class="brandlink" href="/"><b>Life OS</b></a>
+    </div>
     <a class="nav-btn {{ 'active' if active=='home' else '' }}" href="/"><span class="ico">◈</span>Today</a>
     <a class="nav-btn {{ 'active' if active=='tasks' else '' }}" href="/tasks"><span class="ico">☑</span>Tasks<span class="count">{{ nav_counts.tasks }}</span></a>
     <a class="nav-btn {{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
@@ -73,16 +95,6 @@
     {% block content %}{% endblock %}
   </main>
 </div>
-
-<nav class="bottomnav" aria-label="Mobile">
-  <a class="{{ 'active' if active=='home' else '' }}" href="/"><span class="ico">◈</span>Today</a>
-  <a class="{{ 'active' if active=='tasks' else '' }}" href="/tasks"><span class="ico">☑</span>Tasks</a>
-  <a class="{{ 'active' if active=='notes' else '' }}" href="/notes"><span class="ico">✎</span>Notes</a>
-  <a class="{{ 'active' if active=='journal' else '' }}" href="/journal"><span class="ico">✦</span>Journal</a>
-  <a class="{{ 'active' if active=='goals' else '' }}" href="/goals"><span class="ico">◎</span>Goals</a>
-  <a class="{{ 'active' if active=='calendar' else '' }}" href="/calendar"><span class="ico">▦</span>Calendar</a>
-  <a class="{{ 'active' if active=='settings' else '' }}" href="/settings">{% if nav_alerts %}<span class="bn-badge" aria-label="{{ nav_alerts }} issues">{{ nav_alerts }}</span>{% endif %}<span class="ico">⚙</span>Settings</a>
-</nav>
 
 <a class="fab" href="/#qin" aria-label="Quick add">＋</a>
 
@@ -115,6 +127,17 @@
       <span class="saved" id="ed-saved"></span>
       <button class="qgo" id="ed-save" type="button">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- reminder alarm modal — a due reminder pops here and stays until manually dismissed
+     (the firing surface when there's no Telegram; feed.js drives it on Today). -->
+<div class="overlay" id="remalert">
+  <div class="remalertbox" role="alertdialog" aria-modal="true" aria-label="Reminder due">
+    <div class="ra-icon" aria-hidden="true">⏰</div>
+    <h2 class="ra-h">Reminder</h2>
+    <div class="ra-list" id="ra-list"></div>
+    <button class="qgo ra-ok" id="ra-ok" type="button">Dismiss</button>
   </div>
 </div>
 

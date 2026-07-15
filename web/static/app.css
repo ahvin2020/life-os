@@ -16,9 +16,13 @@
   --accent: #E2A84B;
   --accent-rgb: 226,168,75;
   --accent-dim: rgba(var(--accent-rgb),.14);
+  /* ink for text/glyphs sitting ON a filled accent/good surface (buttons, FAB) — the one
+     source, so a new amber control can't invent its own near-black. */
+  --on-accent: #1A1204;
   --good: #58C08A;
   --good-rgb: 88,192,138;
   --good-dim: rgba(var(--good-rgb),.14);
+  --on-good: #06130C;
   --bad: #E06C6C;
   --bad-rgb: 224,108,108;
   --link: #7FA6D9;
@@ -40,7 +44,7 @@
 /* Progressive enhancement: cross-document cross-fade on same-origin nav. Ignored
    by browsers without the View Transitions API; honours reduced-motion via the UA. */
 @view-transition { navigation: auto; }
-html { background: var(--bg); }
+html { background: var(--bg); color-scheme: dark; }
 body { font-family: var(--sans); color: var(--text); background: var(--bg); font-size: 16px; line-height: 1.5; margin: 0; }
 * { box-sizing: border-box; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
@@ -95,11 +99,55 @@ a:hover { text-decoration: underline; }
 
 .shell { display: flex; min-height: 100vh; }
 
+/* ---------- phone nav drawer: top bar + scrim (desktop hides both; the sidebar is
+   persistent there). On phone the .side sidebar becomes a slide-in drawer — see the
+   ≤760px block. Keeping ONE nav (.side) means desktop and the drawer never drift. -- */
+.mtop { display: none; }
+/* same dim as .overlay — both mean "the thing behind is not the subject right now" */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 25;
+  opacity: 0; visibility: hidden; transition: opacity var(--dur) var(--ease), visibility var(--dur) var(--ease); }
+.scrim.open { opacity: 1; visibility: visible; }
+
+/* The hamburger toggles the desktop rail. It's the first item in the sidebar header and
+   stays visible in both states (full width AND collapsed icon-rail). */
+/* Aligns to the nav-icon column below (flex-basis 18px + the same 10px gap → the ☰ sits
+   over the icons and "Life OS" over the labels). */
+.navcollapse { flex: 0 0 18px; width: 18px; height: 26px; display: grid; place-items: center;
+  background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; border-radius: 6px;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.navcollapse:hover { color: var(--text); background: var(--surface2); }
+/* Hamburger drawn in CSS (the ☰ glyph sits off-centre in most fonts). Middle bar is the
+   grid-centred element; ::before/::after are the top/bottom bars — perfectly symmetric.
+   Shared with the phone top bar's .navtoggle — one hamburger, drawn once. */
+.navcollapse .bars, .navcollapse .bars::before, .navcollapse .bars::after,
+.navtoggle .bars, .navtoggle .bars::before, .navtoggle .bars::after {
+  content: ""; display: block; width: 16px; height: 2px; border-radius: 2px; background: currentColor; }
+.navcollapse .bars, .navtoggle .bars { position: relative; transform: translateY(-1px); }  /* match the caps' optical centre */
+.navcollapse .bars::before, .navtoggle .bars::before { position: absolute; left: 0; top: -5px; }
+.navcollapse .bars::after, .navtoggle .bars::after { position: absolute; left: 0; top: 5px; }
+
+/* Desktop only: collapse the sidebar to an icon-only rail — labels/wordmark/counts hide,
+   icons center, the column narrows (content reflows). No off-canvas, no overlay. */
+@media (min-width: 761px) {
+  html.nav-collapsed .side { width: 62px; padding-left: 8px; padding-right: 8px; }
+  html.nav-collapsed .side .brandlink,
+  html.nav-collapsed .side .count { display: none; }
+  html.nav-collapsed .side .brand { justify-content: center; }
+  html.nav-collapsed .side .nav-btn { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; font-size: 0; }
+  html.nav-collapsed .side .nav-btn .ico { font-size: 18px; }
+  /* keep the red health signal on the collapsed Settings icon */
+  html.nav-collapsed .side .setlink { position: relative; }
+  html.nav-collapsed .side .setlink .count.alert { display: grid; position: absolute; top: 3px; right: 9px;
+    min-width: 8px; height: 8px; padding: 0; font-size: 0; border: 1px solid var(--surface); }
+}
+
 /* ---------- sidebar ---------- */
-.side { width: 232px; flex: 0 0 232px; border-right: 1px solid var(--border); padding: 20px 12px 16px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; height: 100vh; }
-.brand { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 16px; }
+.side { width: 232px; flex: 0 0 auto; border-right: 1px solid var(--border); padding: 20px 12px 16px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; height: 100vh; transition: width var(--dur) var(--ease); }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 10px 16px; }
 .brand b { font-size: 17px; font-weight: 600; }
-.brand span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.brandlink { color: var(--text); }
+.brandlink:visited { color: var(--text); }
+.brandlink:hover { color: var(--text); text-decoration: none; opacity: .82; }
 .nav-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); padding: 14px 10px 5px; }
 .nav-btn { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 7px; color: var(--muted); font-weight: 500; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
 .nav-btn:visited { color: var(--muted); }
@@ -121,10 +169,12 @@ a:hover { text-decoration: underline; }
 /* ---------- main ---------- */
 .main { flex: 1; min-width: 0; margin-inline: auto; padding: 26px 30px 90px; max-width: 1320px; animation: rise var(--dur-slow) var(--ease) both; }
 .vhead { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
-.vhead .vhtxt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vhead .vhtxt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .vhead h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; line-height: 1.1; }
+/* B (prompt-forward): greeting is a quiet eyebrow, the rotating prompt is the hero line */
+.vhead .vhtxt .greet-eb { font-size: 13px; font-weight: 600; color: var(--muted); line-height: 1.2; }
+.vhead .vhtxt .phero { font-size: 19.5px; font-weight: 600; color: var(--text); line-height: 1.2; letter-spacing: -.005em; text-wrap: balance; }
 .vhead .date { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
-.vhead .dcount { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 .vhead .spacer { flex: 1; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .chip.warn { color: var(--accent); border-color: transparent; background: var(--accent-dim); }
@@ -132,7 +182,7 @@ a:hover { text-decoration: underline; }
 .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
 .card.hero { padding: 20px 22px; }
-.card.hero .task { padding: 10px 0; font-size: 17.5px; }
+.card.hero .task { padding: 10px 0; font-size: 16px; }
 .card.hero .task input { width: 19px; height: 19px; }
 .card.hero .due { font-size: 12.5px; }
 /* urgency is the row's one real signal — let it carry weight now the pills are quiet */
@@ -218,7 +268,6 @@ a:hover { text-decoration: underline; }
 .donefold > summary::before { content: "▸"; font-size: 10px; transition: transform var(--dur-fast) var(--ease); }
 .donefold[open] > summary::before { transform: rotate(90deg); }
 .donefold > summary:hover { color: var(--text); }
-.morefold[open] > summary .mf-more, .morefold:not([open]) > summary .mf-less { display: none; }
 .rec { font-size: 11.5px; color: var(--muted); }
 .subcount { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 /* "Do today" plan pill — compact labelled control; amber when on (needs-attention) */
@@ -399,7 +448,6 @@ a:hover { text-decoration: underline; }
 .flashitem .fspan { font-family: var(--mono); font-size: 10.5px; color: var(--muted); flex: 0 0 auto; }
 
 /* ---------- today: greeting + all-done ending ---------- */
-.greet { color: var(--accent); font-weight: 600; font-size: 15px; margin: 0 2px 3px; }
 .allclear { text-align: center; padding: 22px 16px 20px; }
 .allclear .ac-big { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
 .allclear .ac-sub { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
@@ -576,18 +624,50 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 @media (max-width: 620px) { .setrow { flex-wrap: wrap; gap: 8px; } .sctrls { width: 100%; justify-content: flex-end; } }
 
 /* ---------- quick capture + today grid ---------- */
-/* first-run profile banner (web counterpart of the bot's onboarding nudge). Link-blue, not
-   amber — it's a welcome, not a needs-attention alert. Dismissible; hides once a name is set. */
-.onboard { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 11px 14px; border: 1px solid var(--link); border-radius: 10px; background: color-mix(in srgb, var(--surface) 90%, var(--link) 10%); }
-.onboard-i { font-size: 17px; flex: 0 0 auto; }
-.onboard-t { flex: 0 0 auto; font-size: 13.5px; color: var(--text); line-height: 1.5; font-weight: 600; }
-.onboard-in { flex: 1 1 160px; min-width: 110px; }
-.onboard-go { flex: 0 0 auto; background: none; border: none; color: var(--link); font: inherit; font-weight: 600; white-space: nowrap; cursor: pointer; padding: 4px 6px; }
-.onboard-x { flex: 0 0 auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 6px; }
-.onboard-x:hover { color: var(--text); background: var(--surface2); }
-@media (max-width: 560px) { .onboard { flex-wrap: wrap; } .onboard-in { flex: 1 1 100%; order: 3; } }
+/* first-run welcome — a one-time full-screen setup takeover (overlay#onboard). It reuses the
+   .overlay pattern but outranks a sibling editor so it reads as "arrive, then set up". */
+.wel { z-index: 40; }
+.welcome { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; width: min(440px, 100%); padding: 34px 30px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.overlay.on .welcome { animation: pop-in var(--dur-slow) var(--ease); }
+.welstep { display: flex; flex-direction: column; align-items: center; width: 100%; animation: fade-in var(--dur) var(--ease); }
+.welstep[hidden] { display: none; }   /* the attribute alone loses to display:flex above */
+/* gentle staggered entrance — each element rises in just behind the one above (killed under
+   prefers-reduced-motion by the global switch), so the card assembles instead of popping flat */
+.welstep > * { animation: rise var(--dur) var(--ease) both; }
+.welstep > *:nth-child(2) { animation-delay: 45ms; }
+.welstep > *:nth-child(3) { animation-delay: 90ms; }
+.welstep > *:nth-child(4) { animation-delay: 135ms; }
+.welstep > *:nth-child(5) { animation-delay: 180ms; }
+.welwave { font-size: 38px; line-height: 1; margin-bottom: 8px; }
+.weltitle { font-size: 21px; font-weight: 700; color: var(--text); margin: 0 0 6px; }
+.welsub { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin: 0 0 18px; max-width: 330px; }
+.wellabel { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
+.welin { width: 100%; text-align: center; font-size: 15px; margin-bottom: 14px; }
+/* The same primary button as everywhere else — .welgo is a SIZE modifier on .qgo, not a
+   second amber button (look lives in .qgo; only the takeover's bigger CTA is set here).
+   Hug the content, centered — a full-width bar reads as "stretched" on desktop; it only
+   goes edge-to-edge on a phone, where the wider tap target earns its width (see media query) */
+.welgo { align-self: center; min-width: 180px; border-radius: 9px; padding: 11px 34px; font-weight: 700; font-size: 14.5px; }
+/* disabled dimming can't use opacity here — the .welstep rise animation (fill:both) pins
+   opacity:1 — so recolour to a muted grey instead. Enables only once a name is typed. */
+.welgo:disabled { background: var(--border2); color: var(--muted); cursor: not-allowed; }
+.welgo:disabled:hover { filter: none; }
+.welgo:disabled:active { transform: none; }
+/* progress dots — tell them it's short; the active one just brightens (stays a round dot) */
+.weldots { display: flex; gap: 7px; margin-top: 20px; }
+.weldot { width: 6px; height: 6px; border-radius: 99px; background: var(--border2); transition: background var(--dur) var(--ease); }
+.weldot.on { background: var(--accent); }
+/* step 2 is a light reminder — one primary action, no competing nav (the sub points to Settings) */
+/* back to the name step — top-left arrow (the onboarding convention); a back arrow, not a close ✕ */
+.welback-top { position: absolute; top: 13px; left: 13px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 6px 10px; border-radius: 8px; transition: color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.welback-top:hover { color: var(--text); background: var(--surface2); }
+.welback-top[hidden] { display: none; }
+@media (max-width: 480px) { .welcome { padding: 30px 20px 20px; } .welgo { width: 100%; } }
 .qcap { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; background: var(--surface); border: 1px solid rgba(var(--accent-rgb),.35); border-radius: 10px; padding: 6px 6px 6px 14px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background-color var(--dur) var(--ease); }
 .qcap:focus-within { border-color: rgba(var(--accent-rgb),.7); box-shadow: 0 0 0 3px var(--accent-dim); }
+/* capture in flight: the text is already sent, so the field is readOnly (see feed.js) and
+   dims to read as "working" rather than editable */
+.qcap.sending #qin { opacity: .5; cursor: default; }
 /* file drag-over: brighter border + a blue tint + a soft glow ring, tweened in. WHERE it
    lights up depends on the zone: the capture bar is small and its attach widget is hidden, so
    the whole bar highlights; in an editor the drop target is the always-visible Attach box, so
@@ -604,17 +684,29 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 .qcap input::placeholder, .qcap textarea::placeholder { color: var(--muted); }
 /* multi-line composer: one row by default, auto-grows (core.js autogrow), scrolls when tall */
 .qcap textarea { box-sizing: border-box; resize: none; min-height: 36px; line-height: 1.4; max-height: 40vh; overflow-y: auto; display: block; }
-.qtypes { display: flex; gap: 4px; flex: 0 0 auto; }
+/* .qt is the shared round-pill chip language (goals-form timeframe chips, milestone
+   toggle). The capture bar has no chips — it's a clean +｜input｜📎｜Add; Auto/AI
+   classification is the sole mode. */
 .qt { font-family: var(--mono); font-size: 11px; padding: 5px 11px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 .qt.active { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
-.qgo { background: var(--accent); color: #1A1204; border-radius: 8px; padding: 8px 18px; font-weight: 600; flex: 0 0 auto; transition: filter var(--dur) var(--ease), background var(--dur) var(--ease); }
+.qgo { background: var(--accent); color: var(--on-accent); border-radius: 8px; padding: 8px 18px; font-weight: 600; flex: 0 0 auto; transition: filter var(--dur) var(--ease), background var(--dur) var(--ease); }
 .qgo:hover { filter: brightness(1.08); }
-.qgo.did { background: var(--good); color: #06130C; }
-/* Reminder mode: the ⏰ time strip under the composer bar (revealed only in that mode). */
-.qwhen { display: flex; align-items: center; gap: 10px; margin: -6px 0 14px; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
-.qwhen[hidden] { display: none; }   /* author display:flex would otherwise beat the UA [hidden] rule */
-.qwhen-l { font-family: var(--mono); font-size: 11.5px; color: var(--muted); flex: 0 0 auto; }
-.qwhen input[type="datetime-local"] { flex: 1 1 auto; min-height: 36px; font-family: var(--mono); font-size: 13px; }
+.qgo.did { background: var(--good); color: var(--on-good); }
+/* capture in flight: the label goes transparent (keeps the button's width — no jump) and a
+   ring spins in its place, so the wait reads as work rather than a hang */
+.qgo.spin { color: transparent; position: relative; pointer-events: none; }
+.qgo.spin::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(0,0,0,.25); border-top-color: var(--on-accent);
+  animation: qspin .7s linear infinite;
+}
+@keyframes qspin { to { transform: rotate(360deg); } }
+/* reduced motion: a frozen ring reads as broken — show the label instead */
+@media (prefers-reduced-motion: reduce) {
+  .qgo.spin { color: var(--on-accent); }
+  .qgo.spin::after { display: none; }
+}
 .todaygrid { display: grid; grid-template-columns: 5fr 3fr; gap: 14px; align-items: start; }
 /* mid widths (sidebar still up): two columns crush hero titles to "Re…" stumps
    and wrap the capture feed one word per line — stack instead (≤760 is the
@@ -692,15 +784,30 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
 .jraw textarea { width: 100%; min-height: 300px; line-height: 1.6; resize: vertical; }
 
 /* ---------- toast ---------- */
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(80px); background: var(--surface3); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: 14px; z-index: 20; transition: transform var(--dur-slow) var(--ease), opacity var(--dur) var(--ease); opacity: 0; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(80px); background: var(--surface3); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: 14px; z-index: 45; transition: transform var(--dur-slow) var(--ease), opacity var(--dur) var(--ease); opacity: 0; }
 .toast.on { transform: translateX(-50%) translateY(0); opacity: 1; animation: toast-in var(--dur-slow) var(--ease); }
 .toast button { color: var(--accent); font-weight: 600; }
 
 /* ---------- editor modal ---------- */
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 15; padding: 20px; }
+/* Stacking order, one place so it can't drift (phone is where it bites — the top bar and
+   drawer only exist there): fab 6 < mtop 20 < scrim 25 < side 30 < overlay 35 < wel 40 <
+   toast 45 < ghtip 60 < lightbox 100. A modal must cover the nav (an overlay under .mtop
+   left the hamburger lit and tappable over the note/task editor), and a toast must clear
+   the modal — an undo fired from inside an editor has to be reachable. */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 35; padding: 20px; }
 .overlay.on { display: grid; animation: fade-in var(--dur) var(--ease); }
 .editor { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(640px, 100%); max-height: 85vh; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
 .overlay.on .editor { animation: pop-in var(--dur-slow) var(--ease); }
+/* reminder alarm — a centred, must-acknowledge card (not a fleeting toast) */
+.remalertbox { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: min(340px, 100%); padding: 26px 28px 22px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.overlay.on .remalertbox { animation: pop-in var(--dur-slow) var(--ease); }
+.remalertbox .ra-icon { font-size: 38px; line-height: 1; }
+.remalertbox .ra-h { margin: 0; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+.remalertbox .ra-list { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.ra-item { display: flex; flex-direction: column; gap: 2px; }
+.ra-item .ra-text { font-size: 18px; font-weight: 600; color: var(--text); line-height: 1.3; overflow-wrap: anywhere; }
+.ra-item .ra-when { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.remalertbox .ra-ok { width: 100%; margin-top: 4px; }
 .editor .ehead { display: flex; gap: 10px; align-items: center; }
 .editor .ehead input { flex: 1; background: none; border: none; color: var(--text); font: inherit; font-size: 18px; font-weight: 600; min-width: 0; }
 .editor .ehead input:focus { outline: none; }
@@ -781,14 +888,39 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
   min-width: 66px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- mobile ---------- */
-.bottomnav { display: none; }
 .fab { display: none; }
 .addbtn { color: var(--accent); border-color: rgba(var(--accent-rgb),.4); }
 .addrow { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; color: var(--muted); font-size: 13px; text-align: left; width: 100%; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .addrow:hover { color: var(--text); border-color: var(--muted); transform: translateY(-1px); }
 @media (max-width: 760px) {
-  .side { display: none; }
-  .main { padding: 18px 14px 94px; }
+  /* Phone top bar with the hamburger (replaces the old bottom tab bar). */
+  .mtop { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 20;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 10px 14px calc(10px + env(safe-area-inset-top)); }
+  /* 44px hit area (the thumb target), pulled back with negative margins so it doesn't
+     inflate the bar — the bars still sit optically where the 26px button drew them. */
+  .navtoggle { color: var(--text); width: 44px; height: 44px; margin: -9px 0 -9px -14px;
+    display: grid; place-items: center; border-radius: 8px; }
+  .mtop-brand { font-size: 16px; font-weight: 600; }
+  .mtop-alert { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px;
+    background: var(--bad); color: #fff; font-size: 10px; font-weight: 700; font-family: var(--mono);
+    display: grid; place-items: center; box-sizing: border-box; }
+  .mtop-alert:visited { color: #fff; }
+
+  /* The sidebar becomes an off-canvas drawer, slid in by the hamburger. Same markup
+     as desktop, so nothing drifts; the scrim + Esc + link-tap close it (core.js). */
+  /* Elevation the dark-UI way: brighter border + the scrim's dim behind — no drop shadow. */
+  .side { display: flex; position: fixed; top: 0; left: 0; height: 100vh; width: min(280px, 82vw);
+    flex-basis: auto; z-index: 30; background: var(--surface); border-right: 1px solid var(--border2);
+    padding-top: calc(20px + env(safe-area-inset-top));
+    transform: translateX(-100%); transition: transform var(--dur) var(--ease); will-change: transform;
+    overflow-y: auto; }
+  .side.open { transform: translateX(0); }
+  /* Phone uses the overlay drawer (opened from the top-bar hamburger); the desktop
+     rail toggle doesn't belong inside it. */
+  .navcollapse { display: none !important; }
+
+  .main { padding: 16px 14px 90px; }
   .grid, .grid3, .todaygrid, .goalgrid, .jgrid, .board { grid-template-columns: 1fr; }
   /* board on phone: ONE page scroll — stacked columns must never become nested
      scroll-jails (a 63-card backlog trapping the thumb before This week). And
@@ -799,21 +931,12 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
   .col[data-col="done"] { order: 1; }
   /* card meta (due/goal/staleness) always visible — there is no hover on touch */
   .krow.ghost { display: flex; }
-  /* toast must clear the bottom nav + FAB and the home indicator */
+  /* toast must clear the FAB and the home indicator */
   .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
   /* primary create buttons get real touch targets */
   .mini.addbtn { min-height: 44px; padding: 10px 14px; }
-  .bottomnav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 5; }
-  .bottomnav a { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 50px; font-size: 10.5px; color: var(--muted); padding: 5px 0; border-radius: 8px; transition: color var(--dur) var(--ease); }
-  .bottomnav a:visited { color: var(--muted); }
-  .bottomnav a:hover { text-decoration: none; }
-  .bottomnav a .ico { font-size: 20px; }
-  .bottomnav a.active { color: var(--accent); }
-  /* system-health alert count on the Settings tab (mobile) */
-  .bn-badge { position: absolute; top: 3px; left: calc(50% + 3px); min-width: 15px; height: 15px; padding: 0 4px; border-radius: 99px; background: var(--bad); color: #fff; font-size: 9px; font-weight: 700; font-family: var(--mono); display: grid; place-items: center; box-sizing: border-box; }
-  .fab { display: grid; position: fixed; right: 16px; bottom: calc(74px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 99px; background: var(--accent); color: #1A1204; font-size: 26px; font-weight: 600; place-items: center; z-index: 6; transition: transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease); }
+  .fab { display: grid; position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 99px; background: var(--accent); color: var(--on-accent); font-size: 26px; font-weight: 600; place-items: center; z-index: 6; transition: transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease); }
   .fab:active { transform: scale(.94); filter: brightness(.92); }
-  .qtypes { display: none; }
   .task input, .sub input { width: 20px; height: 20px; }
   .task, .sub { padding-top: 8px; padding-bottom: 8px; }
   /* narrow: let the title wrap to ≤2 lines (the sub-line already sits below it via

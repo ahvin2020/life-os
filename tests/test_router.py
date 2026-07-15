@@ -37,7 +37,7 @@ def _capture_fn(box, obj):
 
 
 # ── security: the AI can never touch the system ───────────────────────────────
-def test_call_claude_disables_all_tools_by_default(monkeypatch):
+def test_call_claude_disables_all_tools_by_default(client, monkeypatch):
     """The single choke point runs `claude -p --tools ""` — no Bash/Write/Edit/Read —
     so no injected instruction from either AI surface can act on the machine."""
     from ai import claude_cli
@@ -57,7 +57,7 @@ def test_call_claude_disables_all_tools_by_default(monkeypatch):
     assert "--dangerously-skip-permissions" not in argv
 
 
-def test_call_claude_grants_named_tool_only_when_asked(monkeypatch):
+def test_call_claude_grants_named_tool_only_when_asked(client, monkeypatch):
     from ai import claude_cli
     seen = {}
 
@@ -71,6 +71,37 @@ def test_call_claude_grants_named_tool_only_when_asked(monkeypatch):
     claude_cli.call_claude("hello", tools="Read")
     argv = seen["argv"]
     assert argv[argv.index("--tools") + 1] == "Read"
+
+
+def test_no_call_site_ever_grants_web_tools():
+    """The perimeter invariant CLAUDE.md buys by cutting ai/research.py: NO claude call in
+    the app holds web tools — every grant is "" (nothing) or "Read" (local files only).
+
+    The two tests above pin the choke point's own default; nothing stopped a *caller* from
+    passing tools="WebSearch". This greps the real call sites so reintroducing an open-web
+    path has to be a deliberate edit to this test, not an accident.
+    """
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    allowed = {'""', "''", '"Read"', "'Read'", "tools"}   # `tools` = router's image-gated var
+    offenders = []
+    files = [p for d in ("ai", "domain", "routes", "core", "triage", "scripts")
+             for p in (root / d).rglob("*.py")] + list(root.glob("*.py"))
+    for p in files:
+        src = p.read_text(encoding="utf-8")
+        for m in re.finditer(r"\btools\s*=\s*([^,)\s]+)", src):
+            val = m.group(1)
+            if val not in allowed:
+                line = src[:m.start()].count("\n") + 1
+                offenders.append(f"{p.relative_to(root)}:{line} → tools={val}")
+    assert offenders == [], (
+        "a call site grants tools beyond ''/'Read' — the no-web-tools perimeter:\n"
+        + "\n".join(offenders))
+
+    # and the router's one variable grant is image-gated: Read only when viewing a photo
+    src = (root / "ai" / "router.py").read_text(encoding="utf-8")
+    assert 'tools = "Read" if image_path else ""' in src
 
 
 def test_router_text_runs_with_tools_disabled(client, monkeypatch):

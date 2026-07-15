@@ -9,7 +9,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, request, jsonify, send_file, abort
+from flask import (Blueprint, render_template, render_template_string, request, jsonify,
+                   send_file, abort)
 
 from core.web_core import db, respond, today_iso, is_ajax
 from domain import vault_store
@@ -108,6 +109,16 @@ def journal_page():
         today_so_far=tsf, cadence=_month_cadence(today), active="journal")
 
 
+def _last_entry_html(page, day: str) -> str:
+    """The day's NEWEST entry, rendered from the same _macros.journal_entry the page uses
+    (so a spliced entry can't drift from a page-load one). "" when there's nothing yet."""
+    if not page or not page["entries"]:
+        return ""
+    return render_template_string(
+        "{% import '_macros.html' as m %}{{ m.journal_entry(e, day) }}",
+        e=page["entries"][-1], day=day)
+
+
 @bp.route("/journal/entry", methods=["POST"])
 def journal_entry():
     text = (request.form.get("text") or "").strip()
@@ -116,9 +127,13 @@ def journal_entry():
         return respond(False, "Nothing to add", fallback="/journal")
     day = request.form.get("day") or today_iso()
     source = request.form.get("source") or ""
-    vault_store.append_journal_entry(day, text, source, media=media)
+    page = _annotate_occurrences(
+        vault_store.append_journal_entry(day, text, source, media=media))
     if is_ajax():
-        return jsonify({"status": "ok", "day": day})
+        # entry_html lets the page splice the new entry above the composer in place —
+        # occurrences are annotated first so its data-idx matches the file.
+        return jsonify({"status": "ok", "day": day,
+                        "entry_html": _last_entry_html(page, day)})
     return respond(True, "Entry added", to="/journal")
 
 

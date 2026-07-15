@@ -92,6 +92,9 @@ def test_first_run_onboarding_offers_once(client, tmp_path, monkeypatch):
     prof.write_text("# profile.md — triage context\n## Who I am\n- TODO\n")   # starter, no identity
     monkeypatch.setattr(vault_store, "PROFILE_PATH", str(prof))
     conn = _db()
+    # conftest marks the nudge offered so it can't leak into other tests' replies; this is
+    # the test that owns the nudge, so put the DB back to a genuine first run.
+    conn.execute("DELETE FROM settings WHERE key='onboarding_offered'"); conn.commit()
     fn = lambda p: json.dumps({"action": "answer", "text": "You have 2 tasks."})
     r1 = router.route(conn, "how many tasks?", claude_fn=fn)
     assert "call me" in r1["reply"]                            # nudged for a name on first message

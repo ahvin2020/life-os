@@ -53,6 +53,22 @@ def test_bot_task_line_badges_rolled_over_plan(client):
     assert "☀" not in line
 
 
+def test_bot_speaks_one_due_vocabulary(client):
+    """core/dates.due_label is THE due-date vocabulary. The bot's list answers used to
+    hand-roll the split and emit a raw ISO date for future dues, so the SAME bot said
+    'due Sun' when it created a task and 'due 2026-07-20' when asked for the list."""
+    from datetime import date, timedelta
+    from core.dates import due_label
+    from domain.queries import _task_line
+    today = today_iso()
+    soon = (date.fromisoformat(today) + timedelta(days=3)).isoformat()
+    line = _task_line({"title": "X", "due_date": soon}, today)
+    assert soon not in line, "raw ISO date leaked into a bot reply"
+    assert due_label(soon, today) in line          # the shared vocabulary, e.g. 'Sat'
+    # and the router's phrasing for the same task agrees, word for word
+    assert ("due " + due_label(soon, today)) in line
+
+
 # ── editor done boundary = real completion ────────────────────────────────────
 def test_editor_col_done_runs_completion(client):
     conn = _db()

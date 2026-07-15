@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, render_template_string, request, jsonify
 
 from core.web_core import db, respond, today_iso, is_ajax
 from core.db import now_iso
@@ -42,6 +42,31 @@ def _section_labels(today: str) -> dict:
     }
 
 
+# ── in-place card rendering ───────────────────────────────────────────────────
+# A mutation route returns the goal's freshly-rendered card so the page can splice that ONE
+# node instead of reloading (the design contract's "in-place updates"). Mirrors
+# web_core.task_card_html: the server stays the single owner of card markup — the JS never
+# hand-builds a goal card and drifts from the macro the page itself renders.
+def _section_key(row) -> str:
+    """Which /goals section a goal lands in — same fallback as goals_page."""
+    tf = row["timeframe"] or row["period"]
+    return tf if tf in TIMEFRAMES else "week"
+
+
+def goal_card_html(conn, goal_id) -> str:
+    """ONE goal's card markup, rendered exactly as the page would render it (same
+    _macros.goal_card). Returns "" when the goal is gone (deleted/purged) so callers can
+    treat "no card" as "remove the node"."""
+    row = conn.execute(
+        "SELECT * FROM goals WHERE id=? AND deleted_at IS NULL", (goal_id,)).fetchone()
+    if not row:
+        return ""
+    g = dict(row)
+    g["progress"] = goal_progress(conn, row)
+    return render_template_string(
+        "{% import '_macros.html' as m %}{{ m.goal_card(g) }}", g=g)
+
+
 @bp.route("/goals")
 def goals_page():
     conn = db()
@@ -51,9 +76,7 @@ def goals_page():
         "SELECT * FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()
     buckets = {k: [] for k in TIMEFRAMES}
     for g in rows:
-        tf = g["timeframe"] or g["period"]
-        if tf not in buckets:
-            tf = "week"
+        tf = _section_key(g)
         item = dict(g)
         item["progress"] = goal_progress(conn, g)
         buckets[tf].append(item)
@@ -91,9 +114,13 @@ def goal_new():
     with conn:
         gid = create_goal(conn, title, timeframe, target=target, current=current,
                           unit=unit, end_date=end_date)
+    # `section` names the grid the card belongs in, so the page can splice it there
+    # without a reload. Rendered before the close — the card needs the connection.
+    payload = {"status": "ok", "id": gid, "section": timeframe,
+               "card_html": goal_card_html(conn, gid)} if is_ajax() else None
     conn.close()
-    if is_ajax():
-        return jsonify({"status": "ok", "id": gid})
+    if payload is not None:
+        return jsonify(payload)
     return respond(True, "Goal created", to="/goals")
 
 
@@ -140,9 +167,11 @@ def goal_delete(goal_id):
 
 @bp.route("/goals/<int:goal_id>/restore", methods=["POST"])
 def goal_restore(goal_id):
-    """Undo a goal soft-delete."""
+    """Undo a goal soft-delete. Returns the re-rendered card so the Undo toast can put it
+    back in its slot instead of costing a whole page reload."""
     conn = db()
     with conn:
         conn.execute("UPDATE goals SET deleted_at=NULL WHERE id=?", (goal_id,))
+    card = goal_card_html(conn, goal_id)
     conn.close()
-    return jsonify({"status": "ok", "id": goal_id})
+    return jsonify({"status": "ok", "id": goal_id, "card_html": card})

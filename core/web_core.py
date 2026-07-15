@@ -18,12 +18,12 @@ import secrets
 from datetime import datetime
 
 from flask import (
-    Flask, render_template, request, redirect, url_for,
+    Flask, render_template, render_template_string, request, redirect, url_for,
     flash, jsonify, session, abort,
 )
 
 from core.db import connect, now_iso, today_iso, now_sg, get_tz, time_format, DB_PATH
-from core.dates import parse_iso_utc, fmt_date, due_label
+from core.dates import parse_iso_utc, fmt_date, due_label, fmt_clock
 # Health + integration-status subsystem lives in core.health (Flask-free, pure over conn).
 # Re-exported here because routes/settings and several tests import these from web_core.
 from core.health import (  # noqa: F401
@@ -39,6 +39,13 @@ app = Flask(__name__,
             template_folder=os.path.join(_ROOT, "web", "templates"),
             static_folder=os.path.join(_ROOT, "web", "static"))
 app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024   # 30 MB cap on image-attachment uploads
+# Recompile a template when its .html changes (Flask caches them otherwise, since we run
+# debug=False). The .py self-reloader (reloader.py) only watches .py, so without this a
+# synced template edit stays invisible until a manual restart — this makes the Synology
+# sync the deploy channel for templates too, not just .py. Per-request stat cost is
+# negligible for a single-user app.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 _DATA_DIR = os.path.join(_ROOT, "data")
 
@@ -160,18 +167,7 @@ def _fmt_time(value):
     """A stored 'HH:MM' clock time → the user's preferred format: 24h '13:35' (default)
     or 12h '1:35pm' (dropping ':00', matching the calendar agenda). The stored value stays
     24h — this is display only, so entry keys (data-time, audio URLs) are untouched."""
-    s = str(value or "")
-    if ":" not in s or len(s) < 4 or time_format() != "12h":
-        return value
-    try:
-        hh, mm = s[:5].split(":")
-        h = int(hh)
-        int(mm)
-    except ValueError:
-        return value
-    ap = "am" if h < 12 else "pm"
-    h12 = h % 12 or 12
-    return f"{h12}{ap}" if mm == "00" else f"{h12}:{mm}{ap}"
+    return fmt_clock(value, time_format())
 
 
 app.jinja_env.filters["fdate"] = fmt_date
@@ -201,6 +197,36 @@ def respond(ok, msg, to=None, fallback=None, extra=None):
         return jsonify(payload), (200 if ok else 400)
     flash(msg, "success" if ok else "error")
     return redirect(to or fallback or "/")
+
+
+# ── in-place card rendering ───────────────────────────────────────────────────
+# A mutation route returns the task's freshly-rendered card so the page can swap that ONE
+# node instead of reloading (the design contract's "in-place updates"). The server stays the
+# single owner of card markup — the JS never hand-builds a card and drifts from the macro.
+_CARD_MACROS = {"week": "week_item", "today": "today_item", "kcard": "kcard"}
+
+
+def task_card_html(conn, task_id, surface="week"):
+    """ONE task's card markup, rendered exactly as the page would render it. `surface`
+    picks the shape: 'week' (Today's This-week row), 'today' (Today's hero row) or 'kcard'
+    (the /tasks kanban card). Returns "" when the task is gone (deleted/purged) so callers
+    can treat "no card" as "remove the node"."""
+    from domain.tasks_core import task_dict, is_pinned
+    row = conn.execute("SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL",
+                       (task_id,)).fetchone()
+    if not row:
+        return ""
+    today = today_iso()
+    t = task_dict(conn, row)
+    # tasks_page sets `pinned` while bucketing the board; a single re-rendered card has no
+    # such pass, so derive it from the SAME predicate. Without this the kcard macro (whose
+    # `stale` line is gated on `not t.pinned`) would show a "Nd · K× moved" line on a
+    # swapped-in pinned card that a real page load never renders.
+    t["pinned"] = is_pinned(t, today)
+    macro = _CARD_MACROS.get(surface, "week_item")
+    return render_template_string(
+        "{%% import '_macros.html' as m %%}{{ m.%s(t, today) }}" % macro,
+        t=t, today=today)
 
 
 # ── DB accessor ───────────────────────────────────────────────────────────────

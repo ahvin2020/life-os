@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from core.db import today_iso
+from core.dates import due_label
 from domain.tasks_core import today_tasks, day_score
 from domain.goals_core import goal_progress
 from domain import vault_store
@@ -62,14 +63,14 @@ def is_query(text: str) -> bool:
 
 # ── formatting helpers ────────────────────────────────────────────────────────
 def _due_suffix(t: dict, today: str) -> str:
+    """One due-date vocabulary for the whole bot: `due_label` (core/dates), the same words
+    the router's create/edit replies use. This used to hand-roll the split and emit a raw
+    ISO date for future dues, so the SAME bot answered 'due Sun' when it made a task and
+    'due 2026-07-20' when you asked for the list."""
     d = t.get("due_date")
     if not d:
         return ""
-    if d == today:
-        return " · due today"
-    if d < today:
-        return " · overdue"
-    return f" · due {d}"
+    return " · due " + due_label(d, today)
 
 
 def _task_line(t: dict, today: str) -> str:
@@ -103,7 +104,7 @@ def _answer_overdue(conn, today):
         return "✅ Nothing overdue."
     lines = [f"⚠️ Overdue ({len(rows)}):"]
     for r in rows:
-        lines.append(f"• {r['title']} · due {r['due_date']}")
+        lines.append(f"• {r['title']} · {due_label(r['due_date'], today)}")   # '3d over', not an ISO date
     return "\n".join(lines)
 
 

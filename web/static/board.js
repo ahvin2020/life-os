@@ -18,6 +18,56 @@
     });
   }
 
+  // ---- server-rendered cards: pin rule + placement -----------------------------
+  // The sticky on-today rule: not done, AND due today/overdue OR ☀-planned. The
+  // markup already carries server truth — data-planned encodes `planned_on <= today`
+  // (the _onday macro) — so this reads the card rather than re-deriving the rule.
+  function isOnToday(el) {
+    if (!el || el.classList.contains("done")) return false;
+    if (el.dataset.planned === "1") return true;
+    var due = el.dataset.due || "", today = window.LIFEOS_TODAY || "";
+    return !!(due && today && due <= today);
+  }
+  // A freshly-rendered kcard never carries `pinned`: task_card_html renders one card
+  // with no page context, so pinning stays the board's to derive — the same ownership
+  // applyPlanState already has for the ☀ pill.
+  function markPinned(card) {
+    if (card && card.classList.contains("kcard")) card.classList.toggle("pinned", isOnToday(card));
+    return card;
+  }
+  // Put a card in its rightful stack: pinned → top of This week (by RULE, whatever its
+  // stored col says); otherwise the bottom of its own column (board/editor creation
+  // lands at the bottom). Moves ONLY when the stack or the pin state actually changed,
+  // so a plain rename keeps its spot. `force` inserts a card that isn't on the board yet.
+  function placeCard(card, force) {
+    if (!card) return false;
+    var wasPinned = card.classList.contains("pinned");
+    markPinned(card);
+    var pin = card.classList.contains("pinned");
+    var want = pin ? "week" : (card.dataset.col || "backlog");
+    var stack = boardStack(want);
+    if (!stack) return false;
+    var here = card.closest(".col");
+    if (force || pin !== wasPinned || !here || here.dataset.col !== want) {
+      if (pin) stack.insertBefore(card, stack.firstChild);
+      else stack.appendChild(card);
+    }
+    recountBoard();
+    return true;
+  }
+  // Swap a board card for freshly-rendered markup, then re-place it. The old pin class
+  // is carried across the swap (the server can't render it) so placeCard can tell a real
+  // pin change from the swap itself. False → nothing on the page to swap; caller reloads.
+  function swapKcard(id, html) {
+    var old = document.querySelector('.kcard[data-task-id="' + id + '"]');
+    var wasPinned = !!(old && old.classList.contains("pinned"));
+    if (!html || !swapCard(id, html)) return false;
+    var fresh = document.querySelector('.kcard[data-task-id="' + id + '"]');
+    if (!fresh) return false;
+    if (wasPinned) fresh.classList.add("pinned");
+    return placeCard(fresh);
+  }
+
   // ---- per-row wiring hook: lets a freshly-inserted row (e.g. a just-captured
   // task spliced in without a reload) get the same handlers as page-load rows.
   // wireEditorRow is filled in by the editor IIFE below. ------------------------
@@ -182,12 +232,26 @@
               item.classList.add("done");
               item.dataset.col = "done";
               recountBoard();
-              post("/tasks/" + id + "/complete", { done: "1" }).then(function (res) {
-                var respawn = res.data && res.data.respawned;
+              post("/tasks/" + id + "/complete", { done: "1", surface: "kcard" }).then(function (res) {
+                var d = res.data || {};
+                // A recurring task spawns its next occurrence on completion — that card
+                // is new to the board, so place it now rather than leave it invisible.
+                if (d.respawned && d.respawn_html) {
+                  var rc = htmlToNode(d.respawn_html);
+                  if (rc && placeCard(rc, true)) wireTaskRow(rc);
+                }
                 toast("Task completed", function () {
-                  post("/tasks/" + id + "/complete", { done: "0" });
-                  if (respawn) post("/tasks/" + respawn + "/delete");
-                  reloadSoon();            // re-render restores the pinned spot
+                  // the undo inverse also removes that fresh copy (soft-delete, itself undoable)
+                  if (d.respawned) {
+                    post("/tasks/" + d.respawned + "/delete");
+                    var old = document.querySelector('.kcard[data-task-id="' + d.respawned + '"]');
+                    if (old) { old.remove(); recountBoard(); }
+                  }
+                  post("/tasks/" + id + "/complete", { done: "0", surface: "kcard" })
+                    .then(function (r2) {
+                      // un-completing re-homes it to 'week'; the pin rule puts it back on top
+                      if (!swapKcard(id, r2.data && r2.data.card_html)) reloadSoon();
+                    });
                 });
               });
             } else if (destCol === "backlog") {
@@ -207,7 +271,10 @@
                   var ids = [].map.call(evt.to.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
                   postJSON("/tasks/reorder", { col: "backlog", ids: ids });
                   toast("Removed from today", function () {
-                    post("/tasks/" + id + "/plan").then(reloadSoon);
+                    post("/tasks/" + id + "/plan", { surface: "kcard" }).then(function (r2) {
+                      // re-planning promotes it back to 'week'; the pin rule re-pins it
+                      if (!swapKcard(id, r2.data && r2.data.card_html)) reloadSoon();
+                    });
                   });
                 });
               }
@@ -440,58 +507,34 @@
         applyPlanState(current, planned);   // the page behind must never go stale
       });
     });
-    // mirrors the server's due_label filter — the in-place patch must not render
-    // a different vocabulary from the next full page load
-    function dueLabel(iso, today) {
-      if (!iso) return "";
-      var d = new Date(iso + "T00:00:00");
-      var n = today ? Math.round((new Date(today + "T00:00:00") - d) / 864e5) : null;
-      if (n === 0) return "today";
-      if (n === 1) return "yesterday";
-      if (n > 1) return n + "d over";
-      if (n === -1) return "tomorrow";
-      if (n !== null && n >= -6) return d.toLocaleString("en-GB", { weekday: "short" });
-      var label = d.getDate() + " " + d.toLocaleString("en-GB", { month: "short" });
-      if (!today || iso.slice(0, 4) !== today.slice(0, 4)) label += " " + d.getFullYear();
-      return label;
+    // Which shape the server should render this task's card in — the /tasks board
+    // wants a kanban card, Today wants a hero row or a week-pool row.
+    function taskNode(id) {
+      return document.querySelector('[data-task-id="' + id + '"][data-title]');
     }
-    // Save reflects back onto the page in place for the common edits (rename,
-    // re-date). Structural changes — priority/category/column/recurrence/goal, or
-    // a due chip appearing/disappearing — re-render via reload (the server owns
-    // that markup).
-    function patchOrReload() {
-      var els = document.querySelectorAll('[data-task-id="' + current + '"][data-title]');
-      if (!els.length) { reloadSoon(); return; }
-      var el0 = els[0];
-      var structural =
-        (el0.dataset.priority || "") !== f.priority.value ||
-        (el0.dataset.category || "") !== f.category.value ||
-        (el0.dataset.col || "") !== f.col.value ||
-        (el0.dataset.recur || "") !== f.recur.value ||
-        (el0.dataset.goalId || "") !== (f.goal.value || "");
-      var dueChanged = (el0.dataset.due || "") !== f.due.value;
-      els.forEach(function (el) {
-        if (structural) return;
-        var t = el.querySelector(".taskedit");
-        if (t && t.querySelector(".pri, .rec")) { structural = true; return; }
-        if (dueChanged && (!el.querySelector(".due") || !f.due.value)) structural = true;
-      });
-      if (structural) { reloadSoon(); return; }
-      var today = window.LIFEOS_TODAY || "";
-      els.forEach(function (el) {
-        el.dataset.title = f.title.value; el.dataset.due = f.due.value;
-        var t = el.querySelector(".taskedit");
-        // title text lives in the inner .tt span (strike-through target) where present
-        if (t) (t.querySelector(".tt") || t).textContent = f.title.value;
-        if (dueChanged) {
-          var d = el.querySelector(".due");
-          if (d) {
-            d.classList.toggle("over", !!(f.due.value && today && f.due.value < today));
-            d.classList.toggle("today", !!(today && f.due.value === today));
-            d.textContent = dueLabel(f.due.value, today);
-          }
-        }
-      });
+    function surfaceFor(el) {
+      if (el && el.classList.contains("kcard")) return "kcard";
+      return (el && el.closest(".card.hero")) ? "today" : "week";
+    }
+    // Save swaps the node for the server's freshly-rendered card: priority, category,
+    // column, recurrence, goal and the due chip all arrive already rendered, so there's
+    // nothing left to hand-patch (and no second due_label vocabulary to keep in sync).
+    function applyCard(id, html) {
+      var el = taskNode(id);
+      var fresh = htmlToNode(html || "");
+      if (!el || !fresh) { reloadSoon(); return; }
+      if (el.classList.contains("kcard")) {
+        if (!swapKcard(id, html)) reloadSoon();
+        return;
+      }
+      // Today: the hero and the week pool are disjoint lists, and an edit can move a
+      // row between them (or off Today entirely). That layout is the page's own, so
+      // swap when the row stays put and reload only when its membership really moved.
+      // A done row belongs to the hero — it's today's completed work.
+      var inHero = !!el.closest(".card.hero");
+      var stays = inHero ? (isOnToday(fresh) || fresh.classList.contains("done"))
+                         : (!isOnToday(fresh) && fresh.dataset.col === "week");
+      if (!stays || !swapCard(id, html)) reloadSoon();
     }
     document.getElementById("te-save").addEventListener("click", function () {
       var title = f.title.value.trim();
@@ -501,27 +544,56 @@
           title: title, col: f.col.value || newCol || "backlog",
           due_date: f.due.value, priority: f.priority.value,
           category: f.category.value, recur_rule: f.recur.value,
-          goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : ""
+          goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : "",
+          surface: "kcard"     // ＋ New task / ＋ Add task exist only on the board
         };
         if (planned) data.planned_on = window.LIFEOS_TODAY || "";
-        post("/tasks/new", data).then(function () {
-          f.saved.textContent = "Saved ✓"; reloadSoon();
+        post("/tasks/new", data).then(function (res) {
+          f.saved.textContent = "Saved ✓";
+          var node = htmlToNode((res.data && res.data.card_html) || "");
+          // No board to splice into (a future entry point elsewhere) → let the page redraw
+          if (!node || !placeCard(node, true)) { reloadSoon(); return; }
+          wireTaskRow(node);
+          // the draft is a real task now — Save again must EDIT it, not create a twin
+          current = res.data.id; newCol = null;
         });
         return;
       }
-      post("/tasks/" + current + "/edit", {
+      var id = current;
+      post("/tasks/" + id + "/edit", {
         title: f.title.value, due_date: f.due.value, priority: f.priority.value,
         category: f.category.value, col: f.col.value, recur_rule: f.recur.value,
-        goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : ""
-      }).then(function () { f.saved.textContent = "Saved ✓"; patchOrReload(); });
+        goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : "",
+        surface: surfaceFor(taskNode(id))
+      }).then(function (res) {
+        f.saved.textContent = "Saved ✓";
+        applyCard(id, res.data && res.data.card_html);
+      });
     });
     confirmClick(document.getElementById("te-delete"), function () {
       var id = current;
       if (!id) { ov.classList.remove("on"); return; }   // blank draft — nothing to delete
+      // Remember the exact spot: a soft-delete changes nothing about the task, so an
+      // Undo puts its card back where it was — on any surface — without a reload.
+      var el = taskNode(id), surface = surfaceFor(el);
+      var parent = el && el.parentNode, next = el && el.nextSibling;
       post("/tasks/" + id + "/delete").then(function () {
-        ov.classList.remove("on");
-        toast("Task deleted", function () { post("/tasks/" + id + "/restore").then(reloadSoon); });
-        reloadSoon();
+        ov.classList.remove("on"); current = null;
+        removeWithUndo(el, {
+          msg: "Task deleted",
+          restore: "/tasks/" + id + "/restore",
+          restoreData: { surface: surface },
+          after: recountBoard,
+          onRestore: function (res) {
+            var node = htmlToNode((res.data && res.data.card_html) || "");
+            if (!node || !parent) return false;      // nowhere to put it → reload
+            markPinned(node);
+            parent.insertBefore(node, next);         // null next → append
+            wireTaskRow(node);
+            recountBoard();
+            return true;
+          }
+        });
       });
     });
     function close() { ov.classList.remove("on"); current = null; }

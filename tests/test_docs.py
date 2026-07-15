@@ -202,6 +202,21 @@ def test_router_find_document_link_mode(client, tmp_path):
     assert out["document"] is None
 
 
+def test_lookup_link_carries_the_tailscale_caveat(client, tmp_path):
+    """`lookup want=link` is the path _CONTRACT tells the model to PREFER (find_document is
+    marked legacy) — but it dropped the caveat find_document carries. A /docs/ link only
+    resolves on Tailscale, so without it he taps the link on cellular and it just hangs."""
+    conn = _db()
+    _root(conn, tmp_path)
+    key = docs._root_key(str(tmp_path))
+    (tmp_path / "Insurance.pdf").write_text("x")
+    out = router.route(conn, "link me the insurance policy", claude_fn=lambda p: json.dumps(
+        {"action": "lookup", "query": "insurance", "want": "link", "question": None}))
+    conn.close()
+    assert f"/docs/{key}/Insurance.pdf" in out["reply"]
+    assert "Tailscale" in out["reply"], "the preferred link path dropped the caveat"
+
+
 def test_router_find_document_none(client, tmp_path):
     conn = _db()
     _root(conn, tmp_path)

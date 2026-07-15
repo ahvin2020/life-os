@@ -5,35 +5,48 @@
 <div class="vhead{% if score.pct >= 100 %} full{% endif %}">
   <span class="ringwrap" title="day score"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.915"></circle><circle class="fill" cx="18" cy="18" r="15.915" style="stroke-dasharray:{{ score.pct }} 100"></circle></svg><span class="ringpct">{{ score.pct | int }}%</span></span>
   <div class="vhtxt">
-    {% if greeting %}<span class="greet">{{ greeting }}{% if owner_name %}, {{ owner_name }}{% endif %}</span>{% endif %}
-    <h1>{{ weekday }}</h1>
-    {# day score is status, not needs-attention (amber is reserved) — merged into the date line as a plain muted count #}
-    <span class="date">{{ date_str }}{% if yesterday_done %} · yesterday you finished {{ yesterday_done }}{% endif %} · {{ score.done }}/{{ score.total }} done</span>
+    {# Prompt-forward: the rotating warm prompt is the hero line (the page h1); the greeting
+       is a quiet eyebrow above it, weekday+date a mono meta line below. Ring = sole progress. #}
+    <span class="greet-eb">{{ greeting }}{% if owner_name %}, {{ owner_name }}{% endif %}</span>
+    <h1 class="phero">{{ greeting_prompt or weekday }}</h1>
+    <span class="date">{{ weekday }} · {{ date_short }}</span>
   </div>
 </div>
 
 {% if show_onboarding %}
-<div class="onboard" id="onboard">
-  <span class="onboard-i" aria-hidden="true">👋</span>
-  <span class="onboard-t">What should I call you?</span>
-  <input class="ctrl onboard-in" id="onboard-name" type="text" maxlength="40" placeholder="Your name" autocomplete="off" aria-label="What should I call you?">
-  <button class="onboard-go" id="onboard-save" type="button">Save</button>
-  <button class="onboard-x" id="onboardx" type="button" aria-label="Dismiss">✕</button>
+{# First-run welcome — a one-time full-screen setup takeover. Step 1 captures the greeting
+   name; step 2 (reached only after naming) hands off to Settings to connect the assistant. #}
+{# rendered hidden; feed.js reparents it to <body> (escaping .main's rise-transform, which
+   would otherwise trap position:fixed) and adds .on — so it takes over the full screen. #}
+<div class="overlay wel" id="onboard" role="dialog" aria-modal="true" aria-label="Welcome to Life OS">
+  <div class="welcome" id="welcome">
+    {# top-left back arrow — the onboarding convention for "previous step"; shown on step 2 only #}
+    <button class="welback-top" id="welback" type="button" aria-label="Back" hidden>←</button>
+    <div class="welstep" id="welstep1">
+      <div class="welwave" aria-hidden="true">👋</div>
+      <h1 class="weltitle">Welcome to Life OS</h1>
+      <p class="welsub">Tasks, notes &amp; journal, with an assistant that helps.</p>
+      <label class="wellabel" for="onboard-name">What should I call you?</label>
+      <input class="ctrl welin" id="onboard-name" type="text" maxlength="40" placeholder="Your name" autocomplete="off" aria-label="What should I call you?">
+      <button class="qgo welgo" id="onboard-save" type="button" disabled>Continue</button>
+    </div>
+
+    <div class="welstep" id="welstep2" hidden>
+      <div class="welwave" aria-hidden="true">✨</div>
+      <h1 class="weltitle" id="welhi">You’re all set.</h1>
+      <p class="welsub">Want the assistant too? Add it anytime in <b>Settings</b>.</p>
+      <button class="qgo welgo" id="welfinish" type="button">Start using Life OS</button>
+    </div>
+    <div class="weldots" aria-hidden="true"><span class="weldot on"></span><span class="weldot"></span></div>
+  </div>
 </div>
 {% endif %}
 
 <div class="qcap">
   <span class="qplus">＋</span>
-  {# short enough to survive mid widths uncropped; bare-URL capture still works #}
-  <textarea id="qin" rows="1" placeholder="Add a task, note, or journal entry…" aria-label="Quick add"></textarea>
+  {# Auto classifies task/note/idea/journal/reminder from the text; bare-URL capture still works #}
+  <textarea id="qin" rows="1" placeholder="Add anything…" aria-label="Quick add"></textarea>
   <button class="qclip" id="qclip" type="button" title="Attach a file" aria-label="Attach a file">📎</button>
-  <div class="qtypes" id="qtypes">
-    <button class="qt active" data-t="auto" type="button">Auto</button>
-    <button class="qt" data-t="task" type="button">Task</button>
-    <button class="qt" data-t="note" type="button">Note</button>
-    <button class="qt" data-t="journal" type="button">Journal</button>
-    <button class="qt" data-t="reminder" type="button">Reminder</button>
-  </div>
   <button class="qgo" id="qgo" type="button">Add</button>
   {# hidden shared attach widget — drag/drop onto the bar or the 📎 opens the picker #}
   <div class="attach qattach" data-attach id="q-attach">
@@ -41,18 +54,12 @@
     <input type="file" multiple hidden aria-label="Attach files">
   </div>
 </div>
-{# reminder-only: the clock time to fire at. Revealed only when the Reminder chip is on. #}
-<div class="qwhen" id="qwhen" hidden>
-  <span class="qwhen-l">⏰ Remind me at</span>
-  <input type="datetime-local" id="qat" aria-label="Reminder time">
-</div>
 
 {% if first_run %}
 <div class="card" style="margin-bottom:14px">
   <div class="chead"><h2>Welcome to Life OS</h2></div>
   <div class="empty">Get started:</div>
-  <div class="task"><span class="pri l"></span><label>Add your first task — type <span class="kbd">t: buy groceries</span> above</label></div>
-  <div class="task"><span class="pri l"></span><label>Jot a note — type <span class="kbd">n: video idea</span> above</label></div>
+  <div class="task"><span class="pri l"></span><label>Just type what's on your mind above — <span class="kbd">buy groceries</span>, <span class="kbd">remind me to call the bank at 3pm</span> — and it's filed for you</label></div>
   <div class="task"><span class="pri l"></span><label>Set a goal on the <a href="/goals">Goals</a> page</label></div>
   <div class="cap" style="border-top:1px solid var(--border);padding-top:8px"><div class="meta">Or just text the bot — send anything (text, voice, links) to @kelvin_lifeos_bot.</div></div>
 </div>

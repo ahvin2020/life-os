@@ -133,6 +133,11 @@ def format_reply(result: dict) -> str:
         return f"📝 Saved: {title}" if title else "📝 " + result.get("label", "→ Notes")
     if kind == "journal":
         return "✦ Added to today's journal"
+    if kind == "reminder":
+        # mirrors the router's set_reminder reply, so a deterministically-parsed reminder
+        # is indistinguishable from one Claude resolved
+        label = (result.get("reminder") or {}).get("label", "")
+        return f"⏰ Reminder set — {label}: {title}" if label else f"⏰ Reminder: {title}"
     return "✓ filed"
 
 
@@ -334,23 +339,12 @@ def _handle_text(conn, tg, chat_id, text) -> bool:
 
 
 def _handle_text_single(conn, tg, chat_id, text) -> bool:
-    """Route ONE capturable item. Fast paths (prefix/URL, instant deterministic query)
-    skip Claude; everything else goes through the agentic router. Returns True if a
-    router fallback fired (so the caller schedules a sweep)."""
-    low = text.strip().lower()
+    """Route ONE capturable item. Fast paths (URL, instant deterministic query) skip
+    Claude; everything else goes through the agentic router, which classifies natural
+    language. Returns True if a router fallback fired (so the caller schedules a sweep)."""
     from ai.router import record_exchange
 
-    # Fast path 1: prefix shortcuts → deterministic capture, no Claude. (Prefix wins over
-    # URL detection, so `n: <url>` files a plain note exactly as before.)
-    if low.startswith(("t:", "n:", "i:", "j:")):
-        from domain.capture import route_capture
-        result = route_capture(conn, text, source="telegram")
-        reply = format_reply(result)
-        tg.send_message(chat_id, reply)
-        record_exchange(conn, text, reply)     # so "rename it"/"make it a task" resolve
-        return False
-
-    # Fast path 1b: a bare link → instant ack, then edit into the enriched reply.
+    # Fast path 1: a bare link → instant ack, then edit into the enriched reply.
     if _looks_like_url(text):
         _handle_link(conn, tg, chat_id, text)
         return False
@@ -372,25 +366,23 @@ def _handle_text_single(conn, tg, chat_id, text) -> bool:
         record_exchange(conn, text, "👍 Skipped.")
         return False
 
-    # Fast path 2: unambiguous list questions → instant deterministic answer, no Claude.
-    from domain.queries import is_query, answer_query
-    if is_query(text):
-        ans = answer_query(conn, text)
-        if ans is not None:
-            tg.send_message(chat_id, ans)
-            # Record so ordinal follow-ups ("complete the second one") see the list that
-            # the deterministic tier answered — the router replays this next turn. Larger
-            # cap so a full task list survives instead of truncating mid-list.
-            record_exchange(conn, text, ans, reply_cap=1200)
-            return False
-
-    # Fast path 2b: a question we can answer instantly from the document facts cache
-    # ("what's my Scoot booking number", "cruise price?") — no Claude, no live read.
-    from domain import docs
-    fact = docs.answer_from_facts(conn, text)
-    if fact is not None:
-        tg.send_message(chat_id, fact)
-        record_exchange(conn, text, fact)
+    # Fast path 2: THE shared deterministic ladder — the exact same one the web bar runs
+    # (capture.route_deterministic), so the phone and the web can't drift apart. It owns:
+    # an explicit capture (a task-verb opener like "buy milk", a parseable timed reminder
+    # like "remind me in 10 minutes to call mum"), an unambiguous list answer, and a
+    # document-fact answer. All instant — none of them reach Claude.
+    from domain import capture as _capture
+    res = _capture.route_deterministic(conn, text, source="telegram", enrich="off")
+    if res is not None:
+        answered = res.get("kind") == "answer"
+        reply = res["reply"] if answered else format_reply(res)
+        tg.send_message(chat_id, reply)
+        # A list answer is replayed next turn so ordinal follow-ups ("complete the second
+        # one") resolve — it keeps the larger cap so the list doesn't truncate mid-way.
+        if answered:
+            record_exchange(conn, text, reply, reply_cap=1200)
+        else:
+            record_exchange(conn, text, reply)
         return False
 
     # Fast path 3: an explicit backlog-triage request → run backlog intelligence and
@@ -592,8 +584,7 @@ _HELP_TEXT = (
     "• 📷 photo of a bill + \"split this between me, WL and Jim — I paid\"\n\n"
     "I remember the last few messages, so follow-ups work: reply 'yes' to an offer, "
     "or 'change it to Friday'. Undo lives on a button under anything I change. "
-    "Power-user shortcuts still work: t: (task), n: (note), i: (idea), j: (journal), "
-    "or paste a link.")
+    "No syntax to learn — just type, or paste a link.")
 
 
 def _command_reply(text: str) -> str:

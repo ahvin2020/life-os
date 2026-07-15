@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template, request, jsonify
 
-from core.web_core import db, respond, today_iso
+from core.web_core import db, respond, today_iso, task_card_html
 from core.db import now_iso
 from domain.capture import create_task
 
@@ -19,7 +19,7 @@ from domain.tasks_core import (
     _WEEKDAYS, _row_to_task, _WEEK_SINCE_SQL, set_task_col, promote_planned_to_week,
     _progress, subtask_progress, task_dict, next_due_date, _respawn_recurring,
     complete_task, _reconcile_parent, _setting_days, archive_old_done, purge_deleted,
-    today_tasks, today_task_rows, week_tasks, bump_reschedule, day_score,
+    today_tasks, today_task_rows, week_tasks, bump_reschedule, day_score, is_pinned,
 )
 
 bp = Blueprint("tasks", __name__)
@@ -45,9 +45,7 @@ def tasks_page():
         # On-today tasks (due today / overdue / ☀-planned, sticky) PIN to the top
         # of the week column wherever their col says they live — on the board,
         # today-ness is a place, not a badge. Their stored col is untouched.
-        if not t["done"] and (
-                (t["due_date"] and t["due_date"] <= today)
-                or (t["planned_on"] and t["planned_on"] <= today)):
+        if is_pinned(t, today):
             t["pinned"] = True
             pinned.append(t)
         else:
@@ -81,8 +79,11 @@ def task_new():
             parent_id=int(f["parent_id"]) if f.get("parent_id") else None,
             media=f.get("media") or None,
         )
+    # hand back the rendered card so the caller splices it in place instead of reloading
+    card = task_card_html(conn, tid, f.get("surface") or "week")
     conn.close()
-    return respond(True, "Task added", to="/tasks", extra={"id": tid})
+    return respond(True, "Task added", to="/tasks",
+                   extra={"id": tid, "card_html": card})
 
 
 @bp.route("/tasks/<int:task_id>/edit", methods=["POST"])
@@ -138,8 +139,11 @@ def task_edit(task_id):
         conn.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id=?", params)
         if postponed:
             bump_reschedule(conn, task_id)
+    # the re-rendered card carries every structural change (priority/category/recurrence/
+    # due chip), so the editor can swap the node instead of reloading the page
+    card = task_card_html(conn, task_id, f.get("surface") or "week")
     conn.close()
-    return respond(True, "Task updated", to="/tasks")
+    return respond(True, "Task updated", to="/tasks", extra={"card_html": card})
 
 
 @bp.route("/tasks/<int:task_id>/complete", methods=["POST"])
@@ -148,10 +152,17 @@ def task_complete(task_id):
     conn = db()
     with conn:
         result = complete_task(conn, task_id, done)
-    conn.close()
     if not result.get("ok"):
+        conn.close()
         return respond(False, "Task not found", fallback="/tasks")
-    return jsonify({"status": "ok", **{k: v for k, v in result.items() if k != "ok"}})
+    surface = request.form.get("surface") or "week"
+    card = task_card_html(conn, task_id, surface)
+    # a recurrence respawn is a NEW card the page hasn't got yet — send it too
+    respawn_card = (task_card_html(conn, result["respawned"], surface)
+                    if result.get("respawned") else "")
+    conn.close()
+    return jsonify({"status": "ok", "card_html": card, "respawn_html": respawn_card,
+                    **{k: v for k, v in result.items() if k != "ok"}})
 
 
 @bp.route("/tasks/<int:task_id>/plan", methods=["POST"])
@@ -191,8 +202,10 @@ def task_plan(task_id):
                 "FROM tasks WHERE col = (SELECT col FROM tasks WHERE id=?) "
                 "AND parent_id IS NULL) WHERE id=?",
                 (task_id, task_id))
+    card = task_card_html(conn, task_id, request.form.get("surface") or "week")
     conn.close()
-    return jsonify({"status": "ok", "planned": bool(new_val), "reopened": reopened})
+    return jsonify({"status": "ok", "planned": bool(new_val), "reopened": reopened,
+                    "card_html": card})
 
 
 @bp.route("/tasks/<int:task_id>/delete", methods=["POST"])
@@ -215,8 +228,10 @@ def task_restore(task_id):
     with conn:
         conn.execute("UPDATE tasks SET deleted_at=NULL, updated=? WHERE id=? OR parent_id=?",
                      (now_iso(), task_id, task_id))
+    # the restored card goes straight back on the page — an Undo shouldn't cost a reload
+    card = task_card_html(conn, task_id, request.form.get("surface") or "week")
     conn.close()
-    return jsonify({"status": "ok", "id": task_id})
+    return jsonify({"status": "ok", "id": task_id, "card_html": card})
 
 
 @bp.route("/tasks/reorder", methods=["POST"])

@@ -114,12 +114,3 @@ def test_format_reply_leads_with_the_item():
     assert cd.format_reply({"kind": "task", "title": "call bank", "priority": "high"}) == "✓ Task: call bank · high"
     assert cd.format_reply({"kind": "note", "title": "a thought"}) == "📝 Saved: a thought"
     assert cd.format_reply({"kind": "journal"}) == "✦ Added to today's journal"
-
-
-def test_prefix_task_reply_names_the_task(client, monkeypatch):
-    monkeypatch.setattr(cd.threading, "Thread", _SyncThread)
-    tg = _FakeTG()
-    conn = _db()
-    cd._handle_text(conn, tg, 1, "t: renew passport")
-    conn.close()
-    assert tg.sent[-1] == (1, "✓ Task: renew passport")

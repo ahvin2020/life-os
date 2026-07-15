@@ -66,6 +66,28 @@ def _match_count(qtokens: list, ftokens: list) -> int:
 
 
 # ── search ────────────────────────────────────────────────────────────────────
+def _walk_docs(roots: list):
+    """Every document file under the roots as (root_idx, root, fn, path, mtime), bounded by
+    _WALK_CAP and skipping the internal/hidden dirs. THE one walk — search_documents and
+    recent_documents share it so the caps and skip rules can't drift apart."""
+    seen = 0
+    for root_idx, root in enumerate(roots):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+            for fn in filenames:
+                if not fn.lower().endswith(_DOC_EXTS):
+                    continue
+                seen += 1
+                if seen > _WALK_CAP:
+                    return
+                path = os.path.join(dirpath, fn)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    mtime = 0.0
+                yield root_idx, root, fn, path, mtime
+
+
 def _root_rel(path: str, roots: list):
     """(root_idx, rel) for an absolute path that lives under a configured root, else
     (None, None). Lets a fact's stored path re-enter the uniform hit shape (link/resolve)."""

@@ -104,6 +104,21 @@ TABLES = [
             UNIQUE(path, label, category)
         )
     """),
+    # The document CONTENT index. Filename search can only find a document whose name
+    # repeats a word from the question — "cruise" never matches "genting-dream-nov.pdf",
+    # so a whole class of question was unanswerable no matter how good the model was.
+    # Indexing the TEXT fixes that generally: the booking says "cruise" on page one.
+    # FTS5 ships with SQLite (no new dep); 'porter' stems, so "cruises" finds "cruise".
+    # Contentless=off (a plain FTS5 table) so DELETE-then-INSERT can re-index a changed file.
+    ("doc_text", """
+        CREATE VIRTUAL TABLE IF NOT EXISTS doc_text USING fts5(
+            path UNINDEXED,      -- absolute file path at index time
+            mtime UNINDEXED,     -- the mtime indexed, so an unchanged file is skipped
+            name,                -- filename, indexed too (a name match is still a signal)
+            body,                -- extracted plain text, capped at _TEXT_CAP
+            tokenize='porter unicode61'
+        )
+    """),
 ]
 
 INDEXES = [
@@ -210,6 +225,12 @@ def migrate(conn) -> list:
             id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, fire_at TEXT NOT NULL,
             created TEXT NOT NULL, fired_at TEXT)""")
         applied.append("v9: reminders")
+
+    # v10: doc_text — the document CONTENT index (FTS5). Created unconditionally by TABLES;
+    # the bump just records the step. It starts EMPTY: docs.index_documents backfills it on
+    # the next background scan (local extraction, so the whole corpus lands in one pass).
+    if 0 < disk < 10:
+        applied.append("v10: doc_text")
     return applied
 
 

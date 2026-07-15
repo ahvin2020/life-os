@@ -10,7 +10,6 @@ source of truth for inserting a task, shared by route_capture and routes_tasks.
 from __future__ import annotations
 
 import html as _html
-import json
 import os
 import re
 import threading
@@ -32,22 +31,6 @@ _STRIP_PARAMS = {
     "igsh", "igshid", "fbclid", "gclid", "si", "feature", "ref", "ref_src",
 }
 
-_LEDGER_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "data", "import_ledger.json")
-
-
-def imported_task_ids() -> set:
-    """Task ids created by the bulk-import tool (data/import_ledger.json). Tasks carry
-    no #imported tag, so the ledger is the ONLY record that a task was backfilled —
-    used to keep imports out of the 'captured today' feed and counts."""
-    try:
-        with open(_LEDGER_PATH, encoding="utf-8") as f:
-            ledger = json.load(f)
-    except Exception:
-        return set()
-    return {rec.get("id") for rec in ledger.values()
-            if isinstance(rec, dict) and rec.get("destination") == "task"
-            and rec.get("id") is not None}
 
 
 def next_sort_order(conn, col: str, parent_id=None) -> int:
@@ -109,55 +92,176 @@ def _looks_like_url(text: str) -> bool:
 # One Telegram message can hold several captures, one per line ("paste 3 links"). A
 # whole message is otherwise treated as ONE note, so line 2+ used to vanish into the
 # first note's body. We split ONLY when EVERY non-empty line is independently a
-# capturable unit (a URL or a prefixed item); a link-with-caption or a prose note with
-# line breaks has non-unit lines, so it stays intact.
-_SHORT_PREFIXES = ("t:", "n:", "i:", "j:")
-# Natural prefixes the phone keyboard auto-capitalises / spells out, mapped to the
-# canonical short form route_capture understands (so a split line needs no claude).
-_NATURAL_PREFIX = {
-    "task:": "t:", "todo:": "t:", "to-do:": "t:", "to do:": "t:",
-    "note:": "n:", "idea:": "i:", "journal:": "j:", "diary:": "j:",
-}
+# capturable unit (a URL); a link-with-caption or a prose note with line breaks has
+# non-unit lines, so it stays intact. (There are no text prefixes anymore — natural
+# language is classified by the AI router, not by t:/n:/j: syntax.)
 
 
 def _is_capture_unit(line: str) -> bool:
-    """True if `line` on its own is a distinct capture (URL or prefixed item)."""
-    low = line.strip().lower()
-    if not low:
-        return False
-    if _looks_like_url(line):
-        return True
-    if low[:2] in _SHORT_PREFIXES:
-        return True
-    return any(low.startswith(p) for p in _NATURAL_PREFIX)
+    """True if `line` on its own is a distinct capture (a bare URL)."""
+    return bool(line.strip()) and _looks_like_url(line)
 
 
-def normalize_capture_line(line: str) -> str:
-    """Rewrite a natural prefix ('Note: x') to the canonical short form ('n: x') so the
-    deterministic route_capture handles it; URLs and short prefixes pass through."""
-    line = line.strip()
-    low = line.lower()
-    for nat, short in _NATURAL_PREFIX.items():
-        if low.startswith(nat):
-            return short + " " + line[len(nat):].strip()
-    return line
+# Leading phrases that unambiguously mean "create a plain task" — each literally names a
+# task ("task"/"todo"), so they're caught deterministically (no claude, works offline)
+# rather than sent to the AI router. Phrases that imply a TIME ("remind me to … at 9am")
+# are deliberately NOT here: those need the router to tell a task from a timed reminder.
+_TASK_VERBS = ("add a task", "add task", "new task", "create a task", "create task",
+               "make a task", "make task", "todo", "to-do")
+_VERB_SEPS = " :-–—"   # a connective space/colon/dash between the verb and title
+
+
+# Tier 2 — bare action verbs that open a plain task ("buy milk", "call the dentist"). Kept
+# deliberately SHORT and low noun-collision: a MISS is cheap (it falls through to the AI
+# router, which still files it correctly), but a FALSE POSITIVE files a note as a task. So
+# words that are just as often nouns are excluded on purpose — "book club", "text from mum",
+# "order of service", "check out this link", "update from the team", "water bill",
+# "schedule for the week". The word-boundary test below also drops past tense for free
+# ("called"/"finished" don't match "call"/"finish"), which keeps journal entries out.
+_ACTION_VERBS = ("buy", "call", "pay", "renew", "cancel", "submit", "install", "confirm",
+                 "email", "send", "write", "fix", "finish", "wash",
+                 "reply to", "respond to", "follow up", "pick up", "drop off")
+
+# The next word proving the "verb" was really a NOUN ("email from mum", "order of service")
+# or a different intent ("call me Kelvin" sets the greeting name) — bail to the router.
+_VERB_BAIL_NEXT = ("from", "about", "of", "by", "me")
+
+# Bail-guards. Each only ever HANDS BACK to the router, so the risk is one-directional: a
+# miss costs ~5s, a false positive mis-files Sam's data. Every one below is a real phrasing
+# that this layer used to swallow:
+#   a question        — "call anyone about the invoice?" is a question, not a capture
+#   a copula/past     — prose ABOUT a thing, not an instruction to do it: "email is down
+#                       again", "call with Sam went well", "todo list is long" (which the
+#                       tier-1 wrapper even mangled into a task titled "list is long")
+#   a priority word   — the router owns priority; deterministic would bury the word in the
+#                       title instead ("pay the invoice, urgent" → priority=high)
+#   a 2nd action verb — several captures in one line ("buy milk and call the dentist");
+#     after and/&/,     only the router can split them into separate tasks
+_QUESTION_RE = re.compile(r"\?\s*$")
+_PROSE_RE = re.compile(r"\b(?:is|are|was|were|went|isn't|aren't|wasn't|weren't)\b", re.I)
+_PRIORITY_RE = re.compile(r"\b(?:urgent|asap|important|priority)\b", re.I)
+_MULTI_RE = re.compile(r"(?:\band\b|&|,)\s+(?:" + "|".join(_ACTION_VERBS) + r")\b", re.I)
+
+# Any when-language means a date/time has to be PARSED, and that's the router's job: it sets
+# a real due date and tells a task from a timed reminder. The deterministic path stands down
+# rather than bury the date in the title — "call the dentist tomorrow" is worth ~1s to come
+# back as a task DUE tomorrow instead of one titled "the dentist tomorrow".
+_WHEN_RE = re.compile(
+    r"\b\d{1,2}:\d{2}\b"                                        # 15:30
+    r"|\b\d{1,2}\s*(?:am|pm)\b"                                 # 3pm, 9 am
+    r"|\bin\s+\d+\s*(?:min|mins|minute|minutes|hour|hours|hr|hrs|day|days|week|weeks)\b"
+    r"|\b(?:today|tonight|tomorrow|tmr|tmrw|yesterday|eod|eow)\b"
+    r"|\b(?:next|this|last)\s+\w+"                              # next week, this friday
+    r"|\b(?:mon|tues?|wed|thur?s?|fri|sat|sun)(?:day|sday|nesday|rsday|urday)?\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}\b"
+    # a BARE month is a deadline too ("renew passport before September") — the router owns
+    # turning it into a real due date. "may" is left out on purpose: as a bare word it's far
+    # more often the modal verb than the month, and a wrong miss here is cheap.
+    r"|\b(?:january|february|march|april|june|july|august|september|october|november"
+    r"|december)\b"
+    r"|\b\d{1,2}(?:st|nd|rd|th)\b",                             # the 15th
+    re.I)
+
+
+def task_imperative(text: str):
+    """The task title if `text` opens with a deterministic task verb — either an explicit
+    wrapper ('add a task X', 'todo X') or a bare action verb ('buy milk'). None when the
+    router should take it instead: any when-language (a date/time it must parse), a verb
+    that reads as a noun, or no match. Requires a word boundary after the verb (so
+    'todolist' / 'add a taskforce' / 'called the dentist' don't match)."""
+    body = (text or "").strip()
+    low = body.lower()
+    # guards that outrank BOTH tiers ("todo list is long" is prose, not a todo)
+    if (_QUESTION_RE.search(body) or _PROSE_RE.search(body)
+            or _MULTI_RE.search(body)):
+        return None
+    for v in _TASK_VERBS:                       # tier 1: explicit "add a task X" wrapper
+        if low.startswith(v) and body[len(v):len(v) + 1] in ("", *_VERB_SEPS):
+            title = body[len(v):].lstrip(_VERB_SEPS).strip()
+            # a date in an explicit add still goes to the router — it owns due-date parsing
+            return title if (title and not _WHEN_RE.search(title)) else None
+    if _WHEN_RE.search(body):
+        return None
+    # A priority word only needs the router on a BARE verb, where it's a modifier the router
+    # can lift out of the text ("pay the invoice, urgent" → title + priority=high). After an
+    # explicit "add a task" wrapper (returned above) the user already declared the kind and
+    # the rest is simply the title — "add a task urgent capture" is a task called "urgent
+    # capture". "!" is this app's own marker, which _as_task already turns into priority=high.
+    if _PRIORITY_RE.search(body) and not body.rstrip().endswith("!"):
+        return None
+    for v in _ACTION_VERBS:                     # tier 2: bare "buy milk" — the verb IS the task
+        if low.startswith(v) and body[len(v):len(v) + 1] in ("", " "):
+            rest = body[len(v):].strip()
+            if not rest or rest.split()[0].lower() in _VERB_BAIL_NEXT:
+                return None
+            return body.strip()
+    return None
+
+
+def is_explicit_capture(text: str) -> bool:
+    """True when the text already declares its kind deterministically — a bare URL, a
+    task-verb opener ('add a task …', 'todo …'), or a fully-parseable timed reminder
+    ('remind me in 10 minutes to call mum'). Such input is unambiguous, so both surfaces
+    keep it on the instant path instead of spending a claude call on the AI router.
+    (Colon prefixes like t:/n:/j: are no longer a thing — everything else is natural
+    language and goes to the router.)"""
+    from domain.reminders import parse_reminder
+    return (_is_capture_unit(text or "") or task_imperative(text) is not None
+            or parse_reminder(text) is not None)
 
 
 def split_capture_lines(text: str):
     """Split a multi-item message into its per-line captures, or None when it's a single
     capture (fewer than 2 lines, or any line isn't a standalone unit — e.g. a link with a
-    caption, or a multi-line prose note). Returned lines are normalized for route_capture."""
+    caption, or a multi-line prose note). Only multi-URL messages split now."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     if len(lines) < 2 or not all(_is_capture_unit(ln) for ln in lines):
         return None
-    return [normalize_capture_line(ln) for ln in lines]
+    return lines
+
+
+def route_deterministic(conn, text: str, source: str = "web",
+                        enrich: str = "async") -> dict | None:
+    """THE tier ladder for everything that does NOT need claude — the single source both
+    surfaces route through (web POST /capture and the Telegram daemon).
+
+    Returns a result dict, or None when nothing deterministic matched → the caller hands the
+    text to the AI router. Order matters and is deliberate:
+      1. explicit capture — a URL, a task-verb opener, a fully-parseable timed reminder
+      2. an unambiguous list question ("what's overdue?") → the instant `queries` answer
+      3. a question answerable straight from the document-facts cache
+
+    Why this lives HERE and not per-surface: the web bar and the phone bot each used to own
+    their own ladder, so they drifted — the phone made a task out of "add a task test 1"
+    while the web filed a note. One ladder, one behaviour, both surfaces.
+
+    NOTE the caller still owns its own UX-specific fast paths that run BEFORE this (the bot
+    acks a bare link instantly then edits in the enriched reply; it also handles pending
+    yes/no and on-demand backlog triage), and its own rendering of the result.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    if is_explicit_capture(text):
+        return route_capture(conn, text, source=source, enrich=enrich)
+    from domain.queries import is_query, answer_query
+    if is_query(text):
+        ans = answer_query(conn, text)
+        if ans is not None:
+            return {"kind": "answer", "reply": ans}
+    from domain import docs
+    fact = docs.answer_from_facts(conn, text)
+    if fact is not None:
+        return {"kind": "answer", "reply": fact}
+    return None
 
 
 def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
                   enrich: str = "async", media: str | None = None) -> dict:
     """Classify `text` and file it immediately. Returns a dict describing where it
-    went: {kind, id|slug, label, title?, tags?}. `forced` overrides prefix detection when
-    the user picks a type chip ('task'|'note'|'journal'); 'auto' respects prefixes/URLs.
+    went: {kind, id|slug, label, title?, tags?}. `forced` pins the kind for a caller that
+    already knows it (a photo caption → 'note', a refile target); 'auto' deterministically
+    catches a task-verb opener + URLs and files everything else as an unsorted note.
     `enrich` controls link enrichment: 'async' (default → web/voice) schedules the
     background rewrite; 'off' skips it so a caller (the Telegram bot) can enrich inline
     and edit its own reply. `media` is an optional comma-separated list of vault/.media
@@ -170,28 +274,36 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
 
     body = text
 
-    # --- explicit type chip wins over prefix sniffing ---
+    # --- caller-forced kind (photo caption → note, refile targets) ---
     if forced == "task":
-        return _as_task(conn, _strip_prefix(body, "t:"), media=media)
+        return _as_task(conn, body, media=media)
     if forced == "journal":
-        return _as_journal(_strip_prefix(body, "j:"), media=media)
+        return _as_journal(body, media=media)
     if forced == "note":
-        return _as_note(conn, _strip_prefix_any(body), tags=[], media=media)
+        return _as_note(conn, body, tags=[], media=media)
 
     # --- attachment with no text → a note (its filename becomes the title) ---
     if not body:
         return _as_note(conn, "", tags=[], media=media)
 
-    # --- auto: prefixes, then URL, then unsorted note ---
+    # --- auto: a parseable timed reminder, then a task-verb opener ('add a task X'), then a
+    # URL, else an unsorted note. There are no t:/n:/j: prefixes anymore — natural language is
+    # the AI router's job; this deterministic path only catches the unambiguous shapes and
+    # files the rest as a note.
     low = body.lower()
-    if low.startswith("t:"):
-        return _as_task(conn, _strip_prefix(body, "t:"), media=media)
-    if low.startswith("n:"):
-        return _as_note(conn, _strip_prefix(body, "n:"), tags=[], media=media)
-    if low.startswith("i:"):
-        return _as_note(conn, _strip_prefix(body, "i:"), tags=["idea"], media=media)
-    if low.startswith("j:"):
-        return _as_journal(_strip_prefix(body, "j:"), media=media)
+    if not media:
+        # Needs an explicit trigger AND a real clock time, so "remind me on friday to renew
+        # the domain" (a date, no clock) still falls through to the router → task with a due
+        # date. See reminders.parse_reminder.
+        from domain import reminders
+        rem = reminders.parse_reminder(body)
+        if rem:
+            r = reminders.create_reminder(conn, rem["text"], rem["fire_local"])
+            return {"kind": "reminder", "id": r["id"], "title": r["text"],
+                    "label": "Reminders · " + r["label"], "reminder": r}
+    _verb_title = task_imperative(body)
+    if _verb_title is not None:
+        return _as_task(conn, _verb_title, media=media)
     if media:
         # free-text + a file: keep them together as one note rather than guessing a task
         return _as_note(conn, body, tags=[], media=media)
@@ -217,17 +329,6 @@ def route_capture(conn, text: str, source: str = "web", forced: str = "auto",
         return res
     # ambiguous → filed now as an unsorted note; triage refiles later (Phase 2)
     return _as_note(conn, body, tags=["unsorted"])
-
-
-def _strip_prefix(text, prefix):
-    return text[len(prefix):].strip() if text.lower().startswith(prefix) else text
-
-
-def _strip_prefix_any(text):
-    for p in ("t:", "n:", "i:", "j:"):
-        if text.lower().startswith(p):
-            return text[len(p):].strip()
-    return text
 
 
 def _as_task(conn, text, media=None) -> dict:

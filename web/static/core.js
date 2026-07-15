@@ -71,23 +71,58 @@ function confirmClick(btn, onConfirm, confirmLabel) {
 
 function reloadSoon() { setTimeout(function () { window.location.reload(); }, 250); }
 
+// ---- server-rendered partials ----------------------------------------------
+// The server owns every card's markup (the _macros.html macros), so an in-place
+// update asks it to re-render rather than hand-building a node here — that's what
+// keeps a spliced card identical to a page-load one instead of drifting from it.
+function htmlToNode(html) {
+  var tmp = document.createElement("div");
+  tmp.innerHTML = (html || "").trim();
+  return tmp.firstElementChild;
+}
+// Swap every on-page node for a task id with freshly-rendered markup (a task can appear
+// twice — Today's hero AND the week pool). Returns the count replaced; 0 means the page
+// has no node for it, so the caller decides whether to insert or ignore.
+function swapCard(id, html) {
+  var node = htmlToNode(html);
+  if (!node) return 0;
+  var els = document.querySelectorAll('[data-task-id="' + id + '"][data-title]');
+  var n = 0;
+  els.forEach(function (el) {
+    var fresh = n === 0 ? node : htmlToNode(html);
+    el.replaceWith(fresh);
+    if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(fresh);
+    n++;
+  });
+  return n;
+}
+
 // ---- fade an element out, then Undo-toast to restore it ---------------------
 // Folds the identical remove-then-restore dance shared by the note / captured /
 // goal / journal deletes. opts: {label → "<label> deleted", OR msg for the exact
 // toast text; restore: URL (posted with restoreData if given); after: optional
-// fn run once the element is gone}. REMOVE_MS matches CSS --dur (the .removing
-// transition) — the old inline 220 had drifted out of sync with it.
+// fn run once the element is gone; onRestore: optional fn(res) → truthy if it put
+// the element back itself, so Undo skips the reload}. REMOVE_MS matches CSS --dur
+// (the .removing transition) — the old inline 220 had drifted out of sync with it.
 var REMOVE_MS = 180;
+// Fade a node out, then drop it — the remove half of removeWithUndo, for callers that
+// bring their own undo (or need none). `after` runs once it's gone.
+function removeNode(el, after) {
+  if (!el) { if (after) after(); return; }
+  el.classList.add("removing");
+  setTimeout(function () {
+    if (el.parentNode) el.parentNode.removeChild(el);
+    if (after) after();
+  }, REMOVE_MS);
+}
 function removeWithUndo(el, opts) {
-  if (el) {
-    el.classList.add("removing");
-    setTimeout(function () {
-      if (el.parentNode) el.parentNode.removeChild(el);
-      if (opts.after) opts.after();
-    }, REMOVE_MS);
-  } else if (opts.after) { opts.after(); }
+  if (el || opts.after) { removeNode(el, opts.after); }
   toast(opts.msg || (opts.label + " deleted"), function () {
-    post(opts.restore, opts.restoreData).then(reloadSoon);
+    post(opts.restore, opts.restoreData).then(function (res) {
+      // an Undo that can put the row back in place shouldn't cost a whole page reload
+      if (opts.onRestore && opts.onRestore(res)) return;
+      reloadSoon();
+    });
   });
 }
 
@@ -114,6 +149,38 @@ if (window.location.hash === "#qin") {
   var _q = document.getElementById("qin");
   if (_q) _q.focus();
 }
+
+// ---- phone nav drawer: hamburger toggles the slide-in sidebar ---------------
+(function () {
+  var toggle = document.getElementById("navtoggle");
+  var side = document.getElementById("sidenav");
+  var scrim = document.getElementById("navscrim");
+  if (!toggle || !side) return;
+  function setOpen(on) {
+    side.classList.toggle("open", on);
+    if (scrim) scrim.classList.toggle("open", on);
+    toggle.setAttribute("aria-expanded", on ? "true" : "false");
+  }
+  toggle.addEventListener("click", function () { setOpen(!side.classList.contains("open")); });
+  if (scrim) scrim.addEventListener("click", function () { setOpen(false); });
+  // Tapping a destination closes the drawer (it's navigating away anyway).
+  side.addEventListener("click", function (e) { if (e.target.closest("a")) setOpen(false); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && side.classList.contains("open")) setOpen(false);
+  });
+})();
+
+// ---- desktop: toggle the sidebar between full and an icon-only rail (persisted) ----
+(function () {
+  var root = document.documentElement;
+  var toggle = document.getElementById("navcollapse");
+  if (!toggle) return;
+  toggle.addEventListener("click", function () {
+    var on = !root.classList.contains("nav-collapsed");
+    root.classList.toggle("nav-collapsed", on);
+    try { localStorage.setItem("lifeos_nav_collapsed", on ? "1" : "0"); } catch (e) {}
+  });
+})();
 
 // ---- subtask progress rings -------------------------------------------------
 function updateRing(id) {

@@ -218,6 +218,17 @@ def purge_deleted(conn):
             "DELETE FROM tasks WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
 
 
+def is_pinned(t, today) -> bool:
+    """Does this task dict PIN to the top of This week — i.e. is it on Today (sticky rule:
+    due today, overdue-and-open, or ☀-planned on/before today)? On the board today-ness is a
+    place, not a badge, so this drives placement AND the kcard macro's `stale` line. ONE
+    source: tasks_page renders the board with it, and web_core.task_card_html re-renders a
+    single card with it — if they disagreed, a swapped-in card would drift from a page load."""
+    return bool(not t["done"] and (
+        (t["due_date"] and t["due_date"] <= today)
+        or (t["planned_on"] and t["planned_on"] <= today)))
+
+
 def today_tasks(conn) -> list:
     """Tasks that belong on Today: parent tasks (not subtasks, not archived) that are
     due today, overdue-and-open, ☀ planned (STICKY: a planned task rolls over day

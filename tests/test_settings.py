@@ -193,10 +193,14 @@ def test_settings_save_validation_is_atomic(client):
         r = client.post("/settings/save", data=data, headers=ajax)
         assert r.status_code == 400
         conn = _db()
-        # nothing written — not even the valid fields nor the toggles
-        n = conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
+        # nothing this save touched was written — not the valid fields, not the toggles.
+        # (Asserted per-key rather than COUNT(*)==0: unrelated seeded rows are not this
+        # test's business, and counting the whole table made it fail for the wrong reason.)
+        leaked = conn.execute(
+            "SELECT key FROM settings WHERE key IN (?,?,?,?)",
+            ("brief_enabled", "archive_done_days", "digest_hour", "reflection_hour")).fetchall()
         conn.close()
-        assert n == 0, f"{bad} leaked a write"
+        assert leaked == [], f"{bad} leaked a write: {[r['key'] for r in leaked]}"
 
 
 # ── 4. blank resets a stored override to the code default ─────────────────────

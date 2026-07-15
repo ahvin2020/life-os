@@ -11,8 +11,6 @@
     var qin = document.getElementById("qin");
     if (!qin) return;
     var qgo = document.getElementById("qgo");
-    var chips = document.querySelectorAll("#qtypes .qt");
-    var manual = null;
     // File attachments: shared widget + a 📎 that opens the picker. Drag/drop and paste
     // land anywhere on the bar (initAttach binds the .qcap scope).
     var qatt = document.getElementById("q-attach");
@@ -20,41 +18,6 @@
     if (qatt) initAttach(qatt);
     if (qclip && qatt) qclip.addEventListener("click", function () {
       var inp = qatt.querySelector('input[type="file"]'); if (inp) inp.click();
-    });
-    // Reminder mode reveals a datetime field and repurposes the same bar: the text
-    // becomes the reminder, the ⏰ strip its fire time.
-    var qwhen = document.getElementById("qwhen");
-    var qat = document.getElementById("qat");
-    var DEFAULT_PH = qin.getAttribute("placeholder");
-    function pad(n) { return (n < 10 ? "0" : "") + n; }
-    function reminderDefault() {
-      // Next round hour, ≥30 min out — the common "later today" case.
-      var d = new Date(Date.now() + 30 * 60000);
-      d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
-      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
-        "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
-    }
-    function setActive(t) { chips.forEach(function (c) { c.classList.toggle("active", c.dataset.t === t); }); }
-    // Full mode switch: highlight the chip AND toggle the reminder-only extras.
-    function applyMode(t) {
-      setActive(t);
-      var rem = t === "reminder";
-      if (qwhen) qwhen.hidden = !rem;
-      if (qclip) qclip.style.display = rem ? "none" : "";   // no attachments on a reminder
-      qin.setAttribute("placeholder", rem ? "Remind me to…" : DEFAULT_PH);
-      if (rem && qat && !qat.value) qat.value = reminderDefault();
-    }
-    chips.forEach(function (c) {
-      c.addEventListener("click", function () { manual = c.dataset.t; applyMode(manual); qin.focus(); });
-    });
-    qin.addEventListener("input", function () {
-      if (manual) return;   // reminder is always a manual choice, so auto-detect never touches its UI
-      var v = qin.value.trim().toLowerCase(), t = "auto";
-      if (v.startsWith("t:")) t = "task";
-      else if (v.startsWith("n:") || v.startsWith("i:")) t = "note";
-      else if (v.startsWith("j:")) t = "journal";
-      else if (/^https?:\/\//.test(v) || v.includes("instagram.com") || v.includes("youtube.com") || v.includes("youtu.be")) t = "note";
-      setActive(t);
     });
     function flashIn(el) {
       el.style.transition = "opacity var(--dur-fast) var(--ease)";
@@ -87,46 +50,68 @@
       return true;       // note/journal: toast is enough, no reload
     }
     var busy = false;
-    function addReminder(text) {
-      var at = qat ? qat.value : "";
-      if (!at) { toast("Pick a time for the reminder"); if (qat) qat.focus(); return; }
-      busy = true;
-      post("/reminders", { text: text, at: at }).then(function (res) {
-        busy = false;
-        if (!res.ok) { toast((res.data && res.data.message) || "Could not set reminder"); return; }
-        qgo.textContent = "✓ Set"; qgo.classList.add("did");
-        qin.value = ""; if (qat) qat.value = ""; manual = null; applyMode("auto"); autogrow(qin);
-        toast("Reminder set — " + res.data.label);
-        if (window.LifeOS && window.LifeOS.remAdd) window.LifeOS.remAdd(res.data);
-        else reloadSoon();
-        setTimeout(function () { qgo.textContent = "Add"; qgo.classList.remove("did"); }, 900);
-      }).catch(function () { busy = false; toast("Could not set reminder"); });
+    // Freeze/unfreeze the composer for the duration of an in-flight capture: the textarea
+    // goes readOnly (no edits to already-sent text) and the wrapper carries .sending so the
+    // field can dim while it works.
+    function setSending(on) {
+      qin.readOnly = on;
+      var wrap = qin.closest(".qcap");
+      if (wrap) wrap.classList.toggle("sending", on);
     }
     function add() {
       if (busy) return;                                // guard against double-tap / rapid Enter
       var text = qin.value.trim();
       var media = qatt ? getAttach(qatt).join(",") : "";
-      var active = document.querySelector("#qtypes .qt.active");
-      var type = active ? active.dataset.t : "auto";
-      if (type === "reminder") {                        // reminder has its own endpoint + time
-        if (!text) { qin.focus(); return; }
-        addReminder(text); return;
-      }
       if (!text && !media) { qin.focus(); return; }   // a lone attachment is enough
       busy = true;
-      post("/capture", { text: text, type: type, media: media }).then(function (res) {
-        busy = false;
-        if (!res.ok) { toast("Could not add"); return; }
+      // Lock the field while the capture is in flight: the text has already been sent, so
+      // editing it here would either do nothing or be silently wiped when the reply lands.
+      // readOnly keeps the caret but blocks typing/paste; unlocked on every exit path.
+      setSending(true);
+      // Pure text runs the AI router server-side (~1-2s), which infers the kind (task, note,
+      // idea, journal, reminder) and acts — show a thinking state so the wait reads as work,
+      // not a hang. An attachment (or a pasted URL) stays on the instant deterministic path.
+      var aiLikely = !!text && !media;
+      if (aiLikely) { qgo.classList.add("spin"); }       // spinner while the router thinks
+      post("/capture", { text: text, type: "auto", media: media }).then(function (res) {
+        busy = false; setSending(false); qgo.classList.remove("spin");
+        if (!res.ok) { qgo.textContent = "Add"; toast("Could not add"); return; }
         qgo.textContent = "✓ Added"; qgo.classList.add("did");
-        qin.value = ""; manual = null; applyMode("auto"); autogrow(qin);   // shrink back to one row
+        qin.value = ""; autogrow(qin);                 // shrink back to one row
         if (qatt) setAttach(qatt, []);
-        toast("Added → " + (res.data.label || "filed"));
-        var handled = insertCapture(res.data || {});
+        var d = res.data || {};
+        // A new reminder slots straight into the strip — watching it land there IS the
+        // confirmation, so it skips the bottom toast. Hoisted above the branch because a
+        // reminder now arrives on BOTH paths: parsed deterministically ("remind me in 10
+        // minutes to call mum" — instant, no d.ai) or resolved by the router.
+        var remSpliced = false;
+        if (d.reminder && window.LifeOS && window.LifeOS.remAdd) {
+          window.LifeOS.remAdd(d.reminder); remSpliced = true;
+        }
+        if (d.ai) {                                       // AI router: its reply IS the confirmation
+          if (!remSpliced) toast(d.reply || "Done");
+          if (d.week_html) insertCapture(d);              // a new task splices in place — no reload
+          // Tasks the router CHANGED ("mark X done", "push X to friday", "drop X") come back
+          // as re-rendered cards — swap each in place. Empty html means the row is gone from
+          // this surface (deleted / no longer on Today), so drop the node instead.
+          (d.cards || []).forEach(function (c) {
+            if (c.html) { swapCard(c.id, c.html); return; }
+            document.querySelectorAll('[data-task-id="' + c.id + '"][data-title]')
+              .forEach(function (el) { removeNode(el); });
+          });
+          setTimeout(function () {
+            qgo.textContent = "Add"; qgo.classList.remove("did");
+            if (d.reload) reloadSoon();                   // changed an existing item we can't patch yet
+          }, 900);
+          return;
+        }
+        if (!remSpliced) toast("Added → " + (d.label || "filed"));
+        var handled = remSpliced || insertCapture(d);
         setTimeout(function () {
           qgo.textContent = "Add"; qgo.classList.remove("did");
           if (!handled) reloadSoon();
         }, 900);
-      }).catch(function () { busy = false; toast("Could not add"); });
+      }).catch(function () { busy = false; setSending(false); qgo.classList.remove("spin"); qgo.textContent = "Add"; toast("Could not add"); });
     }
     if (qgo) qgo.addEventListener("click", add);
     // Enter submits; Shift+Enter (and mobile return) inserts a newline — the composer is a
@@ -136,27 +121,56 @@
     });
   })();
 
-  // ---- first-run onboarding banner: capture the name inline, or dismiss --------
+  // ---- first-run welcome: step 1 captures the name (required), step 2 hands off to Settings ----
   (function () {
     var el = document.getElementById("onboard");
     if (!el) return;
+    document.body.appendChild(el);                            // escape .main's transform, then reveal
+    el.classList.add("on");
     var input = document.getElementById("onboard-name");
     var save = document.getElementById("onboard-save");
-    var x = document.getElementById("onboardx");
+    var s1 = document.getElementById("welstep1");
+    var s2 = document.getElementById("welstep2");
+    var hi = document.getElementById("welhi");
+    var back = document.getElementById("welback");
+    var dots = [].slice.call(el.querySelectorAll(".weldot"));
+
+    function setStep(n) {                                      // toggle the visible step + progress dots
+      if (s1) s1.hidden = n !== 1;
+      if (s2) s2.hidden = n !== 2;
+      if (back) back.hidden = n === 1;                        // back arrow only on step 2
+      dots.forEach(function (d, i) { d.classList.toggle("on", i === n - 1); });
+    }
+    function greetInPlace(name) {                             // slip the name into the greeting eyebrow live
+      var greet = document.querySelector(".greet-eb");
+      if (!greet || greet.textContent.indexOf(",") >= 0) return;
+      greet.textContent = greet.textContent.trim() + ", " + name;
+    }
+    function close() { post("/onboarding/dismiss", {}); el.remove(); }
     function doSave() {
       var name = (input.value || "").trim();
       if (!name) { input.focus(); return; }
       post("/onboarding/name", { name: name }).then(function (res) {
         if (!res.ok) { toast("Could not save"); return; }
-        var greet = document.querySelector(".greet");           // update the greeting in place
-        if (greet && greet.textContent.indexOf(",") < 0) greet.textContent = greet.textContent.trim() + ", " + name;
-        el.remove();
-        toast("👋 Hi, " + name + "!");
+        greetInPlace(name);
+        if (hi) hi.textContent = "You’re all set, " + name + ".";
+        setStep(2);                                           // advance to the reassurance step
       });
     }
     if (save) save.addEventListener("click", doSave);
-    if (input) input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
-    if (x) x.addEventListener("click", function () { el.remove(); post("/onboarding/dismiss", {}); });
+    if (input) {
+      var sync = function () { if (save) save.disabled = !input.value.trim(); };  // Get started enables only when named
+      input.addEventListener("input", sync);
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
+      sync();
+      setTimeout(function () { input.focus(); }, 60);
+    }
+    if (back) back.addEventListener("click", function () {    // return to the name step (input keeps its value)
+      setStep(1);
+      if (input) { input.focus(); if (save) save.disabled = !input.value.trim(); }
+    });
+    var fin = document.getElementById("welfinish");
+    if (fin) fin.addEventListener("click", close);
   })();
 
   // ---- Today calendar: view-only day/week/month, lazy-loaded (Google events) ---
@@ -528,7 +542,8 @@
   document.querySelectorAll('.runbtn[data-run]:not([data-run="claude"])').forEach(function (b) {
     b.addEventListener("click", function () {
       var key = b.dataset.run, label = b.textContent, before = healthStamp(key);
-      b.disabled = true; b.textContent = "Running…";
+      b.disabled = true;
+      b.textContent = /restart/i.test(label) ? "Restarting…" : "Running…";  // verb matches the action
       post("/settings/run/" + key).then(function (res) {
         if (res.ok && res.data && res.data.status === "ok") {
           pollHealth(b, key, label, before, 0);         // button state carries success; no toast
@@ -557,7 +572,7 @@
       }
     });
   }
-  function swapCard(form) {
+  function swapSettingsCard(form) {
     fetch("/settings", { headers: { "X-Requested-With": "XMLHttpRequest" } })
       .then(function (r) { return r.text(); })
       .then(function (html) {
@@ -583,13 +598,13 @@
         post("/settings/run/claude", new FormData(form)).then(function (res) {
           if (!(res.ok && res.data && res.data.status === "ok")) { btn.textContent = lbl; btn.disabled = false; toast((res.data && res.data.message) || "That token didn't work"); return; }
           post("/settings/claude-token", new FormData(form)).then(function (r2) {
-            if (r2.ok) { toast("Connected ✓"); swapCard(form); } else { btn.textContent = lbl; btn.disabled = false; toast("Couldn't save the token"); }
+            if (r2.ok) { toast("Connected ✓"); swapSettingsCard(form); } else { btn.textContent = lbl; btn.disabled = false; toast("Couldn't save the token"); }
           });
         });
       } else {                                           // google / dropbox / telegram: save creds
         btn.textContent = "…"; btn.disabled = true;
         post(form.getAttribute("action"), new FormData(form)).then(function (res) {
-          if (res.ok && (!res.data || res.data.status !== "error")) { toast("Saved ✓"); swapCard(form); }
+          if (res.ok && (!res.data || res.data.status !== "error")) { toast("Saved ✓"); swapSettingsCard(form); }
           else { btn.textContent = lbl; btn.disabled = false; toast((res.data && res.data.message) || "Could not save"); }
         });
       }
@@ -623,7 +638,7 @@
           b._revert = setTimeout(function () {
             b.textContent = orig; b.classList.remove("ok", "fail"); b.removeAttribute("aria-label"); b._revert = null;
           }, 8000);
-          if (!ok) setTimeout(function () { swapCard(form); }, 1200);   // show the red failing note
+          if (!ok) setTimeout(function () { swapSettingsCard(form); }, 1200);   // show the red failing note
         });
       });
     });
@@ -635,7 +650,7 @@
         var p;
         if (isClaude) { var fd = new FormData(); fd.append("ai_provider", "claude"); p = post("/settings/claude-token", fd); }
         else { p = post("/settings/" + b.dataset.disconnect + "/disconnect"); }
-        p.then(function () { toast("Disconnected"); swapCard(form); });
+        p.then(function () { toast("Disconnected"); swapSettingsCard(form); });
       }, "Confirm disconnect?");
     });
   }
@@ -654,7 +669,7 @@
         if (!ok) { toast((res.data && res.data.message) || "Could not save"); return; }
         toast("App URL saved ✓");
         ["googleform", "dropboxform"].forEach(function (id) {
-          var card = document.getElementById(id); if (card) swapCard(card);
+          var card = document.getElementById(id); if (card) swapSettingsCard(card);
         });
       });
     });
@@ -741,10 +756,14 @@
   window.LifeOS = window.LifeOS || {};
   window.LifeOS.wireCap = wireCap;
 
-  // ---- goals: manual number inline edit (styled input in place — never the
-  // native prompt, per the no-browser-default-controls rule) --------------------
-  document.querySelectorAll(".gnum.edit").forEach(function (el) {
-    el.addEventListener("click", function () {
+  // ---- goals: wire ONE card's actions (number edit, achieve, delete) -----------
+  // Bound at page load AND on every card spliced in without a reload (create / Undo),
+  // so a live-added card behaves exactly like a page-load one.
+  function wireGoal(card) {
+    // manual number inline edit (styled input in place — never the native prompt,
+    // per the no-browser-default-controls rule)
+    var el = card.querySelector(".gnum.edit");
+    if (el) el.addEventListener("click", function () {
       if (el.querySelector("input")) return;                 // already editing
       var id = el.dataset.goalId;
       var target = parseFloat(el.dataset.target || "0");
@@ -762,11 +781,11 @@
         post("/goals/" + id + "/update", { current: n }).then(function () {
           el.dataset.current = n;
           el.textContent = Math.round(n) + "/" + Math.round(target) + (unit ? " " + unit : "");
-          var goal = el.closest(".goal");
-          var bar = goal && goal.querySelector(".bar");
+          var bar = card.querySelector(".bar");
           if (bar) {                                          // fill sweeps in place
             var pct = target ? Math.min(100, n / target * 100) : 0;
             bar.classList.toggle("full", pct >= 100);
+            card.classList.toggle("achieved", pct >= 100);
             var i = bar.querySelector("i"); if (i) i.style.width = pct + "%";
           }
         });
@@ -779,30 +798,43 @@
       inp.addEventListener("blur", function () { finish(true); });
       inp.addEventListener("click", function (e) { e.stopPropagation(); });
     });
-  });
-  // ---- goals: mark achieved — toggles in place (a completion beat, not a reload)
-  document.querySelectorAll(".gachieve").forEach(function (el) {
-    el.addEventListener("click", function () {
-      post("/goals/" + el.dataset.goalId + "/achieve", {}).then(function (res) {
+
+    // mark achieved — toggles in place (a completion beat, not a reload)
+    var ach = card.querySelector(".gachieve");
+    if (ach) ach.addEventListener("click", function () {
+      post("/goals/" + ach.dataset.goalId + "/achieve", {}).then(function (res) {
         if (!res.ok) { toast("Could not update"); return; }
         var on = res.data && res.data.achieved;
-        el.classList.toggle("done", !!on);
-        el.textContent = on ? "✓ Achieved" : "Mark achieved";
-        el.setAttribute("aria-pressed", on ? "true" : "false");
+        ach.classList.toggle("done", !!on);
+        ach.textContent = on ? "✓ Achieved" : "Mark achieved";
+        ach.setAttribute("aria-pressed", on ? "true" : "false");
+        card.classList.toggle("achieved", !!on);       // the card recedes too, not just the button
       });
     });
-  });
-  // ---- goals: delete — arm-then-confirm + Undo toast (parity with tasks/notes) --
-  document.querySelectorAll(".goal .gdel").forEach(function (btn) {
-    confirmClick(btn, function () {
-      var id = btn.dataset.goalId;
-      var card = btn.closest(".goal");
+
+    // delete — arm-then-confirm + Undo toast (parity with tasks/notes)
+    var del = card.querySelector(".gdel");
+    if (del) confirmClick(del, function () {
+      var id = del.dataset.goalId;
+      // remember the slot BEFORE the node goes, so Undo can put the card back exactly
+      // where it was rather than reloading the page
+      var parent = card.parentNode, anchor = card.nextElementSibling;
       post("/goals/" + id + "/delete").then(function (res) {
         if (!res.ok) { toast("Could not delete"); return; }
-        removeWithUndo(card, { label: "Goal", restore: "/goals/" + id + "/restore" });
+        removeWithUndo(card, {
+          label: "Goal", restore: "/goals/" + id + "/restore",
+          onRestore: function (r) {
+            var fresh = htmlToNode(r.data && r.data.card_html);
+            if (!fresh || !parent.isConnected) return false;   // grid gone → let it reload
+            parent.insertBefore(fresh, anchor && anchor.isConnected ? anchor : null);
+            wireGoal(fresh);
+            return true;
+          }
+        });
       });
     });
-  });
+  }
+  document.querySelectorAll(".goal").forEach(wireGoal);
 
   // ---- goals: new-goal form (open/close, timeframe chips, measure reveal) ------
   var goalForm = document.getElementById("goalform");
@@ -840,62 +872,88 @@
       mBox.classList.toggle("hide");
       mToggle.classList.toggle("hide");
     });
+    // Submit in place: the new card splices into its timeframe's grid instead of the
+    // form's native POST bouncing the whole page through /goals.
+    goalForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      post("/goals/new", new FormData(goalForm)).then(function (res) {
+        if (!res.ok) { toast((res.data && res.data.message) || "Could not create goal"); return; }
+        var d = res.data || {};
+        var grid = document.querySelector('.goalgrid[data-section="' + d.section + '"]');
+        var card = d.card_html ? htmlToNode(d.card_html) : null;
+        // Reload only when there's no slot to splice into: the first goal of a timeframe
+        // has no section yet, and By-date grids are ordered by target date (not created),
+        // so a fresh card there can't just be appended. (No toast — the reload wipes it,
+        // and the card landing in its section is the confirmation.)
+        if (!grid || !card || d.section === "by_date") { reloadSoon(); return; }
+        grid.appendChild(card);
+        wireGoal(card);
+        goalForm.reset();
+        // reset() snaps the hidden timeframe back to "week" — put the chips + date field
+        // in sync with it, and re-collapse the measure box.
+        goalForm.querySelectorAll("#gtimeframe .qt").forEach(function (c) {
+          c.classList.toggle("active", c.dataset.tf === "week");
+        });
+        if (dateField) dateField.classList.add("hide");
+        if (mBox && mToggle) { mBox.classList.add("hide"); mToggle.classList.remove("hide"); }
+        closeGoalForm();
+        toast("Goal created");
+      });
+    });
   }
 
-  // ---- journal: add entry -----------------------------------------------------
-  var jAttach = document.getElementById("j-attach");
-  if (jAttach) initAttach(jAttach);
-  var jAdd = document.getElementById("j-add");
-  var jBusy = false;
-  if (jAdd) jAdd.addEventListener("click", function () {
-    if (jBusy) return;                                 // guard against double-tap
-    var box = document.getElementById("j-text"); var t = box.value.trim();
-    var media = jAttach ? getAttach(jAttach).join(",") : "";
-    if (!t && !media) { box.focus(); return; }
-    jBusy = true;
-    post("/journal/entry", { text: t, day: box.dataset.day || "", media: media })
-      .then(function () { toast("Entry added"); reloadSoon(); })
-      .catch(function () { jBusy = false; toast("Could not add"); });
-  });
-  // journal entry galleries → smart media modal on tap (images inline, files carded)
-  document.querySelectorAll(".jgimg, .jgfile").forEach(function (im) {
-    im.addEventListener("click", function () { openMedia(im.dataset.full || im.src, im.dataset.name); });
-  });
+  // ---- journal: per-entry wiring (galleries, ⋯, edit, delete) ------------------
+  // One function for a page-load entry AND a freshly spliced one, so an entry added
+  // without a reload gets the same actions.
 
-  // ---- ⋯ reveals row actions on touch (desktop reveals on hover via CSS) -------
-  // (.cap .cap-more is wired in wireCap; journal entries handled here)
-  document.querySelectorAll(".jentry .jmore").forEach(function (btn) {
-    btn.addEventListener("click", function () { btn.closest(".jentry").classList.toggle("acts"); });
-  });
+  // Same-minute entries are disambiguated by occurrence idx, so removing (or restoring)
+  // one shifts every later sibling's index in the FILE — mirror that on the page or the
+  // next edit/delete targets a stale idx (404). delta -1 on delete, +1 on undo.
+  function shiftSiblings(entry, delta) {
+    var day = entry.dataset.day, time = entry.dataset.time;
+    var idx = parseInt(entry.dataset.idx, 10);
+    document.querySelectorAll(".jentry").forEach(function (e) {
+      if (e === entry || e.dataset.day !== day || e.dataset.time !== time) return;
+      var ei = parseInt(e.dataset.idx, 10);
+      if (delta < 0 ? ei > idx : ei >= idx) e.dataset.idx = ei + delta;
+    });
+  }
 
-  // ---- journal: per-entry edit / delete (byte-preserving, with undo) -----------
-  // Delete is a two-step arm-then-confirm (like tasks/notes), with the Undo toast as
-  // the recovery net. Undo restores the whole day's page from prev_raw.
-  document.querySelectorAll(".jentry .jdel").forEach(function (btn) {
-    confirmClick(btn, function () {
-      var entry = btn.closest(".jentry");
+  function wireEntry(entry) {
+    // galleries → smart media modal on tap (images inline, files carded)
+    entry.querySelectorAll(".jgimg, .jgfile").forEach(function (im) {
+      im.addEventListener("click", function () { openMedia(im.dataset.full || im.src, im.dataset.name); });
+    });
+    // ⋯ reveals row actions on touch (desktop reveals on hover via CSS)
+    var more = entry.querySelector(".jmore");
+    if (more) more.addEventListener("click", function () { entry.classList.toggle("acts"); });
+
+    // delete — two-step arm-then-confirm (like tasks/notes) + Undo toast as the net.
+    // The server restores the whole day from prev_raw; the page only lost this one
+    // node, so Undo slots the same node back rather than reloading.
+    var del = entry.querySelector(".jdel");
+    if (del) confirmClick(del, function () {
       var day = entry.dataset.day, time = entry.dataset.time, idx = entry.dataset.idx;
+      var parent = entry.parentNode, anchor = entry.nextElementSibling;
       post("/journal/" + day + "/entry/" + time + "/delete", { idx: idx }).then(function (res) {
         if (!res.ok) { toast("Could not delete"); return; }
         var prev = res.data.prev_raw;
-        // Same-minute siblings are disambiguated by occurrence idx; removing this
-        // one shifts the file's indices down, so decrement every later sibling's
-        // data-idx in place — otherwise its next edit/delete targets a stale idx (404).
-        var delIdx = parseInt(idx, 10);
-        document.querySelectorAll(".jentry").forEach(function (e) {
-          if (e === entry || e.dataset.day !== day || e.dataset.time !== time) return;
-          var ei = parseInt(e.dataset.idx, 10);
-          if (ei > delIdx) e.dataset.idx = ei - 1;
-        });
+        shiftSiblings(entry, -1);
         removeWithUndo(entry, {
-          label: "Entry", restore: "/journal/" + day + "/save", restoreData: { raw: prev }
+          label: "Entry", restore: "/journal/" + day + "/save", restoreData: { raw: prev },
+          onRestore: function () {
+            if (!parent.isConnected) return false;
+            shiftSiblings(entry, +1);
+            entry.classList.remove("removing");
+            parent.insertBefore(entry, anchor && anchor.isConnected ? anchor : null);
+            return true;
+          }
         });
       });
     });
-  });
-  document.querySelectorAll(".jentry .jedit").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var entry = btn.closest(".jentry");
+
+    var edit = entry.querySelector(".jedit");
+    if (edit) edit.addEventListener("click", function () {
       if (entry.querySelector(".jedit-area")) return;          // already editing
       var day = entry.dataset.day, time = entry.dataset.time, idx = entry.dataset.idx;
       var p = entry.querySelector(".jtext");
@@ -916,6 +974,7 @@
       function teardown() { area.remove(); row.remove(); p.style.display = ""; }
       cancel.addEventListener("click", teardown);
       save.addEventListener("click", function () {
+        var prevText = p.textContent;
         post("/journal/" + day + "/entry/" + time + "/save", { idx: idx, text: area.value })
           .then(function (res) {
             if (!res.ok) { toast("Could not save"); return; }
@@ -923,11 +982,64 @@
             p.textContent = area.value.trim();
             teardown();
             toast("Entry updated", function () {
-              post("/journal/" + day + "/save", { raw: prev }).then(reloadSoon);
+              // prev_raw rewrites the whole day's file, but only this one paragraph
+              // changed on the page — put its text back instead of reloading.
+              post("/journal/" + day + "/save", { raw: prev }).then(function () {
+                p.textContent = prevText;
+              });
             });
           });
       });
     });
+  }
+  document.querySelectorAll(".jentry").forEach(wireEntry);
+
+  // ---- journal: add entry -----------------------------------------------------
+  // The first entry of a day fills today's dot in the month cadence graph — the old
+  // reload was the only thing that used to light it.
+  function markCadenceToday() {
+    var dot = document.querySelector(".ghgraph .cd.today");
+    if (!dot || dot.classList.contains("w")) return;
+    dot.classList.add("w");
+    if (dot.dataset.tip) dot.dataset.tip = dot.dataset.tip.replace("no entry", "wrote");
+    var count = document.querySelector(".cadcount");
+    var n = count ? parseInt(count.textContent, 10) : NaN;
+    if (!isNaN(n)) count.textContent = (n + 1) + " days";
+  }
+  // Splice one freshly-rendered entry above the composer. False → no slot to splice into
+  // (or a raw-markdown-only page, which a load re-renders as entries) → caller reloads.
+  function addEntry(node, box) {
+    var card = box.parentNode;
+    if (!node || !card) return false;
+    var empty = card.querySelector(".empty");
+    if (!card.querySelector(".jentry") && !empty) return false;
+    if (empty) empty.remove();
+    card.insertBefore(node, box);
+    wireEntry(node);
+    markCadenceToday();
+    return true;
+  }
+  var jAttach = document.getElementById("j-attach");
+  if (jAttach) initAttach(jAttach);
+  var jAdd = document.getElementById("j-add");
+  var jBusy = false;
+  if (jAdd) jAdd.addEventListener("click", function () {
+    if (jBusy) return;                                 // guard against double-tap
+    var box = document.getElementById("j-text"); var t = box.value.trim();
+    var media = jAttach ? getAttach(jAttach).join(",") : "";
+    if (!t && !media) { box.focus(); return; }
+    jBusy = true;
+    post("/journal/entry", { text: t, day: box.dataset.day || "", media: media })
+      .then(function (res) {
+        jBusy = false;
+        if (!res.ok) { toast("Could not add"); return; }
+        box.value = ""; autogrow(box);
+        if (jAttach) setAttach(jAttach, []);
+        toast("Entry added");
+        var html = res.data && res.data.entry_html;
+        if (!addEntry(html ? htmlToNode(html) : null, box)) reloadSoon();
+      })
+      .catch(function () { jBusy = false; toast("Could not add"); });
   });
 
   // ---- reminders card: pure display of pending pushes + dismiss ----------------
@@ -960,9 +1072,110 @@
       });
       list.insertBefore(el, before);
     }
-    // Exposed for the composer's Reminder mode.
+    // Exposed for the composer's Reminder mode. Adding is a real user gesture, so it's
+    // the right moment to ask for notification permission (browsers may auto-deny on load).
     window.LifeOS = window.LifeOS || {};
-    window.LifeOS.remAdd = function (r) { insertSorted(makeItem(r)); syncEmpty(); };
+    window.LifeOS.remAdd = function (r) { askNotify(); insertSorted(makeItem(r)); syncEmpty(); };
+
+    // ---- browser-side firing: no Telegram, so the open tab delivers due reminders ------
+    // A reminder's data-fire is UTC ISO; once now passes it we notify and drop it off the
+    // strip, POSTing /fire to stamp fired_at (mirrors scheduler.maybe_fire_reminders). Uses
+    // the Notifications API when granted (works backgrounded), else an in-page toast.
+    function askNotify() {
+      if (!("Notification" in window) || Notification.permission !== "default") return;
+      try { Notification.requestPermission(); } catch (e) {}
+    }
+    // Background surface: a PINNED OS notification (requireInteraction ⇒ it won't fade like a
+    // toast) for when the tab isn't focused. The in-page surface is the modal below.
+    function osNotify(text) {
+      if ("Notification" in window && Notification.permission === "granted") {
+        try { new Notification("⏰ Reminder", { body: text, requireInteraction: true }); } catch (e) {}
+      }
+    }
+    // Alarm chime: a two-note ding repeating until dismissed. Synthesised with WebAudio so
+    // there's no asset to ship (no build step). Best-effort — if the browser blocks audio
+    // (no prior gesture on this tab) it stays silent and the modal still does its job.
+    var actx = null, chimeTimer = null, chimeCount = 0;
+    // Tuned by ear (2026-07-15): full volume, 2s apart, 790→1160Hz — carries across a room
+    // without being shrill. CHIME_MAX × CHIME_EVERY ⇒ the ~60s self-silence.
+    var CHIME_VOL = 1, CHIME_EVERY = 2000, CHIME_MAX = 30;
+    function blip(at, freq) {
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.connect(g); g.connect(actx.destination);
+      o.type = "sine"; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, at);            // ramp, never a click
+      g.gain.exponentialRampToValueAtTime(CHIME_VOL, at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.3);
+      o.start(at); o.stop(at + 0.32);
+    }
+    function chime() {
+      try {
+        if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === "suspended") actx.resume();
+        var t = actx.currentTime;
+        blip(t, 790); blip(t + 0.22, 1160);         // ding-dong
+      } catch (e) { stopChime(); }
+    }
+    function startChime() {
+      stopChime(); chimeCount = 0; chime();
+      chimeTimer = setInterval(function () {
+        if (++chimeCount >= CHIME_MAX) { stopChime(); return; }
+        chime();
+      }, CHIME_EVERY);
+    }
+    function stopChime() { if (chimeTimer) { clearInterval(chimeTimer); chimeTimer = null; } }
+    // Browsers refuse audio until the page has had a user gesture — an untouched dashboard
+    // would fire a SILENT alarm. Prime the context on the first interaction (any click/key)
+    // so a chime hours later can actually sound.
+    function primeAudio() {
+      try {
+        if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === "suspended") actx.resume();
+      } catch (e) {}
+    }
+    ["click", "keydown", "touchstart"].forEach(function (ev) {
+      document.addEventListener(ev, primeAudio, { once: true });
+    });
+
+    // In-page alarm: a centred modal that stacks each due reminder and stays until dismissed.
+    var alertOv = document.getElementById("remalert"),
+        alertList = document.getElementById("ra-list"),
+        okBtn = document.getElementById("ra-ok");
+    function popAlert(text, when) {
+      if (!alertOv || !alertList) { toast("⏰ " + text); return; }   // safety net
+      var item = document.createElement("div"); item.className = "ra-item";
+      var tx = document.createElement("div"); tx.className = "ra-text"; tx.textContent = text;
+      item.appendChild(tx);
+      if (when) { var w = document.createElement("div"); w.className = "ra-when"; w.textContent = when; item.appendChild(w); }
+      alertList.appendChild(item);
+      alertOv.classList.add("on");
+      startChime();
+    }
+    function closeAlert() { stopChime(); if (alertOv) { alertOv.classList.remove("on"); alertList.innerHTML = ""; } }
+    if (okBtn) okBtn.addEventListener("click", closeAlert);
+    if (alertOv) alertOv.addEventListener("click", function (e) { if (e.target === alertOv) closeAlert(); });
+
+    function fireDue() {
+      var now = Date.now();
+      list.querySelectorAll(".remitem").forEach(function (it) {
+        if (it.dataset.firing) return;                 // a POST is already in flight for this one
+        var t = Date.parse(it.dataset.fire);
+        if (isNaN(t) || t > now) return;
+        it.dataset.firing = "1";
+        var text = it.dataset.text, when = (it.querySelector(".rwhen") || {}).textContent || "";
+        // Always alarm — the POST's `fired` only says who stamped fired_at FIRST, not whether
+        // THIS dashboard has shown it. The daemon polls faster than we do, so gating on it
+        // meant a Telegram push silently swallowed the on-screen alarm. Telegram and the
+        // dashboard are separate surfaces; a row is only here if it was pending at load, and
+        // it's removed once shown, so this can't double-pop or resurrect an old reminder.
+        post("/reminders/" + it.dataset.id + "/fire").then(function () {
+          popAlert(text, when); osNotify(text);
+          it.remove(); syncEmpty();
+        }).catch(function () { delete it.dataset.firing; });       // let a later tick retry
+      });
+    }
+    fireDue();                       // catch anything already overdue at load
+    setInterval(fireDue, 20000);     // then every 20s — within a poll of the stated time
 
     list.addEventListener("click", function (e) {
       var x = e.target.closest(".remx");

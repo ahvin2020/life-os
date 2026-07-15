@@ -5,19 +5,35 @@ the Telegram bot), which delegates to capture.route_capture."""
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+import random
 
-from flask import Blueprint, render_template, render_template_string, request, jsonify, send_file, abort
+from flask import Blueprint, render_template, request, jsonify, send_file, abort
 
-from core.web_core import db, today_iso
+from core.web_core import db, today_iso, task_card_html
 from core.db import now_sg, get_setting, set_setting
-from domain.capture import (route_capture, convert_note_to_task, convert_task_to_note,
-                     convert_note_to_journal, convert_task_to_journal)
-from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done, task_dict
+from domain.capture import (route_capture, route_deterministic, convert_note_to_task,
+                     convert_task_to_note, convert_note_to_journal, convert_task_to_journal)
+from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done
 from domain.goals_core import goal_progress
 from domain import vault_store, reminders
 
 bp = Blueprint("main", __name__)
+
+# A warm one-liner after the greeting, rotated per load so opening Today feels like
+# arriving somewhere rather than facing a pile. Kept short (one line), time-of-day
+# aware, and never cheesy — the joy is in the words, not a loud colour.
+GREETING_PROMPTS = {
+    "morning": ["Ready to make it a good one?", "What's first today?",
+                "Let's make today count.", "Fresh page — where do we start?",
+                "Ready when you are.", "What matters most today?", "Let's ease in."],
+    "afternoon": ["How's it going so far?", "Still plenty of runway.",
+                  "What's next?", "Keep it rolling.", "Halfway there — nice.",
+                  "What's left to land today?"],
+    "evening": ["Winding down?", "How did today treat you?", "Time to wrap up?",
+                "What's left before you rest?", "Ease off when you're ready."],
+    "late": ["Burning the midnight oil?", "Don't forget to rest.",
+             "Still going strong?", "Late one tonight?"],
+}
 
 
 @bp.route("/")
@@ -52,10 +68,15 @@ def home():
 
     # Greeting: opening the app should feel like arriving somewhere, not facing a pile.
     hour = now.hour
-    greeting = ("Good morning" if 5 <= hour < 12 else
-                "Good afternoon" if 12 <= hour < 18 else
-                "Good evening" if 18 <= hour < 23 else "Still up")
-    # Lead with yesterday's wins (Sunsama's ritual): start from a win, not a to-do list.
+    if 5 <= hour < 12:
+        greeting, band = "Good morning", "morning"
+    elif 12 <= hour < 18:
+        greeting, band = "Good afternoon", "afternoon"
+    elif 18 <= hour < 23:
+        greeting, band = "Good evening", "evening"
+    else:
+        greeting, band = "Still up", "late"
+    greeting_prompt = random.choice(GREETING_PROMPTS[band])
     conn2 = db()
     # Greeting name: the user-set display name (Settings) wins, else derive from the profile
     # identity, else nameless — nothing hardcoded, so it's right for whoever runs the app.
@@ -64,12 +85,6 @@ def home():
     # and they haven't dismissed it, show a one-line banner nudging them to set up — the web
     # counterpart of the bot's first-run nudge, so a web-first user isn't left nameless.
     show_onboarding = bool(not owner_name and not get_setting(conn2, "web_onboard_dismissed"))
-    sg_mid = datetime.fromisoformat(today).replace(tzinfo=now.tzinfo)
-    y_start = (sg_mid - timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    y_end = sg_mid.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    yesterday_done = conn2.execute(
-        "SELECT COUNT(*) c FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL "
-        "AND completed_at >= ? AND completed_at < ?", (y_start, y_end)).fetchone()["c"]
     conn2.close()
     # All-done ending (peak-end): the day's list is empty or fully checked off.
     all_done = bool(tasks) and score["done"] == score["total"] and score["total"] > 0
@@ -77,11 +92,11 @@ def home():
     return render_template(
         "today.html", active="home",
         weekday=now.strftime("%A"), greeting=greeting,
-        owner_name=owner_name,
-        yesterday_done=yesterday_done, all_done=all_done,
-        # date only — a static render-time clock goes stale on screen, and the tz
-        # name is settings info, not something to re-read every morning
-        date_str=now.strftime("%-d %b %Y"),
+        greeting_prompt=greeting_prompt, owner_name=owner_name,
+        all_done=all_done,
+        # short date (no year) for the header's quiet meta line; the current year is
+        # implied, and a static render-time clock/tz name would only go stale on screen
+        date_short=now.strftime("%-d %b"),
         tasks=tasks, week=week, score=score, goals=goals, goals_list=goals_list,
         reminders=pending_reminders,
         first_run=first_run, journal_empty=journal_empty, show_onboarding=show_onboarding)
@@ -125,6 +140,17 @@ def reminder_add():
     return jsonify({"status": "ok", **r})
 
 
+@bp.route("/reminders/<int:rid>/fire", methods=["POST"])
+def reminder_fire(rid):
+    """Mark a reminder delivered by the open browser tab (the firing path when there's no
+    Telegram daemon). `fired` is False if it was already fired, so the tab knows not to
+    re-notify — mirrors scheduler.maybe_fire_reminders' fired_at stamp."""
+    conn = db()
+    fired = reminders.fire_reminder(conn, rid)
+    conn.close()
+    return jsonify({"status": "ok", "fired": fired})
+
+
 @bp.route("/reminders/<int:rid>/dismiss", methods=["POST"])
 def reminder_dismiss(rid):
     """Cancel a pending reminder; returns its text+fire_at so the toast can undo."""
@@ -158,18 +184,70 @@ def capture():
     if not text and not media:
         return jsonify({"status": "error", "message": "empty"}), 400
     conn = db()
-    result = route_capture(conn, text, source="web", forced=forced, media=media)
+    # Everything claude-free runs through the SHARED ladder (capture.route_deterministic) —
+    # the same one the Telegram daemon uses, so the phone and the web bar can never drift.
+    # It owns: explicit captures (URL / "add a task X" / a parseable timed reminder), instant
+    # list answers, and document-fact answers.
+    result = None
+    if forced == "auto" and text and not media:
+        result = route_deterministic(conn, text, source="web")
+        if result and result.get("kind") == "answer":
+            # record it like the daemon does, so an ordinal follow-up ("complete the second
+            # one") still sees the list this tier answered
+            from ai.router import record_exchange
+            record_exchange(conn, text, result["reply"], reply_cap=1200)
+            conn.close()
+            return jsonify({"status": "ok", "ai": True, "reply": result["reply"],
+                            "applied": ["answer"], "reload": False})
+    # Nothing deterministic matched → the SAME agentic router the bot uses, so the web bar is
+    # as smart as the phone for genuine prose. Guarded by has_claude() so a host WITHOUT the
+    # CLI (e.g. the NAS container) files an #unsorted note instantly rather than eating a
+    # claude timeout on every capture.
+    if result is None and forced == "auto" and text and not media:
+        from ai.claude_cli import has_claude
+        if has_claude():
+            from ai import router
+            res = router.route(conn, text, source="web")
+            applied = res.get("applied") or []
+            extra = {}
+            # A brand-new task splices into This-week in place (same card the deterministic
+            # path renders), so a simple add never full-reloads the page.
+            new_tid = res.get("created_task_id")
+            if applied == ["create_task"] and new_tid:
+                extra["week_html"] = task_card_html(conn, new_tid, "week")
+            # Same idea for a new reminder: hand back the row so the composer drops it into
+            # the reminders strip in place — no toast, no reload.
+            if applied == ["set_reminder"] and res.get("created_reminder"):
+                extra["reminder"] = res["created_reminder"]
+            # Tasks the router CHANGED (completed / planned / renamed / deleted) come back as
+            # re-rendered cards the page swaps in place. An empty html means the row is gone
+            # (deleted) → the caller removes that node.
+            touched = [t for t in (res.get("touched_task_ids") or []) if t != new_tid]
+            if touched:
+                extra["cards"] = [{"id": t, "html": task_card_html(conn, t, "week")}
+                                  for t in touched]
+            conn.close()
+            # Reload only for what still can't be patched: a goal change (the goals rail owns
+            # its own markup), a router fallback, or a multi-create we can't splice one-by-one.
+            # Task edits ride `cards`; a new task/reminder splices; notes/journal/answers toast.
+            unpatchable = {"update_goal_number", "mark_goal_achieved"}
+            reload_needed = (res.get("fell_back")
+                             or any(a in unpatchable for a in applied)
+                             or (applied.count("create_task") and not extra.get("week_html")))
+            return jsonify({"status": "ok", "ai": True, "reply": res.get("reply", ""),
+                            "applied": applied, "reload": bool(reload_needed), **extra})
+        # no claude → fall through to route_capture below, which files an #unsorted note
+        # instantly; the daily triage sweep refiles it later, with no timeout penalty here.
+    # A forced kind (photo caption → note), an attachment, or the no-claude fallback still
+    # files here. `result` is already set when the shared ladder handled it above.
+    if result is None:
+        result = route_capture(conn, text, source="web", forced=forced, media=media)
     # A task captured on Today splices into This-week in place (captures land at the top
     # of the week pool) — same macro the home page uses, so the markup matches a reload.
     # Notes/journal have no card on Today; the toast is their confirmation.
     extra = {}
-    kind = result.get("kind")
-    if kind == "task" and result.get("id"):
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (result["id"],)).fetchone()
-        if row:
-            extra["week_html"] = render_template_string(
-                "{% import '_macros.html' as m %}{{ m.week_item(t, today) }}",
-                t=task_dict(conn, row), today=today_iso())
+    if result.get("kind") == "task" and result.get("id"):
+        extra["week_html"] = task_card_html(conn, result["id"], "week")
     conn.close()
     return jsonify({"status": "ok", **result, **extra})
 

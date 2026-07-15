@@ -131,3 +131,40 @@ def test_journal_entry_audio_route_serves_and_404s(client):
     # an entry with no recording → 404
     r2 = client.get(f"/journal/{DAY}/entry/00:00/audio?i=0")
     assert r2.status_code == 404
+
+
+# ── in-place add: the route hands back the rendered entry, not a reload ───────
+XHR = {"X-Requested-With": "XMLHttpRequest"}
+
+
+def test_entry_add_returns_rendered_entry_html(client):
+    """Adding an entry returns its markup rendered from the SAME _macros.journal_entry
+    the page uses, so the composer can splice it above itself instead of reloading."""
+    r = client.post("/journal/entry", data={"text": "Spliced in place.", "day": DAY},
+                    headers=XHR)
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["status"] == "ok" and j["day"] == DAY
+    html = j["entry_html"]
+    assert "jentry" in html and "Spliced in place." in html
+    assert f'data-day="{DAY}"' in html                       # wired for edit/delete
+    assert 'class="jact jedit"' in html and 'class="jact jdel"' in html
+
+
+def test_entry_add_html_carries_the_occurrence_idx(client):
+    """Two entries in the same minute must come back with DIFFERENT data-idx values —
+    a spliced entry whose idx lied would 404 on its next edit/delete."""
+    _seed()
+    e = vault_store.read_journal(DAY)["entries"][1]           # an existing 13:45 entry
+    assert e["time"] == "13:45"
+    # append_journal_entry stamps the wall clock, so drive the render directly at a
+    # known duplicate timestamp instead of racing the minute boundary
+    from routes.journal import _annotate_occurrences, _last_entry_html
+    from core.web_core import app
+    page = _annotate_occurrences(vault_store.read_journal(DAY))
+    dupes = [x for x in page["entries"] if x["time"] == "13:45"]
+    assert [x["idx"] for x in dupes] == [0, 1]
+    with app.test_request_context():
+        html = _last_entry_html(page, DAY)
+    last = page["entries"][-1]
+    assert f'data-idx="{last["idx"]}"' in html and last["text"] in html

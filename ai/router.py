@@ -52,7 +52,6 @@ _CATEGORIES = ("content", "business", "personal")
 _PRIORITIES = ("high", "med", "low")
 _COLUMNS = ("backlog", "week", "done")
 _PERIODS = ("week", "month")
-_GOAL_KINDS = ("rollup", "number")
 
 
 # ── raw capture log (safety rail #1) ──────────────────────────────────────────
@@ -172,8 +171,10 @@ def execute_pending(conn, pending: dict) -> str:
             if not row:
                 continue
             with conn:
-                conn.execute("UPDATE tasks SET deleted_at=?, updated=? WHERE id=?",
-                             (now_iso(), now_iso(), tid))
+                # cascade to subtasks, like every other soft-delete site — archiving a parent
+                # must not leave its children behind with deleted_at IS NULL
+                conn.execute("UPDATE tasks SET deleted_at=?, updated=? WHERE id=? OR parent_id=?",
+                             (now_iso(), now_iso(), tid, tid))
             done.append(row["title"])
         return "🗑 Archived: " + ", ".join(done) if done else "Those tasks are already gone."
     if kind == "plan_task":
@@ -256,11 +257,26 @@ def _memory_user_repr(message: str, image_path: str | None) -> str:
 
 
 # ── live context ──────────────────────────────────────────────────────────────
-def _upcoming_events(days_ahead: int = 14, cap: int = 20) -> list:
+# Calendar events are a LIVE network round-trip (0.4-0.9s once Google is connected), and
+# build_context runs it on every single capture — including "buy milk", which will never ask
+# about the calendar. A short TTL keeps answers current (a just-added event shows within a
+# minute) while a burst of captures pays for it once. Keyed by (days_ahead, cap).
+_EVENTS_TTL = 60
+_events_cache: dict = {}
+
+
+def _upcoming_events(days_ahead: int = 14, cap: int = 20, now=None) -> list:
     """Read-only upcoming Google Calendar events for the router's live context, so the bot
     can answer 'what's on tomorrow / where's the event' directly (and knows his real schedule
     when reasoning). The soonest `cap` events over the next `days_ahead` days. [] when Google
-    isn't connected or on ANY failure — a calendar hiccup must never block routing a message."""
+    isn't connected or on ANY failure — a calendar hiccup must never block routing a message.
+    Cached for _EVENTS_TTL seconds; `now` is injectable so tests don't sleep."""
+    import time
+    stamp = time.time() if now is None else now
+    key = (days_ahead, cap)
+    hit = _events_cache.get(key)
+    if hit and (stamp - hit[0]) < _EVENTS_TTL:
+        return hit[1]
     try:
         from ai import google_client
         if not google_client.is_configured():
@@ -268,9 +284,11 @@ def _upcoming_events(days_ahead: int = 14, cap: int = 20) -> list:
         from datetime import date, timedelta
         start = today_iso()
         hi = (date.fromisoformat(start) + timedelta(days=days_ahead)).isoformat()
-        return google_client.calendar_range(start, hi)[:cap]
+        events = google_client.calendar_range(start, hi)[:cap]
     except Exception:
-        return []
+        return []                      # never cache a failure — retry on the next capture
+    _events_cache[key] = (stamp, events)
+    return events
 
 
 def _reask_of(message: str, exchanges: list) -> str | None:
@@ -611,6 +629,9 @@ def apply_action(conn, act, ctx) -> tuple:
         tid = _as_int(act.get("id"))
         if tid is None or tid not in ctx["task_ids"]:
             return ("❓ I couldn't find that task — which one did you mean?", None)
+        # remember which rows this turn touched, so the web capture can re-render just
+        # those cards in place rather than reloading the whole page
+        ctx.setdefault("touched_task_ids", []).append(tid)
         title = _title(conn, ctx, tid)
         if kind == "complete_task":
             from domain.tasks_core import complete_task
@@ -752,6 +773,8 @@ def apply_action(conn, act, ctx) -> tuple:
                                       media=ctx.get("media_pointer"))
             for s in subs:
                 capture.create_task(conn, s.strip(), parent_id=tid)
+        # surface the new id so the web capture can splice the card in place (no reload)
+        ctx["created_task_id"] = tid
         bits = []
         if due:
             bits.append("due " + due_label(due, today))
@@ -824,8 +847,12 @@ def apply_action(conn, act, ctx) -> tuple:
                 return (f"📂 Couldn't find a document matching '{query}'.", None)
             hits = docs.prefer_owner(conn, hits, f"{query} {act.get('question') or ''}")
             link = docs.link_for_hit(conn, hits[0])
-            return ((f"🔗 {hits[0]['name']}\n{link}" if link
-                     else f"Couldn't make a link for {hits[0]['name']}."), None)
+            if not link:
+                return (f"Couldn't make a link for {hits[0]['name']}.", None)
+            # a vault/doc-root link only resolves over Tailscale — say so, or he taps it on
+            # cellular and it just hangs. (Dropbox links are public, so they carry no caveat.)
+            note = "" if hits[0].get("source") == "dropbox" else "\n(opens on your Tailscale network only)"
+            return (f"🔗 {hits[0]['name']}\n{link}{note}", None)
         # info + file → the agentic lookup loop (handles single, multi-entity, multi-hop,
         # and multi-file fetch through one mechanism; it stashes any files for the daemon).
         # `progress` narrates each slow step so a multi-hop fetch doesn't look hung.
@@ -913,6 +940,9 @@ def apply_action(conn, act, ctx) -> tuple:
             r = reminders.create_reminder(conn, text, fire_local)
         except (ValueError, TypeError):
             return ("❓ I couldn't read that time — try 'at 3pm' or 'in 10 minutes'.", None)
+        # surfaced like created_task_id so the web composer can splice it into the
+        # reminders strip in place, instead of toasting + reloading the page
+        ctx["created_reminder"] = r
         return (f"⏰ Reminder set — {r['label']}: {text}", None)
 
     if kind == "draft_email":
@@ -981,12 +1011,18 @@ def apply_result(conn, obj, ctx) -> dict:
                 # a find_document nested in a multi stashes its path in ctx — surface it so
                 # the daemon actually uploads the file (else "sending it now" sends nothing).
                 "document": ctx.get("send_document"),
-                "documents": ctx.get("send_documents")}
+                "documents": ctx.get("send_documents"),
+                "created_task_id": ctx.get("created_task_id"),
+                "created_reminder": ctx.get("created_reminder"),
+                "touched_task_ids": ctx.get("touched_task_ids") or []}
     reply, undo = apply_action(conn, obj, ctx)
     return {"reply": reply, "keyboard": _undo_kb(undo) if undo else None,
             "fell_back": False, "applied": [obj.get("action")],
             "document": ctx.get("send_document"),
-            "documents": ctx.get("send_documents")}
+            "documents": ctx.get("send_documents"),
+            "created_task_id": ctx.get("created_task_id"),
+            "created_reminder": ctx.get("created_reminder"),
+            "touched_task_ids": ctx.get("touched_task_ids") or []}
 
 
 # ── the one entry point ──────────────────────────────────────────────────────-

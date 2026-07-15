@@ -7,6 +7,8 @@ Any screen or change in this app is judged against this file. When in doubt: rem
 ## Behavior laws (apply to every interaction)
 - **Jakob's Law** — work like the apps he already knows (Todoist/Notion/Telegram conventions). Novelty needs a reason.
 - **Fitts's Law** — targets big and close: ≥44px touch, primary actions near the thumb/cursor path.
+  (Nav is the deliberate exception — it lives in the phone top bar's hamburger, out of thumb
+  reach on purpose: you navigate rarely, and the reachable spots are worth more to the FAB.)
 - **Hick's Law / Choice overload** — fewer visible choices; secondary actions behind hover or ⋯.
 - **Doherty Threshold** — respond <400ms; anything slower shows immediate feedback (typing indicator, optimistic UI).
 - **Miller/Chunking** — group into scannable clusters (cards, sections); never a wall of rows.
@@ -34,7 +36,9 @@ Any screen or change in this app is judged against this file. When in doubt: rem
 - Empty states teach the next action; first-run onboards. No explanatory footers on working UI.
 - Row actions hidden until hover (desktop) / behind ⋯ (mobile).
 - Data text (dates, counts, slugs) in mono; prose in sans. Amber = attention; green = done/positive; red = overdue/danger only.
-- Mobile: bottom-nav + FAB reachable one-thumb; nothing smaller than 44px effective.
+- Mobile: top bar + hamburger drawer for nav, FAB reachable one-thumb (amended 2026-07-15 —
+  the drawer slides in the same sidebar desktop uses, so nav is defined once; the FAB keeps
+  the one action that genuinely needs the thumb). Nothing smaller than 44px effective.
 - Every view must be judged at 1440px AND 390px before shipping, with human eyes on screenshots.
 
 ## The three vet questions per screen

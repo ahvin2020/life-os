@@ -50,6 +50,25 @@ def test_execute_archive_soft_deletes(client):
     assert gone == 2 and "Archived" in msg
 
 
+def test_execute_archive_cascades_to_subtasks(client):
+    """Archiving a parent must soft-delete its subtasks too — the cascade every other
+    delete site does (`WHERE id=? OR parent_id=?`). This one wrote `WHERE id=?`, leaving
+    children with deleted_at IS NULL: invisible (subtask reads filter by parent) but
+    un-undoable, and live to the first subtask-aware query."""
+    conn = _db()
+    with conn:
+        parent = create_task(conn, "Parent to archive")
+        kid = create_task(conn, "Subtask of it", parent_id=parent)
+        other = create_task(conn, "Untouched task")
+    router.execute_pending(conn, {"kind": "archive_tasks", "payload": {"ids": [parent]}})
+    rows = {r["id"]: r["deleted_at"] for r in
+            conn.execute("SELECT id, deleted_at FROM tasks").fetchall()}
+    conn.close()
+    assert rows[parent] is not None                    # the parent went
+    assert rows[kid] is not None, "subtask orphaned with deleted_at IS NULL"
+    assert rows[other] is None                         # nothing else touched
+
+
 def test_weekly_suggestion_archive_then_plan(client):
     conn = _db()
     with conn:

@@ -393,7 +393,7 @@ def test_captured_task_lands_at_the_top_of_week(client):
     with conn:
         create_task(conn, "old week 1", col="week")
         create_task(conn, "old week 2", col="week")
-    res = route_capture(conn, "t: urgent capture")
+    res = route_capture(conn, "add a task urgent capture")
     ids = [r["id"] for r in conn.execute(
         "SELECT id FROM tasks WHERE col='week' AND parent_id IS NULL "
         "ORDER BY sort_order, id")]
@@ -474,3 +474,70 @@ def test_editor_demote_to_backlog_unplans(client):
     row = conn.execute("SELECT col, planned_on FROM tasks WHERE id=?", (tid,)).fetchone()
     conn.close()
     assert row["col"] == "backlog" and row["planned_on"] is None
+
+
+# ── in-place card rendering ───────────────────────────────────────────────────
+# Every mutation hands back the task's freshly-rendered card so the page swaps ONE node
+# instead of full-reloading. The server stays the single owner of card markup — if these
+# break, the JS silently falls back to a reload (the thing the sweep removed).
+def test_mutations_return_rendered_card(client):
+    j = client.post("/tasks/new", data={"title": "card me", "col": "week",
+                                        "surface": "kcard"}, headers=XHR).get_json()
+    tid = j["id"]
+    assert "kcard" in j["card_html"] and "card me" in j["card_html"]
+
+    # an edit's card carries the structural change (rename here) — no reload needed
+    j = client.post(f"/tasks/{tid}/edit", data={"title": "card renamed", "col": "week",
+                                                "surface": "kcard"}, headers=XHR).get_json()
+    assert "card renamed" in j["card_html"]
+
+    # plan / complete / restore each re-render for the surface the caller names
+    j = client.post(f"/tasks/{tid}/plan", data={"surface": "week"}, headers=XHR).get_json()
+    assert j["planned"] is True and j["card_html"]
+
+    j = client.post(f"/tasks/{tid}/complete", data={"done": "1", "surface": "week"},
+                    headers=XHR).get_json()
+    assert j["card_html"]
+
+    client.post(f"/tasks/{tid}/delete", headers=XHR)
+    j = client.post(f"/tasks/{tid}/restore", data={"surface": "week"},
+                    headers=XHR).get_json()
+    assert j["card_html"], "an Undo must re-insert the card, not cost a reload"
+
+
+def test_deleted_task_renders_no_card(client):
+    """A gone task renders "" so a caller reads "no card" as "remove the node"."""
+    from core.web_core import task_card_html
+    conn = _db()
+    with conn:
+        tid = create_task(conn, "vanishing", col="week")
+    client.post(f"/tasks/{tid}/delete", headers=XHR)
+    with client.application.test_request_context():
+        assert task_card_html(_db(), tid) == ""
+        assert task_card_html(_db(), 999999) == ""
+
+
+def test_swapped_card_matches_the_page_render(client):
+    """The anti-drift invariant: a card re-rendered for an in-place swap must be byte-
+    identical to the one the page renders. A pinned (on-today) card is the case that
+    catches it — `pinned` is set while tasks_page buckets the board, so a single-card
+    render has to derive it from the same predicate or the macro's `stale` line diverges."""
+    from core.web_core import task_card_html
+    conn = _db()
+    with conn:
+        # ≥7 days in the week column + on today → the exact combination where a missing
+        # `pinned` would wrongly print the "Nd · K× moved" stale line
+        tid = create_task(conn, "pinned and stale", col="week", planned_on=today_iso())
+        conn.execute("UPDATE tasks SET week_since='2020-01-01', reschedule_count=3 "
+                     "WHERE id=?", (tid,))
+    conn.close()
+
+    page = client.get("/tasks").data.decode()
+    with client.application.test_request_context():
+        card = task_card_html(_db(), tid, "kcard")
+
+    assert 'class="kcard pinned"' in card, "a re-rendered on-today card must still pin"
+    assert "moved" not in card, "a pinned card must not confess staleness (macro gates it)"
+    # the page's own markup for this card must contain exactly what we'd swap in
+    inner = card.split(">", 1)[1].strip()[:120]
+    assert inner and inner in page, "swapped card drifted from the page render"

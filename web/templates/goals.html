@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}Goals{% endblock %}
 {% block content %}
 <div class="vhead"><h1>Goals</h1><span class="spacer"></span><button class="mini addbtn" id="goal-new" type="button">＋ New goal</button></div>
@@ -38,46 +39,11 @@
   <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini" type="button" id="gcancel">Cancel</button><button class="qgo" type="submit">Create goal</button></div>
 </form>
 
-{% macro goal_card(g) -%}
-{% set p = g.progress %}
-{% set gdone = (p.achieved if p.shape == 'milestone' else p.pct >= 100) %}
-<div class="goal{{ ' achieved' if gdone else '' }}" data-goal-id="{{ g.id }}">
-  <div class="ghead"><span class="t">{{ g.title }}</span>
-    {% if p.shape in ['measure', 'both'] %}
-      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}" data-target="{{ p.target|int }}" data-unit="{{ p.unit }}" tabindex="0" role="button" title="update number">{{ p.current|int }}/{{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
-    {% elif p.shape == 'rollup' %}
-      <span class="gnum">{{ p.done }}/{{ p.total }}</span>
-    {% else %}
-      <button class="gachieve {{ 'done' if p.achieved else '' }}" type="button" data-goal-id="{{ g.id }}" aria-pressed="{{ 'true' if p.achieved else 'false' }}">{{ '✓ Achieved' if p.achieved else 'Mark achieved' }}</button>
-    {% endif %}
-  </div>
-  {% if p.shape != 'milestone' %}
-  <div class="bar {{ 'full' if p.pct >= 100 else '' }}"><i style="width:{{ p.pct if p.pct <= 100 else 100 }}%"></i></div>
-  {% endif %}
-  {% if p.shape == 'both' %}
-  <div class="gsrc">{{ p.done }}/{{ p.total }} linked tasks done</div>
-  {% endif %}
-  {% if g.end_date %}
-  <div class="gsrc">by {{ g.end_date | fdate }}</div>
-  {% endif %}
-  {% if p.shape in ['rollup', 'both'] %}
-    {% if p.linked %}
-    <div class="gtasks">
-      {% for t in p.linked %}
-      <div class="gt {{ 'done' if t.done else '' }}"><span class="s {{ 'd' if t.done else '' }}">{{ '✓' if t.done else '○' }}</span>{{ t.title }}</div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="gsrc">link tasks to this goal via the task editor (◎)</div>
-    {% endif %}
-  {% endif %}
-  <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini danger gdel" type="button" data-goal-id="{{ g.id }}">Delete</button></div>
-</div>
-{%- endmacro %}
-
+{# data-section keys each grid so a newly created goal can splice into its own
+   timeframe without a reload (feed.js). #}
 {% for sec in sections %}
 <div class="nsec"><span>{{ sec.label }}</span><span class="rule"></span></div>
-<div class="goalgrid">{% for g in sec.goals %}{{ goal_card(g) }}{% endfor %}</div>
+<div class="goalgrid" data-section="{{ sec.key }}">{% for g in sec.goals %}{{ m.goal_card(g) }}{% endfor %}</div>
 {% endfor %}
 {% if not sections %}<div class="empty">No goals yet — create your first one.</div>{% endif %}
 {% endblock %}

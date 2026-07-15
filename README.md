@@ -14,7 +14,10 @@ ever holds web tools.
 ## What's here
 - **Today** — the hero: quick-add composer, today's tasks with subtask progress
   rings, day-score ring, goals rail, "captured today" feed, a view-only "this week"
-  pool, and a read-only Google Calendar strip.
+  pool, a reminders strip, and a read-only Google Calendar strip. A reminder that comes
+  due while the tab is open raises an in-page alarm; otherwise it arrives on Telegram.
+  On a phone the sidebar becomes a hamburger drawer — the same nav, not a second one —
+  and the amber FAB keeps the one action that actually wants your thumb.
 - **Tasks** — kanban (Backlog / This week / Done) with drag-to-reorder (order = your
   priority), subtasks with a fill-up ring that auto-completes the parent, recurrence,
   ☀ plan-for-today (sticky — rolls over until done), colour-coded categories, per-task
@@ -32,10 +35,15 @@ ever holds web tools.
 - **Settings** — timezone, digest/reflection/weekly/monthly hours, voice language,
   staleness/purge windows, document roots, Connections (Telegram / Google / Dropbox),
   and one-tap "run now" for the scheduled jobs — all AJAX, updating in place.
-- **Quick capture** — `POST /capture`: `t:` task, `n:` note, `i:` idea note, `j:`
-  journal, a bare URL → link note (+idea for instagram/youtube/tiktok), `!` = high
-  priority; anything else → an `#unsorted` note. The same deterministic router the
-  Telegram bot uses for its prefix/URL fast paths.
+- **Quick capture** — `POST /capture`, and **there are no prefixes to remember**: just
+  type. The web bar is as smart as the phone — unambiguous shapes are settled instantly
+  and for free (a task-verb opener → task, a bare URL → link note (+idea for
+  instagram/youtube/tiktok), an attachment → note, trailing `!` → high priority), and
+  anything ambiguous goes through the **same `claude -p` router the Telegram bot uses**,
+  so "remind me to call the bank at 3pm" or "had a rough day, kid was sick" land as a
+  reminder and a journal entry without being told which is which. A new task or reminder
+  splices into the page in place; only structural edits force a reload. On a host with no
+  `claude` binary it skips straight to an `#unsorted` note rather than eating a timeout.
 
 ## Quick start (Mac dev)
 ```sh
@@ -75,9 +83,14 @@ user id. **Just send it anything** — plain text, a voice note, a photo, or a d
 - **Voice** → local **mlx-whisper** (original audio kept in `vault/.audio/`, pointer in
   the note). **Photos** → downloaded to `vault/.media/`, and Claude reads the image
   before deciding what to do. **Documents** (PDF/Word/…) → saved with the file attached.
-- `t:`/`n:`/`i:`/`j:` prefixes and bare URLs are optional instant shortcuts.
-  `triage/run_triage.py` survives only as a `--sweep` safety net for any `#unsorted`
-  leftovers.
+- **No syntax, ever.** There are no `t:`/`n:`/`i:`/`j:` prefixes — classifying natural
+  language is the router's job on both surfaces. Bare URLs and task-verb openers are
+  settled deterministically (no Claude call) purely because they're unambiguous, not
+  because you typed a sigil. `triage/run_triage.py` survives only as a `--sweep` safety
+  net for any `#unsorted` leftovers.
+- **It introduces itself.** A fresh install doesn't know who you are, so the first reply
+  asks once — "what should I call you?" — and `call me <name>` sets it. Asked once, never
+  nagged; nothing about the owner is hardcoded.
 
 ## Proactive AI (`ai/proactive.py`, scheduled by `scheduler.py`)
 Scheduled surfaces, each a reasoned `claude -p` call with a deterministic fallback so a

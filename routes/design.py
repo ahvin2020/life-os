@@ -38,6 +38,19 @@ def _note(**over):
     return base
 
 
+def _goal(progress, **over):
+    """A goal dict + its domain.goals_core.goal_progress() result, shaped so goal_card
+    can switch on `progress.shape` without a DB. Only `progress` and the fields the
+    macro reads (id/title/end_date) matter here."""
+    base = dict(id=0, title="Sample goal", end_date=None)
+    base.update(over)
+    prog = dict(shape="milestone", linked=[], done=0, total=0, current=0,
+                target=0, unit="", achieved=False, pct=0)
+    prog.update(progress)
+    base["progress"] = prog
+    return base
+
+
 @bp.route("/design")
 def design():
     today = today_iso()
@@ -76,6 +89,30 @@ def design():
               snippet="Wheel strategy only on tickers I'd hold anyway."),
     ]
 
+    # One goal per shape goal_progress() can derive (measure/rollup/milestone/both),
+    # plus the two "finished" looks (.goal.achieved). A rollup/both goal ALWAYS has
+    # linked tasks (the shape is derived from having them), so the macro's empty-linked
+    # branch is unreachable in the product and isn't faked here.
+    goals = [
+        _goal(dict(shape="measure", current=8, target=12, unit="videos", pct=66.7),
+              id=11, title="Publish 12 videos this quarter"),
+        _goal(dict(shape="measure", current=5, target=5, unit="kg", pct=100),
+              id=12, title="Lose 5kg"),
+        _goal(dict(shape="rollup", done=1, total=3, pct=33.3,
+                   linked=[{"title": "Draft the outline", "done": True},
+                           {"title": "Record the walkthrough", "done": False},
+                           {"title": "Cut the trailer", "done": False}]),
+              id=13, title="Launch the course"),
+        _goal(dict(shape="milestone"), id=14, title="Get the new passport"),
+        _goal(dict(shape="milestone", achieved=True, pct=100),
+              id=15, title="Hit 10k subscribers"),
+        _goal(dict(shape="both", current=3, target=10, unit="clients", pct=30,
+                   done=1, total=2,
+                   linked=[{"title": "Write the pitch deck", "done": True},
+                           {"title": "Email the shortlist", "done": False}]),
+              id=16, title="Sign 10 retainer clients", end_date="2026-12-31"),
+    ]
+
     swatches = [
         ("--bg", "page"), ("--surface", "surface"), ("--surface2", "surface2"),
         ("--surface3", "surface3"), ("--border", "border"), ("--border2", "border2"),
@@ -86,4 +123,5 @@ def design():
     ]
 
     return render_template("design.html", active="", today=today,
-                           tasks=tasks, cards=cards, notes=notes, swatches=swatches)
+                           tasks=tasks, cards=cards, notes=notes, goals=goals,
+                           swatches=swatches)

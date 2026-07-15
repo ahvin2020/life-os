@@ -388,3 +388,22 @@ def test_prefer_owner_sends_owners_document(client, monkeypatch):
     # naming the relative explicitly is respected (no override)
     ranked2 = docs.prefer_owner(None, list(hits), "xin yi passport")
     assert ranked2[0]["name"] == "lee xin yi passport.pdf"
+
+
+def test_search_goals_excludes_archived_and_deleted(client):
+    """Goals auto-archive the moment their period ends (goals_core.archive_expired_goals),
+    so an unfiltered read hands the model LAST quarter's goal as live evidence — with a
+    valid id it may then act on. `_search_tasks` filters archived_at; this must too."""
+    conn = _db()
+    # period/kind are the deprecated legacy columns — still NOT NULL, and `period` still
+    # CHECKs IN ('week','month'), which is exactly why `timeframe` superseded it (v3).
+    ins = ("INSERT INTO goals(title, period, period_start, kind, timeframe, created, "
+           "archived_at, deleted_at) "
+           "VALUES(?, 'month', '2026-07-01', 'number', 'quarter', '2026-07-01T00:00:00Z', ?, ?)")
+    with conn:
+        live = conn.execute(ins, ("ship the kayak video", None, None)).lastrowid
+        conn.execute(ins, ("ship the kayak reel", "2026-01-01T00:00:00Z", None))    # archived
+        conn.execute(ins, ("ship the kayak short", None, "2026-01-01T00:00:00Z"))   # soft-deleted
+    found = retrieve._search_goals(conn, "ship the kayak")
+    conn.close()
+    assert [g["id"] for g in found] == [live], "an archived or deleted goal surfaced as live evidence"

@@ -223,3 +223,44 @@ data-subs='{{ t.subtasks|tojson }}'
 </div>
 {% endif %}
 {%- endmacro %}
+
+{# One goal card. Lives here (not in goals.html) so the page AND the in-place partial
+   rendered by routes.goals.goal_card_html share ONE source — a spliced card can't drift
+   from a page-load one. Shape DERIVES from the fields, never from `kind`: measure/both →
+   number bar, rollup → linked-task fraction, milestone → an "achieved" toggle. #}
+{% macro goal_card(g) -%}
+{% set p = g.progress %}
+{% set gdone = (p.achieved if p.shape == 'milestone' else p.pct >= 100) %}
+<div class="goal{{ ' achieved' if gdone else '' }}" data-goal-id="{{ g.id }}">
+  <div class="ghead"><span class="t">{{ g.title }}</span>
+    {% if p.shape in ['measure', 'both'] %}
+      <span class="gnum edit" data-goal-id="{{ g.id }}" data-current="{{ p.current }}" data-target="{{ p.target|int }}" data-unit="{{ p.unit }}" tabindex="0" role="button" title="update number">{{ p.current|int }}/{{ p.target|int }}{% if p.unit %} {{ p.unit }}{% endif %}</span>
+    {% elif p.shape == 'rollup' %}
+      <span class="gnum">{{ p.done }}/{{ p.total }}</span>
+    {% else %}
+      <button class="gachieve {{ 'done' if p.achieved else '' }}" type="button" data-goal-id="{{ g.id }}" aria-pressed="{{ 'true' if p.achieved else 'false' }}">{{ '✓ Achieved' if p.achieved else 'Mark achieved' }}</button>
+    {% endif %}
+  </div>
+  {% if p.shape != 'milestone' %}
+  <div class="bar {{ 'full' if p.pct >= 100 else '' }}"><i style="width:{{ p.pct if p.pct <= 100 else 100 }}%"></i></div>
+  {% endif %}
+  {% if p.shape == 'both' %}
+  <div class="gsrc">{{ p.done }}/{{ p.total }} linked tasks done</div>
+  {% endif %}
+  {% if g.end_date %}
+  <div class="gsrc">by {{ g.end_date | fdate }}</div>
+  {% endif %}
+  {% if p.shape in ['rollup', 'both'] %}
+    {% if p.linked %}
+    <div class="gtasks">
+      {% for t in p.linked %}
+      <div class="gt {{ 'done' if t.done else '' }}"><span class="s {{ 'd' if t.done else '' }}">{{ '✓' if t.done else '○' }}</span>{{ t.title }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="gsrc">link tasks to this goal via the task editor (◎)</div>
+    {% endif %}
+  {% endif %}
+  <div class="erow"><span class="spacer" style="flex:1"></span><button class="mini danger gdel" type="button" data-goal-id="{{ g.id }}">Delete</button></div>
+</div>
+{%- endmacro %}

@@ -146,33 +146,22 @@ def test_triage_three_way_note_and_journal(client):
 
 # ── multi-item messages (one message, several lines → several captures) ───────
 def test_split_capture_lines_heuristic():
-    """Split ONLY when every non-empty line is a standalone capturable unit; a link with
-    a caption or a prose note keeps its line breaks and stays one capture."""
+    """Split ONLY when every non-empty line is a standalone capturable unit — a URL, now
+    that there are no text prefixes; a link with a caption or a prose note stays one
+    capture (its non-URL lines aren't units)."""
     from domain.capture import split_capture_lines
-    # 2 links + natural prefixes → split, natural prefixes normalized to short forms
+    # 2+ links → split
     assert split_capture_lines(
-        "https://insta.com/reel/A/\nhttps://insta.com/p/B/\nnote: keep this\ntask: call bob"
-    ) == ["https://insta.com/reel/A/", "https://insta.com/p/B/", "n: keep this", "t: call bob"]
-    # short prefixes split too
-    assert split_capture_lines("t: milk\nn: idea\nj: felt good") == ["t: milk", "n: idea", "j: felt good"]
+        "https://insta.com/reel/A/\nhttps://insta.com/p/B/"
+    ) == ["https://insta.com/reel/A/", "https://insta.com/p/B/"]
+    # a non-URL line among links → NOT split (only URLs are capture units now)
+    assert split_capture_lines("https://insta.com/reel/A/\nkeep this thought") is None
     # link with a caption → NOT split (caption line isn't a unit)
     assert split_capture_lines("great video\nhttps://youtu.be/x") is None
     # prose note with line breaks → NOT split
     assert split_capture_lines("Shopping list:\nmilk\neggs") is None
     # a single line is never split
     assert split_capture_lines("https://insta.com/reel/A/") is None
-
-
-def test_daemon_splits_multiline_message(client, monkeypatch):
-    """A single message of several prefixed items becomes SEPARATE notes — not one note
-    that swallows lines 2+ (the 'recorded only 1' bug)."""
-    conn = _db()
-    tg = FakeTelegram()
-    cd._handle_text(conn, tg, 12345678, "note: alpha\nnote: bravo\nnote: charlie")
-    conn.close()
-    titles = {n["title"] for n in vault_store.list_notes()}
-    assert {"alpha", "bravo", "charlie"} <= titles          # all three captured separately
-    assert len(tg.sent) == 3                                 # one confirmation per item
 
 
 def test_daemon_multiline_links_route_each(client, monkeypatch):
@@ -371,18 +360,6 @@ def test_queries_journal_topic_falls_through(client):
     conn.close()
 
 
-# ── step-0 memory fix: the deterministic fast paths now record exchanges ───────
-def test_prefix_capture_records_exchange(client):
-    from ai import router
-    conn = _db()
-    tg = FakeTelegram()
-    cd._handle_text_single(conn, tg, "12345678", "t: pay the water bill")
-    pair = router.load_exchanges(conn)[-1]
-    conn.close()
-    assert pair["u"] == "t: pay the water bill"
-    assert pair["b"]                                        # the capture confirmation stored
-
-
 def test_query_answer_recorded_with_large_cap(client):
     """A long task-list answer is recorded (so 'complete the second one' resolves) and
     is NOT truncated at the default 400-char cap."""
@@ -410,6 +387,40 @@ def test_triage_fastpath_records_exchange(client, monkeypatch):
     conn.close()
     assert pair["u"] == "triage my backlog"
     assert "Triage" in pair["b"]
+
+
+def test_deterministic_capture_records_exchange(client):
+    """The CAPTURE branch of the daemon's deterministic ladder must record the exchange too.
+    (The old prefix-based cover for this died with the `t:` prefixes; the surviving tests
+    only pin the *answer* and *triage* branches.) Without it, "rename it" / "complete the
+    second one" after a plain capture silently stop resolving — a failure with no exception,
+    so only a test catches it."""
+    from ai import router
+    conn = _db()
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "buy milk")
+    pair = router.load_exchanges(conn)[-1]
+    conn.close()
+    assert pair["u"] == "buy milk"
+    assert "milk" in pair["b"]                          # the reply names the task it made
+
+
+def test_daemon_reminder_capture_is_instant(client, monkeypatch):
+    """A phone-side timed reminder is parsed deterministically — same ladder as the web —
+    and its reply mirrors the router's set_reminder wording, so a parsed reminder is
+    indistinguishable from one Claude resolved. It must never reach claude."""
+    from ai import router
+    conn = _db()
+
+    def _boom(*a, **k):
+        raise AssertionError("a parseable reminder must not reach the router")
+    monkeypatch.setattr(router, "route", _boom)
+
+    tg = FakeTelegram()
+    cd._handle_text_single(conn, tg, "12345678", "remind me to call the bank at 3pm")
+    conn.close()
+    reply = tg.sent[-1][1]
+    assert reply.startswith("⏰ Reminder set — ") and "call the bank" in reply
 
 
 def test_followup_sees_query_list(client):

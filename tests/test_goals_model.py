@@ -256,3 +256,53 @@ def test_router_create_goal_timeframe(client):
     row = conn.execute("SELECT * FROM goals WHERE title='Read 12 books'").fetchone()
     conn.close()
     assert row and row["timeframe"] == "year" and row["target_num"] == 12 and row["unit"] == "books"
+
+
+# ── in-place cards: mutations hand back rendered markup, not a reload ─────────
+XHR = {"X-Requested-With": "XMLHttpRequest"}
+
+
+def test_goal_new_returns_rendered_card(client):
+    """Creating a goal returns the card rendered from the SAME _macros.goal_card the
+    page uses, plus the section it belongs in — so it splices without a reload."""
+    j = client.post("/goals/new", data={"title": "Spliced goal", "timeframe": "month",
+                                        "current": "3", "target": "10", "unit": "vids"},
+                    headers=XHR).get_json()
+    assert j["status"] == "ok" and j["section"] == "month"
+    html = j["card_html"]
+    assert 'class="goal"' in html and "Spliced goal" in html
+    assert f'data-goal-id="{j["id"]}"' in html
+    assert "3/10 vids" in html and "gdel" in html            # measure bar + wired actions
+
+
+def test_goal_restore_returns_rendered_card(client):
+    """An Undo must re-insert the card, not cost a reload."""
+    conn = _db()
+    gid = _mkgoal(conn, "Undo me", timeframe="week")
+    conn.close()
+    assert client.post(f"/goals/{gid}/delete", headers=XHR).status_code == 200
+    j = client.post(f"/goals/{gid}/restore", headers=XHR).get_json()
+    assert j["status"] == "ok" and "Undo me" in j["card_html"]
+    assert f'data-goal-id="{gid}"' in j["card_html"]
+
+
+def test_goal_card_html_keeps_every_shape(client):
+    """A spliced card must render the shape the fields imply — measure → number bar,
+    rollup → linked fraction, milestone → the achieved toggle."""
+    from routes.goals import goal_card_html
+    from core.web_core import app
+    conn = _db()
+    measure = _mkgoal(conn, "Measure", timeframe="month", target=500, current=460, unit="subs")
+    rollup = _mkgoal(conn, "Rollup", timeframe="week")
+    create_task(conn, "linked", col="week", goal_id=rollup)
+    milestone = _mkgoal(conn, "Milestone", timeframe="quarter")
+    with app.test_request_context():
+        assert "460/500 subs" in goal_card_html(conn, measure)
+        assert 'class="bar ' in goal_card_html(conn, measure)
+        assert "0/1" in goal_card_html(conn, rollup)
+        assert "Mark achieved" in goal_card_html(conn, milestone)
+        # a gone goal renders "" so the caller reads "no card" as "remove the node"
+        conn.execute("UPDATE goals SET deleted_at=? WHERE id=?", (now_iso(), milestone))
+        assert goal_card_html(conn, milestone) == ""
+        assert goal_card_html(conn, 999999) == ""
+    conn.close()

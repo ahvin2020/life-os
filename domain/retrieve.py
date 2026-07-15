@@ -247,8 +247,10 @@ def _search_goals(conn, query: str, limit: int = 6) -> list:
     toks = [t for t in tokenize(query) if len(t) >= 3]
     try:
         rows = conn.execute(
+            # archived_at too (like _search_tasks): goals auto-archive when their period ends,
+            # and a last-quarter goal handed back as live evidence is one the model may act on
             "SELECT id, title, timeframe, target_num, current_num, unit FROM goals "
-            "WHERE deleted_at IS NULL").fetchall()
+            "WHERE deleted_at IS NULL AND archived_at IS NULL").fetchall()
     except Exception:
         return []
     scored = [(sum(1 for t in toks if t in (r["title"] or "").lower()) if toks else 1, dict(r))

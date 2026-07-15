@@ -1,6 +1,7 @@
 """Life OS test suite — exercises the product logic through the real routes and the
 real markdown vault (verification checklist item 1)."""
 
+import json
 import os
 
 from core import db_init  # noqa: F401  (ensures path set up by conftest import order)
@@ -27,7 +28,8 @@ def test_mockup_structure_present(client):
     """Spot-check the approved mockup's classes/structure made it into the render."""
     home = client.get("/").data.decode()
     assert 'class="qcap"' in home and 'id="qin"' in home        # composer
-    assert 'data-t="journal"' in home                            # type chips
+    # the composer is a clean +｜input｜📎｜Add bar — no type chips; the AI classifies
+    assert 'id="qtypes"' not in home
     tasks = client.get("/tasks").data.decode()
     assert 'class="board"' in tasks and 'data-cat="content"' in tasks  # kanban + chips
 
@@ -176,23 +178,104 @@ def test_week_pool_hidden_when_empty(client):
 # ── capture routing ───────────────────────────────────────────────────────────
 def test_capture_routing(client):
     conn = _db()
-    assert route_capture(conn, "t: buy milk")["kind"] == "task"
-    assert route_capture(conn, "n: a thought")["kind"] == "note"
-    idea = route_capture(conn, "i: video angle")
-    assert idea["kind"] == "note" and "idea" in idea["tags"]
-    assert route_capture(conn, "j: felt good today")["kind"] == "journal"
+    # No more t:/n:/j: prefixes — plain text (even a leftover prefix) files as an unsorted
+    # note; the AI router classifies natural language now. route_capture stays deterministic
+    # only for a task-verb opener and URLs.
+    note = route_capture(conn, "t: buy milk")
+    assert note["kind"] == "note" and "unsorted" in note["tags"]
+    # task-verb opener → task; trailing ! → high priority
+    hi = route_capture(conn, "add a task urgent thing!")
+    assert hi["kind"] == "task"
     url = route_capture(conn, "https://instagram.com/reel/abc")
     assert url["kind"] == "note" and "link" in url["tags"] and "idea" in url["tags"]
-    hi = route_capture(conn, "t: urgent thing!")
     conn.close()
     row = connect(os.environ["LIFEOS_DB_PATH"]).execute(
         "SELECT priority FROM tasks WHERE id=?", (hi["id"],)).fetchone()
     assert row["priority"] == "high"
 
 
-def test_capture_endpoint(client):
-    r = client.post("/capture", data={"text": "t: from web", "type": "auto"})
-    assert r.status_code == 200 and r.get_json()["kind"] == "task"
+def test_task_verb_layer_instant_vs_router():
+    """The deterministic verb layer decides what skips the AI router. The router is MEASURED
+    at 3.4-10.2s (median 5.4s), so a miss is expensive — but it's still only slow, whereas a
+    FALSE POSITIVE mis-files Sam's data. The None cases below therefore matter more than the
+    hits, and every one of them is a real phrasing this layer once swallowed."""
+    from domain.capture import task_imperative as ti
+
+    # instant: an explicit wrapper, or a bare action verb with nothing to parse
+    for t in ["add a task test 1", "todo water plants", "buy milk", "call the dentist",
+              "pay the rent", "fix bicycle", "renew passport", "follow up with the sponsor"]:
+        assert ti(t) is not None, t
+    assert ti("add a task test 1") == "test 1"      # wrapper stripped
+    assert ti("buy milk") == "buy milk"             # bare verb IS the task
+
+    # → router: any when-language, so it comes back with a real due date / as a reminder
+    # rather than a task with the date buried in its title
+    for t in ["call the dentist tomorrow", "buy milk at 3pm", "pay rent on the 15th",
+              "call mum in 10 minutes", "finish the report next week",
+              "renew passport before September", "email bob friday"]:
+        assert ti(t) is None, t
+
+    # → router: the "verb" is really a noun, a different intent, or past tense (journal)
+    for t in ["email from mum", "order of service", "book club notes", "text from dad",
+              "call me Kelvin", "update from the team", "water bill is due",
+              "check out this link", "write about my day", "called the dentist",
+              "finished the report", "the weather is nice", "todolist",
+              "add a taskforce meeting"]:
+        assert ti(t) is None, t
+
+    # → router: prose ABOUT a thing reads as an instruction to a naive verb match. These are
+    # real phrasings that silently became tasks before the bail-guards existed — note
+    # "to-do list is long" was even MANGLED into a task titled "list is long".
+    for t in ["call with Sam went well", "call was great, they want a follow up",
+              "email is down again", "finish line was brutal", "cancel culture is out of hand",
+              "buy low sell high is the whole game", "call for submissions is open",
+              "install base is growing fast", "write up on the CPF video was great",
+              "to-do list is long", "todo list is getting out of hand"]:
+        assert ti(t) is None, t
+
+    # → router: it owns priority, so a priority word must not get buried in the title
+    for t in ["pay the invoice, urgent", "call the bank asap"]:
+        assert ti(t) is None, t
+
+    # → router: only it can SPLIT one line into several captures
+    assert ti("buy milk and call the dentist") is None
+    assert ti("buy milk & call the dentist") is None
+    # ...but a plain conjoined object is still one task
+    assert ti("buy milk and bread") == "buy milk and bread"
+
+    # → router: a question is not a capture
+    assert ti("call anyone about the invoice?") is None
+
+
+def test_capture_endpoint(client, monkeypatch):
+    # Auto natural-language text now runs the AI router (the web twin of the Telegram bot).
+    import ai.claude_cli
+    from ai import router
+    # pin the gate: /capture only takes the AI path if has_claude(), which resolves the real
+    # binary — unpinned, this test asserts the AI path on Sam's Mac and the note path on the NAS.
+    monkeypatch.setattr(ai.claude_cli, "has_claude", lambda: True)
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, *a, **k: json.dumps({"action": "create_task", "title": "from web"}))
+    r = client.post("/capture", data={"text": "remember to file from web", "type": "auto"})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ai"] and "from web" in j["reply"]
+
+
+def test_capture_without_claude_files_unsorted_note_instantly(client, monkeypatch):
+    """The NAS container has no `claude` binary — that fall-through IS the production
+    capture path, so it gets a test. Ambiguous prose must land as an #unsorted note
+    without ever reaching the router (a claude call there would eat a timeout per capture)."""
+    import ai.claude_cli
+    from ai import router
+    monkeypatch.setattr(ai.claude_cli, "has_claude", lambda: False)
+
+    def _boom(*a, **k):
+        raise AssertionError("no-claude host must never reach the router")
+    monkeypatch.setattr(router, "route", _boom)
+
+    j = client.post("/capture", data={"text": "some vague musing to file", "type": "auto"}).get_json()
+    assert j["kind"] == "note" and "unsorted" in j["tags"]
+    assert not j.get("ai")
 
 
 # ── notes round-trip to disk ──────────────────────────────────────────────────
@@ -231,7 +314,7 @@ def test_journal_append_lands_in_file(client):
 
 def test_capture_journal_via_router(client):
     conn = _db()
-    route_capture(conn, "j: second entry via capture")
+    route_capture(conn, "second entry via capture", forced="journal")
     conn.close()
     page = vault_store.read_journal(today_iso())
     assert any("second entry" in e["text"] for e in page["entries"])
@@ -283,3 +366,93 @@ def test_csrf_blocks_unprotected_post(client):
     finally:
         web_core.app.test_client_class = saved
     assert r.status_code == 403
+
+
+def test_capture_ai_patches_instead_of_reloading(client, monkeypatch):
+    """The AI capture bar must hand back re-rendered cards so the page swaps ONE node.
+    A full reload is the fallback of last resort, not the default for every mutation."""
+    import json as _json
+    import ai.claude_cli
+    from ai import router
+    from core.db import connect
+    from domain.capture import create_task
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    with conn:
+        tid = create_task(conn, "existing thing", col="week")
+    conn.close()
+    monkeypatch.setattr(ai.claude_cli, "has_claude", lambda: True)   # see test_capture_endpoint
+
+    # a brand-new task splices via week_html — no reload
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, *a, **k: _json.dumps({"action": "create_task", "title": "fresh"}))
+    j = client.post("/capture", data={"text": "something vague to file", "type": "auto"},
+                    headers={"X-Requested-With": "XMLHttpRequest"}).get_json()
+    assert j["ai"] and j["reload"] is False and j["week_html"]
+
+    # changing an EXISTING task comes back as a card to swap, still no reload
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, *a, **k: _json.dumps({"action": "complete_task", "id": tid}))
+    j = client.post("/capture", data={"text": "mark existing thing done", "type": "auto"},
+                    headers={"X-Requested-With": "XMLHttpRequest"}).get_json()
+    assert j["reload"] is False, "a task edit should patch in place, not reload"
+    assert j["cards"] and j["cards"][0]["id"] == tid and j["cards"][0]["html"]
+
+    # a DELETE renders no card — empty html tells the page to remove that node
+    monkeypatch.setattr(router, "call_claude",
+                        lambda p, *a, **k: _json.dumps({"action": "delete_task", "id": tid}))
+    j = client.post("/capture", data={"text": "drop existing thing", "type": "auto"},
+                    headers={"X-Requested-With": "XMLHttpRequest"}).get_json()
+    assert j["cards"][0]["html"] == ""
+
+
+def test_capture_questions_skip_claude(client, monkeypatch):
+    """An unambiguous list question must be answered by the deterministic `queries` tier —
+    the same one the phone bot uses. Web used to spend 5-10s of claude on these. If the
+    router is reached at all this test fails loudly."""
+    from ai import router
+    from domain.capture import create_task
+
+    def _boom(*a, **k):
+        raise AssertionError("the AI router must not be reached for a list question")
+    monkeypatch.setattr(router, "call_claude", _boom)
+
+    conn = connect(os.environ["LIFEOS_DB_PATH"])
+    with conn:
+        create_task(conn, "an overdue thing", col="week", due_date="2020-01-01")
+    conn.close()
+
+    j = client.post("/capture", data={"text": "what's overdue?", "type": "auto"},
+                    headers={"X-Requested-With": "XMLHttpRequest"}).get_json()
+    assert j["status"] == "ok" and j["applied"] == ["answer"] and j["reload"] is False
+    assert "an overdue thing" in j["reply"]
+
+
+def test_upcoming_events_are_cached(monkeypatch):
+    """The calendar is a live network call on EVERY capture once Google is connected —
+    it must be cached, and a failure must never be cached (else one hiccup blinds the
+    router for the whole TTL)."""
+    from ai import router, google_client
+    calls = []
+    router._events_cache.clear()
+    monkeypatch.setattr(router, "today_iso", lambda: "2026-07-15")
+    monkeypatch.setattr(google_client, "is_configured", lambda: True)
+
+    def _range(a, b):
+        calls.append(1)
+        return [{"summary": "standup"}]
+    monkeypatch.setattr(google_client, "calendar_range", _range)
+
+    assert router._upcoming_events(now=1000.0) == [{"summary": "standup"}]
+    assert router._upcoming_events(now=1030.0) == [{"summary": "standup"}]   # within TTL
+    assert len(calls) == 1, "a second capture inside the TTL must not re-hit the network"
+    router._upcoming_events(now=1000.0 + router._EVENTS_TTL + 1)             # TTL expired
+    assert len(calls) == 2
+
+    # a failure must NOT be cached — one hiccup shouldn't blind the router for a whole TTL
+    router._events_cache.clear()
+
+    def _boom(a, b):
+        raise RuntimeError("calendar down")
+    monkeypatch.setattr(google_client, "calendar_range", _boom)
+    assert router._upcoming_events(now=2000.0) == []
+    assert router._events_cache == {}, "a calendar hiccup must not be cached"
