@@ -74,6 +74,19 @@ def _isolate_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(run_triage, "_PROFILE_PATH", str(tmp_path / "triage_profile.md"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_shelves(tmp_path, monkeypatch):
+    """`library.shelf_summary` reads the REAL data/cluster_log.json and memoises it in a
+    module global, and `router.build_context` calls it — so every router test read Sam's
+    live library and the FIRST test to touch it pinned the value for the whole session.
+    It also made the suite unreproducible: tests asserting on the census passed on Sam's
+    Mac (where the 45KB log exists) and failed on a fresh clone or CI, where it doesn't.
+    Point it at tmp and drop the cache per test; tests that want a census seed their own."""
+    from domain import library
+    monkeypatch.setattr(library, "_CLUSTER_LOG", str(tmp_path / "cluster_log.json"))
+    monkeypatch.setattr(library, "_SHELVES_CACHE", None)
+
+
 @pytest.fixture()
 def client():
     """Fresh DB + vault per test, with a CSRF-aware Flask test client."""

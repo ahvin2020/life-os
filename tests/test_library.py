@@ -179,12 +179,22 @@ def test_router_dispatches_library_ideas(client, monkeypatch):
     assert pairs[-1]["b"].startswith("Ideas about cpf: 1. A")
 
 
-def test_router_library_shelf_line_in_context(client):
+def test_router_library_shelf_line_in_context(client, tmp_path, monkeypatch):
+    """The shelf census is injected into the router context for the model.
+
+    Seeds its OWN cluster log: this used to read the real data/cluster_log.json, so it
+    passed on Sam's Mac and failed on a fresh clone or CI, where the file doesn't exist.
+    """
+    log = tmp_path / "cluster_log.json"
+    log.write_text(json.dumps({"a.md": "market-investing", "b.md": "market-investing",
+                               "c.md": "creator-craft"}), encoding="utf-8")
+    monkeypatch.setattr(library, "_CLUSTER_LOG", str(log))
+    monkeypatch.setattr(library, "_SHELVES_CACHE", None)
     conn = _db()
     ctx = router.build_context(conn)
     conn.close()
-    # the shelf census (from data/cluster_log.json) is injected for the model
     assert "IDEA LIBRARY" in ctx["text"]
+    assert "market-investing 2" in ctx["text"]     # the census it built, not Sam's real one
 
 
 # ── exchange-memory follow-up: "save #2 as a task to film" resolves ────────────
