@@ -247,7 +247,7 @@
   {# Nav chrome. These two are viewport-gated by app.css, and the guide does NOT re-declare
      their CSS to force them visible — that would be exactly the drift this page exists to
      prevent. So each renders only where it really ships; judge it at that width.
-       .mtop / .navtoggle / .mtop-brand / .mtop-alert  → ≤760px only  (blank at 1440px)
+       .mtop / .navtoggle / .mtop-brand                → ≤760px only  (blank at 1440px)
        .navcollapse / .bars                            → ≥761px only  (blank at 390px)
      Both hamburgers are the SAME CSS-drawn .bars (the ☰ glyph sits off-centre in most
      fonts) — one hamburger, drawn once, shared by the rail toggle and the phone bar. #}
@@ -257,10 +257,11 @@
     <header class="mtop">
       <button class="navtoggle" type="button" aria-label="Open menu"><span class="bars"></span></button>
       <b class="mtop-brand">Life OS</b>
-      <a class="mtop-alert" href="/design" title="2 system issues need attention">2</a>
     </header>
     <div class="row">
-      <span class="spec">.mtop-alert is the needs-attention count, shown only when a health check is stale.</span>
+      <span class="spec">Hamburger + wordmark only. The health-alert count is deliberately NOT here
+        (user-amended 2026-07-15) — the drawer's Settings row carries it; a red badge parked over
+        every screen nags about something that is never urgent.</span>
     </div>
     <div class="spec">Desktop rail toggle — renders at ≥761px only:</div>
     <div class="row">

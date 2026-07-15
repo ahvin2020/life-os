@@ -54,14 +54,15 @@
 </head>
 <body>
 {# Phone-only top bar: the hamburger toggles the slide-in nav drawer (the same .side
-   sidebar shown persistently on desktop). The alert count rides here so the health
-   signal stays visible while the drawer is closed. Hidden on desktop via CSS. #}
+   sidebar shown persistently on desktop). Hidden on desktop via CSS. The health-alert
+   count deliberately does NOT ride here — the drawer's Settings row already carries it
+   (user-amended 2026-07-15); a red badge over every screen is a permanent nag for
+   something that is never urgent. Don't reintroduce it. #}
 <header class="mtop">
   {# Same CSS-drawn bars as the desktop rail toggle — the ☰ glyph sits off-centre in most fonts. #}
   <button class="navtoggle" id="navtoggle" type="button" aria-label="Open menu"
           aria-controls="sidenav" aria-expanded="false"><span class="bars"></span></button>
   <b class="mtop-brand">Life OS</b>
-  {% if nav_alerts %}<a class="mtop-alert" href="/settings" title="{{ nav_alerts }} system issue{{ 's' if nav_alerts > 1 }} need attention">{{ nav_alerts }}</a>{% endif %}
 </header>
 <div class="scrim" id="navscrim" aria-hidden="true"></div>
 <div class="shell">
