@@ -31,11 +31,10 @@ def _isolate_google_token(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _isolate_profile(monkeypatch):
-    """vault_store.PROFILE_PATH deliberately ignores LIFEOS_VAULT_DIR and points at the REAL
-    repo vault, so any test touching set_identity/append_learned_rule/upsert_contact would
-    rewrite Sam's actual profile.md. Redirect it for every test — per-test monkeypatch
-    discipline isn't a guard, it's a thing to forget once. Tests that assert on profile
-    contents still patch it to their own path; this is the floor, not a fixture to use.
+    """PROFILE_PATH now follows LIFEOS_VAULT_DIR (it lives IN the vault), so the test vault
+    already isolates it — this fixture is no longer the thing standing between a test and
+    Sam's real profile.md. It stays for the OTHER reason below, and as belt-and-braces for
+    any code path that resolves the profile before the env override lands.
 
     Deliberately NOT under tmp_path or the test vault: tests point document_roots at those
     and count what the scan finds, and a stray profile.md would be counted as a document."""

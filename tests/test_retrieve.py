@@ -444,6 +444,25 @@ def test_data_dir_follows_the_mount_not_the_image(client, monkeypatch):
     assert data_dir().endswith("/data")          # dev falls back to <repo>/data, unchanged
 
 
+def test_profile_lives_in_the_vault_wherever_the_vault_is(tmp_path, monkeypatch):
+    """profile.md is injected into EVERY claude -p surface, and read_profile() returns "" on a
+    miss — so a profile pointing at the wrong place doesn't raise, it just makes the bot
+    quietly dumber. PROFILE_PATH used to be pinned to <repo>/vault while LIFEOS_VAULT_DIR moved
+    everything else, which in prod (vault on the /data volume) would have resolved it to
+    /app/vault inside the image: absent, and wiped by every Watchtower pull. Same shape as
+    test_data_dir_follows_the_mount_not_the_image — durable things follow the mount."""
+    import importlib
+    monkeypatch.setenv("LIFEOS_VAULT_DIR", str(tmp_path / "vault"))
+    import domain.vault_store as vs
+    vs = importlib.reload(vs)
+    try:
+        assert vs.VAULT_DIR == str(tmp_path / "vault")
+        assert vs.PROFILE_PATH == str(tmp_path / "vault" / "profile.md")   # IN the vault
+    finally:
+        monkeypatch.undo()
+        importlib.reload(vs)
+
+
 def test_read_and_deliver_sets_are_capped(client, monkeypatch):
     """A broad ask can't fan out to an unbounded, slow read/deliver — the set is capped."""
     conn = _db()

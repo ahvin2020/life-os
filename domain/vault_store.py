@@ -24,11 +24,15 @@ from urllib.parse import urlparse
 from core.db import get_tz, now_sg
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# Override the whole vault location for tests via LIFEOS_VAULT_DIR.
+# LIFEOS_VAULT_DIR relocates the WHOLE vault — tests point it at a throwaway tree, and prod
+# points it at /data/vault so the notes live on the mounted volume next to app.db instead of
+# in a second bind mount of someone's home folder.
 VAULT_DIR = os.environ.get("LIFEOS_VAULT_DIR") or os.path.join(_ROOT, "vault")
 # profile.md is the distilled triage/routing context every `claude -p` surface injects.
-# It always lives in the REAL repo vault (not the LIFEOS_VAULT_DIR test override).
-PROFILE_PATH = os.path.join(_ROOT, "vault", "profile.md")
+# It lives IN the vault, wherever the vault is — anchoring it to the repo meant
+# LIFEOS_VAULT_DIR only half-moved the vault, and read_profile() swallows the miss and
+# returns "", so the bot would just get quietly dumber.
+PROFILE_PATH = os.path.join(VAULT_DIR, "profile.md")
 
 
 def read_profile() -> str:

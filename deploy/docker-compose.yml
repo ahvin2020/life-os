@@ -4,10 +4,12 @@
 # Watchtower on the NAS auto-pulls (or Stop→Build in Container Manager to pull now,
 # thanks to pull_policy: always). The image IS the artifact — code is NOT bind-mounted.
 #
-# Only user data is mounted, and it never round-trips through the image:
-#   - DATA  (/volume1/docker/projects/life-os-compose/data → /data): app.db + backups
-#           + the whisper model cache (HF_HOME). Read-write, single-writer, persisted.
-#   - VAULT (SynologyDrive/…/life-os/vault → /app/vault): notes/journal markdown, synced.
+# ONE mount, and it never round-trips through the image:
+#   - DATA (/volume1/docker/projects/life-os-compose/data → /data): app.db + backups + the
+#          vault (LIFEOS_VAULT_DIR=/data/vault) + the whisper model cache (HF_HOME).
+#          Read-write, persisted. The two containers share this and nothing else — the vault
+#          used to be a SECOND bind mount of a personal home folder, which made prod depend on
+#          a DSM account and gave dev + prod one shared, Synology-Drive-synced set of notes.
 #
 # Secrets live in a sibling .env (chmod 600, gitignored):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_ID
@@ -27,10 +29,10 @@ services:
     working_dir: /app
     volumes:
       - /volume1/docker/projects/life-os-compose/data:/data:rw
-      - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/vault:/app/vault:rw
     environment:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
+      - LIFEOS_VAULT_DIR=/data/vault
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     ports:
       - "5070:5070"
@@ -46,10 +48,10 @@ services:
     working_dir: /app
     volumes:
       - /volume1/docker/projects/life-os-compose/data:/data:rw
-      - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/vault:/app/vault:rw
     environment:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
+      - LIFEOS_VAULT_DIR=/data/vault
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
