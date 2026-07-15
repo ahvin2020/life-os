@@ -104,12 +104,33 @@ def _calendar_window(days_back: int = 1, days_ahead: int = 90) -> list:
         return []
 
 
+# The sources that read SQLite. They must run on the calling thread — the connection isn't
+# shareable — which is also why merging always happens there: `candidates`/`ev` are mutated by
+# exactly one thread, so the concurrency below needs no locking.
+_CONN_SOURCES = ("docs", "facts", "tasks", "goals")
+
+
+def _fetch(source: str, query: str) -> list:
+    """Fetch one connection-free source. Pure and thread-safe: it returns data and touches no
+    shared state, so several of these can race. [] on any failure, so one dead connector never
+    sinks the answer."""
+    try:
+        if source == "gmail":
+            from ai import google_client
+            return _gmail_hits(query) if google_client.is_configured() else []
+        if source == "vault":
+            return recall.search_vault(_terms(query))[:5]
+        if source == "calendar":
+            return _calendar_window()             # a window, not a keyword search — query unused
+    except Exception:
+        pass
+    return []
+
+
 def gather(conn, query: str) -> dict:
-    """Fan out across every available source; each returns [] on failure so one dead
-    connector never sinks the answer. The I/O-bound sources (Gmail API, Calendar API, vault
-    grep) run CONCURRENTLY — Gmail alone is several serial round-trips, so racing them beside
-    the others cuts the pre-seed latency. `docs` stays on this thread: it's the only source
-    that touches the SQLite connection, which isn't shareable across threads."""
+    """Fan out across every available source. The I/O-bound ones (Gmail API, Calendar API,
+    vault grep) run CONCURRENTLY — Gmail alone is several round-trips, so racing them beside
+    the others cuts the pre-seed latency. `docs` stays on this thread (see _CONN_SOURCES)."""
     import concurrent.futures as _cf
     ev = {"gmail": [], "docs": [], "vault": [], "calendar": []}
     try:
@@ -118,17 +139,9 @@ def gather(conn, query: str) -> dict:
         ev["docs"] = docs.search_documents(conn, query, limit=10)
     except Exception:
         pass
-
-    def _vault():
-        return recall.search_vault(_terms(query))[:5]
-
-    def _gmail():
-        from ai import google_client
-        return _gmail_hits(query, n=5) if google_client.is_configured() else []
-
-    jobs = {"vault": _vault, "gmail": _gmail, "calendar": _calendar_window}
+    jobs = ("vault", "gmail", "calendar")
     with _cf.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        futs = {k: pool.submit(fn) for k, fn in jobs.items()}
+        futs = {k: pool.submit(_fetch, k, query) for k in jobs}
         for k, f in futs.items():
             try:
                 ev[k] = f.result() or []
@@ -140,7 +153,14 @@ def gather(conn, query: str) -> dict:
 def _evidence_text(ev: dict) -> str:
     lines = []
     if ev.get("gmail"):
-        lines.append("GMAIL (matching emails — read the body for the exact date/ref):")
+        # Say so when this is only a slice of the matches. Without it, a model that can't see
+        # match #21 reports "you have no cruise booking" — reading truncation as absence is
+        # exactly how the real failure sounded, and it sounds identical to a true negative.
+        shown, total = len(ev["gmail"]), ev["gmail"][0].get("total")
+        more = (f" — showing {shown} of ~{total}; narrow the query if what you want isn't here"
+                if isinstance(total, int) and total > shown else "")
+        lines.append(f"GMAIL (matching emails{more}. Entries without a `body:` line are "
+                     "headlines — the subject alone often holds the date/reference):")
         for m in ev["gmail"]:
             lines.append(f"- from {m.get('from', '')} | {m.get('subject', '')} | "
                          f"{m.get('date', '')} | {m.get('snippet', '')}")
@@ -261,13 +281,58 @@ def _search_goals(conn, query: str, limit: int = 6) -> list:
 
 
 _SEARCH_SOURCES = ("docs", "gmail", "vault", "facts", "tasks", "goals", "calendar")
+_SEARCH_CAP = 5              # searches per hop — they run concurrently, so this bounds fan-out
 
 
-def _do_search(conn, source: str, query: str, candidates: list, ev: dict) -> None:
-    """Run one search and merge results into the running state (docs → numbered candidates,
-    deduped by name+path so prior ids stay stable; gmail/vault/facts/tasks/goals → textual
-    evidence)."""
-    query = (query or "").strip()
+def _search_specs(obj: dict, default_q: str) -> list:
+    """The (source, query) pairs one search hop asked for. Accepts the multi form
+    {"searches":[{source,query},…]} and the older single {"source","query"} form; an unknown
+    source falls back to docs. Deduped and capped at _SEARCH_CAP."""
+    raw = obj.get("searches")
+    if not isinstance(raw, list) or not raw:
+        raw = [obj]
+    out = []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        src = s.get("source") if s.get("source") in _SEARCH_SOURCES else "docs"
+        query = (s.get("query") or default_q or "").strip()
+        if query and (src, query) not in out:
+            out.append((src, query))
+    return out[:_SEARCH_CAP]
+
+
+def _search_status(specs: list) -> str:
+    srcs = list(dict.fromkeys(s for s, _ in specs))
+    qs = list(dict.fromkeys(q for _, q in specs))
+    return ("🔍 Searching your " + ", ".join(srcs) + " for "
+            + ", ".join(f"“{q}”" for q in qs) + "…")
+
+
+# Words that say WHAT KIND of record you want, not which one — they're the interchangeable
+# part of a re-phrased search, so two searches differing only here are the same search.
+_SPIN_NOISE = {"booking", "bookings", "confirmation", "confirmations", "itinerary", "itineraries",
+               "reservation", "reservations", "details", "detail", "info", "information",
+               "number", "ref", "reference", "date", "dates", "document", "documents", "file"}
+
+
+def _sig(obj: dict) -> str:
+    """A signature for spin detection. A search reduces to its sources plus the SORTED
+    distinctive tokens of its queries, so "cruise booking" / "cruise booking confirmation" /
+    "cruise itinerary" all collapse to one — three rewordings of a search that already came
+    back empty used to burn three of the five hops, then answer "I couldn't find it" without
+    ever having read anything. Other tools keep an exact signature."""
+    if obj.get("tool") != "search":
+        return json.dumps(obj, sort_keys=True)
+    parts = []
+    for src, query in _search_specs(obj, ""):
+        toks = sorted(t for t in tokenize(query) if len(t) > 2 and t not in _SPIN_NOISE)
+        parts.append(f"{src}:{' '.join(toks)}")
+    return "search|" + "|".join(sorted(parts))
+
+
+def _merge_local(conn, source: str, query: str, candidates: list, ev: dict) -> None:
+    """Merge one SQLite-backed search (calling thread only — see _CONN_SOURCES)."""
     if source == "docs":
         have = {(h.get("name"), h.get("path")) for h in candidates}
         for h in docs.search_documents(conn, query, limit=10):
@@ -275,20 +340,6 @@ def _do_search(conn, source: str, query: str, candidates: list, ev: dict) -> Non
             if key not in have:
                 have.add(key)
                 candidates.append(h)
-    elif source == "gmail":
-        try:
-            from ai import google_client
-            if google_client.is_configured():
-                new_hits = _gmail_hits(query, n=5)
-                ev.setdefault("gmail", []).extend(new_hits)
-                _merge_attachments(candidates, new_hits)   # attachments become readable candidates
-        except Exception:
-            pass
-    elif source == "vault":
-        try:
-            ev.setdefault("vault", []).extend(recall.search_vault(_terms(query))[:5])
-        except Exception:
-            pass
     elif source == "facts":
         try:
             ev.setdefault("facts", []).extend(docs.query_facts(conn, query, limit=5))
@@ -298,12 +349,50 @@ def _do_search(conn, source: str, query: str, candidates: list, ev: dict) -> Non
         ev.setdefault("tasks", []).extend(_search_tasks(conn, query))
     elif source == "goals":
         ev.setdefault("goals", []).extend(_search_goals(conn, query))
+
+
+def _merge_remote(source: str, res: list, candidates: list, ev: dict) -> None:
+    """Merge one already-fetched connection-free source (see _fetch)."""
+    if source == "gmail":
+        ev.setdefault("gmail", []).extend(res)
+        _merge_attachments(candidates, res)      # attachments become readable candidates
+    elif source == "vault":
+        ev.setdefault("vault", []).extend(res)
     elif source == "calendar":
         have = {(e.get("summary"), e.get("start")) for e in ev.get("calendar", [])}
-        for e in _calendar_window():
+        for e in res:
             if (e.get("summary"), e.get("start")) not in have:
                 have.add((e.get("summary"), e.get("start")))
                 ev.setdefault("calendar", []).append(e)
+
+
+def _search_many(conn, specs: list, candidates: list, ev: dict) -> None:
+    """Run several (source, query) searches in ONE hop and merge them into the running state.
+
+    Searches are independent and read-only, so serialising them bought nothing and cost a
+    _MAX_HOPS slot AND a ~3-10s planning call EACH (see CLAUDE.md's latency numbers) just to
+    ask the next question. Probing four angles at once now costs about what one used to."""
+    import concurrent.futures as _cf
+    specs = [(s, q) for s, q in ((s, (q or "").strip()) for s, q in specs) if q]
+    if not specs:
+        return
+    remote = [(s, q) for s, q in specs if s not in _CONN_SOURCES]
+    fetched = {}
+    if remote:
+        with _cf.ThreadPoolExecutor(max_workers=len(remote)) as pool:
+            futs = [(s, q, pool.submit(_fetch, s, q)) for s, q in remote]
+            for s, q, f in futs:
+                try:
+                    fetched[(s, q)] = f.result() or []
+                except Exception:
+                    fetched[(s, q)] = []
+    for s, q in specs:                           # merge on THIS thread, in the planner's order
+        if s in _CONN_SOURCES:
+            _merge_local(conn, s, q, candidates, ev)
+        else:
+            _merge_remote(s, fetched.get((s, q), []), candidates, ev)
+
+
 
 
 def _state_text(candidates: list, ev: dict, readings: list, did: list | None = None) -> str:
@@ -359,7 +448,7 @@ def _plan_prompt(profile, q, want, candidates, ev, readings, did=None, forced=Fa
                        'if nothing here answers it, say so and name which source to connect>"}')
     return head + (
         "Do ONE thing. Reply with ONE JSON object, nothing else:\n"
-        '{"tool":"search","source":"docs|gmail|vault|facts|tasks|goals|calendar","query":"<search words>"}\n'
+        '{"tool":"search","searches":[{"source":"docs|gmail|vault|facts|tasks|goals|calendar","query":"<search words>"}, …]}\n'
         '{"tool":"read","ids":[<candidate numbers>],"for":"<what to extract from them>"}\n'
         '{"tool":"deliver","ids":[<candidate numbers>]}\n'
         '{"tool":"create_task","title":"<task>","due":"YYYY-MM-DD|null","category":"content|business|personal|null","priority":"high|med|low|null"}\n'
@@ -368,6 +457,16 @@ def _plan_prompt(profile, q, want, candidates, ev, readings, did=None, forced=Fa
         '{"tool":"answer","text":"<one short answer / confirmation, cite the source>"}\n\n'
         "Rules:\n"
         "- Reference ONLY the candidate numbers shown above.\n"
+        f"- ONE search hop can hold up to {_SEARCH_CAP} searches and they run in PARALLEL, so put "
+        "every angle you'd try next into the SAME hop (different sources, different wordings) "
+        "rather than one per turn — each hop costs you seconds and you only get a few.\n"
+        "- If a search comes back empty, do NOT re-run it reworded ('X booking' → 'X itinerary' "
+        "→ 'X confirmation'): those are the same search and it will stay empty. Search a "
+        "different SOURCE, or a different real-world name for the thing, or accept it isn't there.\n"
+        "- Search results are ranked by the source, not by truth: the answer is often further "
+        "down the list than the first few. Read the WHOLE list — including entries shown as a "
+        "headline with no body — before concluding something doesn't exist. A subject line "
+        "frequently holds the whole answer (a date, a reference).\n"
         "- 'my X' → pick SAM'S OWN (use the profile), not a family member's.\n"
         "- Search TASKS/GOALS when the request is about them ('which task…', 'add a task about…').\n"
         "- An appointment / meeting / 'the event tomorrow' / 'where is it' → source=calendar; "
@@ -432,11 +531,11 @@ def run(conn, query: str, question: str, want: str = "info", claude_fn=None, pro
     _merge_attachments(candidates, ev.get("gmail", []))   # email attachments are readable too
     readings = []
     did = []                                        # human confirmations of writes performed
-    last = None
+    seen_sigs = set()
     for _ in range(_MAX_HOPS):
         obj = extract_json(plan_fn(_plan_prompt(profile, q, want, candidates, ev, readings, did))) or {}
         tool = obj.get("tool")
-        sig = json.dumps(obj, sort_keys=True)
+        sig = _sig(obj)
         if tool == "answer":
             text = (obj.get("text") or "").strip()
             return {"reply": text or (("✓ Done — added " + ", ".join(did)) if did else _CANT),
@@ -452,10 +551,10 @@ def run(conn, query: str, question: str, want: str = "info", claude_fn=None, pro
                 return {"reply": f"📎 Sending {', '.join(names)}…",
                         "documents": paths, "doc_names": names}
         elif tool == "search":
-            src = obj.get("source") if obj.get("source") in _SEARCH_SOURCES else "docs"
-            sq = (obj.get("query") or q).strip()
-            say(f"🔍 Searching your {src} for “{sq}”…")
-            _do_search(conn, src, sq, candidates, ev)
+            specs = _search_specs(obj, q)
+            if specs:
+                say(_search_status(specs))
+                _search_many(conn, specs, candidates, ev)
         elif tool == "read":
             nums = _valid_nums(candidates, obj.get("ids"))
             paths = _paths_for(conn, candidates, nums)
@@ -473,9 +572,9 @@ def run(conn, query: str, question: str, want: str = "info", claude_fn=None, pro
             note = _do_write(conn, obj, say)         # Python executes the write (same helpers as the router)
             if note:
                 did.append(note)
-        if sig == last:                             # same action twice → stop spinning, finalize
+        if sig in seen_sigs:                        # re-tread → stop spinning, finalize
             break
-        last = sig
+        seen_sigs.add(sig)
     # out of steps (or stuck) → one forced final answer / confirmation from everything gathered
     obj = extract_json(plan_fn(_plan_prompt(profile, q, want, candidates, ev, readings, did, forced=True))) or {}
     text = (obj.get("text") or "").strip()

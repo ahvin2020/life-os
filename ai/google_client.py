@@ -19,6 +19,7 @@ touch the real auth path.
 from __future__ import annotations
 
 import os
+import re
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SECRET = os.path.join(_ROOT, "data", "google_client_secret.json")
@@ -219,23 +220,120 @@ def download_attachment(msg_id: str, attachment_id: str, filename: str = "",
         return None
 
 
+# Gmail ranks and returns MESSAGES, not conversations, so near-identical mail can swallow the
+# whole result set. Measured on a real mailbox: a "cruise" search returned six replies off one
+# long admin thread (spread over FOUR threadIds, so per-thread de-duplication does not save you)
+# and pushed the sailing confirmation — the one email that held the answer — to rank 7, past
+# n=5. It was never retrieved, so the model was handed five emails about bed linen, asked about
+# a cruise, and truthfully reported it had found none.
+#
+# The fix is diversity, not a bigger n: group the candidates by CONVERSATION (the subject with
+# its Re:/Fwd: chain stripped) and round-robin across groups, so every distinct conversation is
+# represented before any one of them gets a second slot. Nothing is discarded that would
+# otherwise have fitted — a lone-group search still returns n messages exactly as before — so
+# this can't hide mail the way subject de-duplication would.
+_CANDIDATE_FANOUT = 4        # candidates to consider per slot, before grouping
+
+_RE_PREFIX = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.I)
+
+
+def _norm_subject(subject: str) -> str:
+    """A conversation key: the subject stripped of its Re:/Fwd: chain and case/space noise.
+    Gmail forks a long exchange into several threadIds under one subject, so this — not
+    threadId — is what actually identifies "more mail about the same thing"."""
+    s = (subject or "").strip()
+    while True:
+        stripped = _RE_PREFIX.sub("", s)
+        if stripped == s:
+            return re.sub(r"\s+", " ", s).strip().lower()
+        s = stripped
+
+
+def _hdr(msg: dict, name: str) -> str:
+    for h in (msg.get("payload", {}) or {}).get("headers", []) or []:
+        if (h.get("name") or "").lower() == name.lower():
+            return h.get("value", "")
+    return ""
+
+
+def _batch_get(svc, ids: list, fmt: str, headers: list | None = None) -> dict:
+    """Fetch many messages in ONE HTTP round trip. Measured: 20 metadata gets take 8.78s
+    issued serially and 0.46s batched — a 19x difference, which is what makes it affordable
+    to look at every candidate's subject BEFORE choosing which to keep. Returns {id: message};
+    anything that fails is simply absent. Falls back to serial gets for a service without
+    batch support (the test stubs) or a batch endpoint failure."""
+    out = {}
+    if not ids:
+        return out
+    kw = {"metadataHeaders": headers} if headers else {}
+
+    def _cb(_rid, resp, err):                    # request_id is positional, not the message id
+        if resp is not None and resp.get("id"):
+            out[resp["id"]] = resp
+    try:
+        batch = svc.new_batch_http_request(callback=_cb)
+        for i in ids:
+            batch.add(svc.users().messages().get(userId="me", id=i, format=fmt, **kw))
+        batch.execute()
+        if out:
+            return out
+    except Exception:
+        pass
+    for i in ids:
+        try:
+            r = svc.users().messages().get(userId="me", id=i, format=fmt, **kw).execute()
+            if r:
+                out[r.get("id") or i] = r
+        except Exception:
+            pass
+    return out
+
+
 def gmail_search(query: str, n: int = 5, service=None, body: bool = False) -> list:
     """Full-text Gmail search (Google's own search over the whole mailbox) — DATA for the
-    retrieval brain answering 'what's my flight date / booking ref'. Each hit carries the
-    snippet Gmail returns; with body=True it also carries a truncated plain-text body (the
-    snippet often omits the date/ref the answer needs). []- on any failure."""
+    retrieval brain answering 'what's my flight date / booking ref'.
+
+    Returns EVERY candidate Gmail matched (up to n * _CANDIDATE_FANOUT), newest-relevance
+    first, but only the first `n` — chosen round-robin across conversations — carry a `body`.
+    The rest are headlines (from/subject/date/snippet), which cost nothing extra because the
+    grouping pass already fetched them in one batch. So `n` is purely a BODY budget: it trades
+    latency, never visibility, and no ranking accident can hide a match from the model. That
+    matters more than it sounds — a booking's date and reference usually sit in the subject
+    line itself, so a headline alone often answers the question. []- on any failure."""
     try:
         svc = service or _service("gmail", "v1")
-        listed = svc.users().messages().list(userId="me", q=query or "", maxResults=n).execute()
-        fmt = "full" if body else "metadata"
-        kw = {} if body else {"metadataHeaders": ["From", "Subject", "Date"]}
+        listed = svc.users().messages().list(
+            userId="me", q=query or "", maxResults=max(n * _CANDIDATE_FANOUT, n)).execute()
+        cands = listed.get("messages", []) or []
+        # One batched round trip buys every candidate's subject, so both the round-robin below
+        # and the caller see the WHOLE candidate set instead of being blind past rank n.
+        metas = _batch_get(svc, [m["id"] for m in cands], "metadata",
+                           ["From", "Subject", "Date"])
+        groups = {}                              # dict preserves Gmail's rank order
+        for m in cands:
+            meta = metas.get(m["id"])
+            if meta is None:
+                continue
+            key = _norm_subject(_hdr(meta, "Subject")) or m.get("threadId") or m["id"]
+            groups.setdefault(key, []).append((m["id"], meta))
+        # Round-robin one per conversation before any gets a second body: the bodies we pay
+        # for should describe n different things, not n replies to the same thing.
+        picked, rest = [], []
+        while any(groups.values()):
+            for key in list(groups):
+                if groups[key]:
+                    (picked if len(picked) < n else rest).append(groups[key].pop(0))
+        fulls = _batch_get(svc, [i for i, _ in picked], "full") if body else {}
+        # Gmail's own estimate of how many matched IN TOTAL. Carried on every hit so the caller
+        # can tell the model when it's looking at a subset: silent truncation is what turns
+        # "not shown" into "doesn't exist", which is the whole bug this function had.
+        total = listed.get("resultSizeEstimate")
         out = []
-        for m in listed.get("messages", []):
-            msg = svc.users().messages().get(userId="me", id=m["id"], format=fmt, **kw).execute()
-            hdrs = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
-            hit = {"id": m["id"], "from": hdrs.get("From", ""), "subject": hdrs.get("Subject", ""),
-                   "date": hdrs.get("Date", ""), "snippet": msg.get("snippet", "")}
-            if body:
+        for mid, meta in picked + rest:
+            msg = fulls.get(mid, meta)           # a failed body fetch degrades to a headline
+            hit = {"id": mid, "from": _hdr(meta, "From"), "subject": _hdr(meta, "Subject"),
+                   "date": _hdr(meta, "Date"), "snippet": msg.get("snippet", ""), "total": total}
+            if body and mid in fulls:
                 hit["body"] = _message_body(msg.get("payload", {}))
                 hit["attachments"] = _message_attachments(msg.get("payload", {}))
             out.append(hit)

@@ -266,6 +266,102 @@ def test_write_actions_are_capped(client, monkeypatch):
     assert n == retrieve._WRITE_CAP
 
 
+class _MailStub:
+    """A stub mailbox over [{id, threadId, subject, body}]. No new_batch_http_request, so
+    google_client takes its serial fallback — the same path a real batch failure takes."""
+
+    def __init__(self, msgs):
+        self.msgs = msgs
+
+    def users(self): return self
+    def messages(self): return self
+
+    def list(self, userId=None, q=None, maxResults=None):
+        self._r = {"messages": [{"id": m["id"], "threadId": m["threadId"]}
+                                for m in self.msgs[:maxResults]]}
+        return self
+
+    def get(self, userId=None, id=None, format=None, metadataHeaders=None):
+        import base64
+        m = next(x for x in self.msgs if x["id"] == id)
+        payload = {"headers": [{"name": "Subject", "value": m["subject"]},
+                               {"name": "From", "value": "sender@example.com"},
+                               {"name": "Date", "value": "1 Jul 2026"}]}
+        if format == "full":
+            payload["mimeType"] = "text/plain"
+            payload["body"] = {"data": base64.urlsafe_b64encode(m["body"].encode()).decode()}
+        self._r = {"id": m["id"], "snippet": m["subject"][:40], "payload": payload}
+        return self
+
+    def execute(self): return self._r
+
+
+def test_gmail_bodies_spread_across_conversations(client):
+    """THE bug: Gmail ranks MESSAGES, so one chatty conversation ate every slot. Six replies
+    under one subject buried the cruise confirmation past n=5 — the model was handed five
+    emails about bedding and truthfully said it found no cruise. Bodies are now dealt
+    round-robin across conversations, so a lone email about a different thing is never
+    starved by a long thread."""
+    msgs = [{"id": str(i), "threadId": f"t{i}",
+             "subject": "Re: Room allocation and bedding requests - Ref: 11112222",
+             "body": "bedding chatter"} for i in range(1, 7)]
+    msgs.append({"id": "9", "threadId": "t9", "body": "sailing 12 Nov",
+                 "subject": "Ocean Star Cruise 12 Nov 2027 Booking No: 99998888"})
+    hits = google_client.gmail_search("cruise", n=3, body=True, service=_MailStub(msgs))
+    withbody = [h["subject"] for h in hits if h.get("body")]
+    assert len(withbody) == 3
+    assert any("Ocean Star Cruise" in s for s in withbody)  # the minority got a body slot
+
+
+def test_gmail_returns_every_candidate_even_past_n(client):
+    """`n` is a BODY budget, never a visibility limit: everything Gmail matched comes back, the
+    overflow as headlines. A booking's date/ref usually sits in the subject, so no ranking
+    accident can hide the answer from the model — which is what made a bigger `n` unnecessary."""
+    msgs = [{"id": str(i), "threadId": f"t{i}", "subject": f"Subject number {i}",
+             "body": f"body {i}"} for i in range(1, 6)]
+    hits = google_client.gmail_search("x", n=2, body=True, service=_MailStub(msgs))
+    assert len(hits) == 5                                   # every candidate visible
+    assert sum(1 for h in hits if h.get("body")) == 2       # only n carry the costly body
+    assert {h["subject"] for h in hits} == {f"Subject number {i}" for i in range(1, 6)}
+    assert all(h["snippet"] for h in hits)                  # headlines still carry a snippet
+
+
+def test_one_hop_runs_several_searches(client, monkeypatch):
+    """A hop can carry several searches and they run concurrently — the old loop spent one hop
+    AND one 3-10s planning call per search just to ask the next question."""
+    conn = _db()
+    monkeypatch.setattr(docs, "answer_from_facts", lambda c, q: None)
+    monkeypatch.setattr(google_client, "is_configured", lambda: False)
+    seen = []
+    monkeypatch.setattr(docs, "search_documents",
+                        lambda c, q, limit=10: seen.append(q) or [])
+    plan = _planner('{"tool":"search","searches":[{"source":"docs","query":"genting dream"},'
+                    '{"source":"docs","query":"star cruises"}]}',
+                    '{"tool":"answer","text":"done"}')
+    retrieve.run(conn, "cruise", "when is my cruise", claude_fn=plan)
+    conn.close()
+    assert "genting dream" in seen and "star cruises" in seen     # both ran, in ONE hop
+    assert len(plan.prompts) == 2                                 # one planning call, not two
+
+
+def test_a_reworded_search_does_not_burn_the_hops(client, monkeypatch):
+    """'cruise booking' -> 'cruise itinerary' -> 'cruise confirmation' are the SAME search.
+    Re-running rewordings of a search that already came back empty burned all five hops and
+    then answered "I couldn't find it" without ever reading anything."""
+    conn = _db()
+    monkeypatch.setattr(docs, "answer_from_facts", lambda c, q: None)
+    monkeypatch.setattr(google_client, "is_configured", lambda: False)
+    monkeypatch.setattr(docs, "search_documents", lambda c, q, limit=10: [])
+    plan = _planner('{"tool":"search","source":"docs","query":"cruise booking"}',
+                    '{"tool":"search","source":"docs","query":"cruise itinerary"}',
+                    '{"tool":"search","source":"docs","query":"cruise confirmation"}',
+                    '{"tool":"search","source":"docs","query":"cruise reservation details"}')
+    retrieve.run(conn, "cruise", "when is my cruise", claude_fn=plan)
+    conn.close()
+    # hop1, hop2 (recognised as a re-tread -> break), then the one forced final answer.
+    assert len(plan.prompts) == 3, "reworded searches should stop the loop, not spin it"
+
+
 def test_read_and_deliver_sets_are_capped(client, monkeypatch):
     """A broad ask can't fan out to an unbounded, slow read/deliver — the set is capped."""
     conn = _db()
