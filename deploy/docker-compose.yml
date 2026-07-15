@@ -8,13 +8,6 @@
 #   - DATA  (/volume1/docker/projects/life-os-compose/data → /data): app.db + backups
 #           + the whisper model cache (HF_HOME). Read-write, single-writer, persisted.
 #   - VAULT (SynologyDrive/…/life-os/vault → /app/vault): notes/journal markdown, synced.
-#   - OFFSITE (SynologyDrive/…/life-os/data-backups → /offsite, app only): the nightly
-#           copy, mirrored off this box by Synology Drive. /data/backups is persisted but
-#           lives on the same volume as the DB, so it dies with it.
-#
-# NOTE: a change to volumes/environment here is NOT something Watchtower can deliver — it
-# only pulls new images. Mirror this file to the NAS and recreate the container
-# (Container Manager → Stop → Build), or the running container keeps the old mounts.
 #
 # Secrets live in a sibling .env (chmod 600, gitignored):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_ID
@@ -35,19 +28,9 @@ services:
     volumes:
       - /volume1/docker/projects/life-os-compose/data:/data:rw
       - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/vault:/app/vault:rw
-      # OFFSITE backup target — app only (the nightly job runs in this container; capture
-      # never imports server.py). A Synology-Drive-synced folder, so the copy also lands on
-      # the Mac: /data/backups alone dies with the volume it sits on.
-      - /volume1/homes/ahvin2020/SynologyDrive/Documents/life-os/data-backups:/offsite:rw
     environment:
       - TZ=Asia/Singapore
       - LIFEOS_DB_PATH=/data/app.db
-      # Paired with the mount ABOVE on purpose. The path is only meaningful if that volume
-      # exists, so the two are one decision and live in one file; as a DB setting you can
-      # type any path and makedirs will happily create it inside the ephemeral container —
-      # the copy "succeeds", the log says +offsite, and Watchtower wipes it on the next pull.
-      # Env also outranks the backup_location setting (see backup_db.run_backup).
-      - LIFEOS_SYNCED_BACKUP_DIR=/offsite
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     ports:
       - "5070:5070"
