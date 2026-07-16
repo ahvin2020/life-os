@@ -15,7 +15,7 @@ wiped by every deploy, with the copy reporting success. Cut 2026-07-16. Don't re
 the app cannot verify a destination is durable, and a backup that lies is worse than
 none.
 
-Run under launchd daily at 03:00 (deploy/com.kelvin.lifeos.backup.plist) or manually:
+Run under launchd daily at 03:00 (deploy/com.lifeos.backup.plist) or manually:
     python3 scripts/backup_db.py
 
 The backup dir is overridable for tests via LIFEOS_BACKUP_DIR.

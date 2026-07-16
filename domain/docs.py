@@ -283,6 +283,20 @@ def link_for_hit(conn, hit) -> str:
     return doc_link(conn, hit["root_idx"], hit["rel"])
 
 
+def link_failure_reply(hit) -> str:
+    """Why link delivery couldn't produce a URL — actionable, and source-aware because the
+    two causes differ: Dropbox is a live API failure (a retry may work), ours is a missing
+    setting only the operator can fill. Never silently fall back to SENDING the file: link
+    mode is the private alternative to pushing a doc through Telegram's cloud (see
+    routes/docs.py), and it's only ever reached when the model deliberately chose it
+    (router defaults to "file"), so a downgrade would answer a question nobody asked — and
+    make a privacy posture depend on a config gap. Offer it; never act on it."""
+    if hit.get("source") == "dropbox":
+        return f"Couldn't make a link for {hit['name']}."
+    return (f"📂 Found {hit['name']}, but I don't know this app's URL, so I can't build a "
+            f"link. Set App URL in Settings — or ask me to send the file itself.")
+
+
 def _root_key(root: str) -> str:
     """A STABLE short id for a root — a hash of its real path. Unlike a positional index it
     doesn't shift when an earlier root is temporarily unmounted, so a /docs link already
@@ -307,7 +321,19 @@ def resolve_doc(conn, root_key, rel: str) -> str | None:
 
 
 def doc_link(conn, root_idx: int, rel: str) -> str:
-    base = (get_setting(conn, "app_base_url", "") or "http://localhost:5070").rstrip("/")
+    """The Tailscale file link — "" when app_base_url is unset, which the caller must SAY.
+
+    This runs in the BOT, which has no request to derive a host from, so there is nothing
+    to guess with. Guessing localhost sends a link that resolves to the reader's own phone
+    and hangs: a dead link that looks like a real answer. Nor may the web adopt the host it
+    was browsed from — the app answers on the LAN IP as well as the tailnet (compose
+    publishes 5070 on every interface), so first-visit-wins would pin a private address
+    that's unreachable off-network, and a wrong pin is worse than a blank because it looks
+    deliberate. Blank is the one state that's detectable and explainable; keep it so.
+    """
+    base = (get_setting(conn, "app_base_url", "") or "").rstrip("/")
+    if not base:
+        return ""
     roots = document_roots(conn)
     key = _root_key(roots[root_idx]) if 0 <= root_idx < len(roots) else str(root_idx)
     return f"{base}/docs/{key}/{quote(rel)}"

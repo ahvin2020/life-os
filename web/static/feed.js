@@ -580,6 +580,7 @@
         if (!fresh) { window.location.reload(); return; }
         form.replaceWith(fresh);
         bindConnCard(fresh);
+        bindRootsTest(fresh);            // else Test goes dead after a save swaps the card
         fresh.querySelectorAll(".cmdcopy[data-copy]").forEach(bindCopy);
       })
       .catch(function () { window.location.reload(); });
@@ -654,8 +655,34 @@
       }, "Confirm disconnect?");
     });
   }
-  ["aiform", "googleform", "dropboxform", "telegramform"].forEach(function (id) { bindConnCard(document.getElementById(id)); });
+  ["aiform", "googleform", "dropboxform", "telegramform", "docrootsform"].forEach(function (id) { bindConnCard(document.getElementById(id)); });
   document.querySelectorAll(".cmdcopy[data-copy]").forEach(bindCopy);
+
+  // Documents card: its Test probes the PASTED paths, so it posts the form body — unlike
+  // the provider [data-test] buttons, which ping an already-SAVED connection with no body.
+  // Testing before saving is the point: you find out a folder isn't mounted (Cloud Sync not
+  // set up yet) without first committing a broken path. The per-folder report is the answer,
+  // so it lands inline; the toast only carries the headline.
+  function bindRootsTest(form) {
+    if (!form) return;
+    var b = form.querySelector("[data-test-roots]"); if (!b) return;
+    var out = form.querySelector("[data-roots-detail]");
+    var orig = b.textContent;
+    b.addEventListener("click", function () {
+      b.disabled = true; b.textContent = "…";
+      post("/settings/test-doc-roots", new FormData(form)).then(function (res) {
+        var ok = res.ok && res.data && res.data.status === "ok";
+        b.disabled = false; b.textContent = orig;
+        toast((res.data && res.data.message) || "Couldn't check those folders");
+        if (!out) return;
+        var detail = (res.data && res.data.detail) || "";
+        out.textContent = detail;
+        out.hidden = !detail;
+        out.classList.toggle("err", !ok);
+      });
+    });
+  }
+  bindRootsTest(document.getElementById("docrootsform"));
 
   // App URL autosaves on change. The Google/Dropbox "copy callback" chips are built from
   // it (a stale chip → redirect_uri_mismatch), so refresh just those cards in place —

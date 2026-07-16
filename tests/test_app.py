@@ -217,7 +217,7 @@ def test_task_verb_layer_instant_vs_router():
 
     # → router: the "verb" is really a noun, a different intent, or past tense (journal)
     for t in ["email from mum", "order of service", "book club notes", "text from dad",
-              "call me Kelvin", "update from the team", "water bill is due",
+              "call me Sam", "update from the team", "water bill is due",
               "check out this link", "write about my day", "called the dentist",
               "finished the report", "the weather is nice", "todolist",
               "add a taskforce meeting"]:

@@ -33,7 +33,7 @@ from import_common import (  # noqa: E402
 from ai.claude_cli import call_claude  # noqa: E402  (import_common put repo root on sys.path)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TODO_PATH = "/Users/kelvintan/Desktop/todo.txt"
+TODO_PATH = os.path.expanduser("~/Desktop/todo.txt")
 PROFILE_PATH = os.path.join(_REPO_ROOT, "vault", "profile.md")
 PREVIEW_PATH = os.path.join(DATA_DIR, "import_preview_todo.md")
 

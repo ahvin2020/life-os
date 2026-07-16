@@ -9,7 +9,7 @@
   <div class="setgroup">
     <div class="setrow">
       <div class="sinfo"><div class="slabel">What should I call you?</div><div class="sdesc">The name in your home greeting. Blank uses your profile name.</div></div>
-      <div class="sctrls"><input class="ctrl" type="text" name="display_name" value="{{ values.display_name or '' }}" maxlength="40" style="min-width:180px" placeholder="e.g. Kelvin" aria-label="What should I call you?"></div>
+      <div class="sctrls"><input class="ctrl" type="text" name="display_name" value="{{ values.display_name or '' }}" maxlength="40" style="min-width:180px" placeholder="e.g. Sam" aria-label="What should I call you?"></div>
     </div>
   </div>
 
@@ -111,9 +111,11 @@
 
 <form class="setgroup" id="appurlform" method="post" action="/settings/app-url">
   <div class="setrow">
-    <div class="sinfo"><div class="slabel">App URL</div><div class="sdesc">Where you reach this app — builds the connect links below. Blank = localhost.</div></div>
+    <div class="sinfo"><div class="slabel">App URL</div><div class="sdesc">Where you reach this app from your phone. Used for the connect callbacks below and the file links the bot sends.</div></div>
     <div class="sctrls">
-      <input class="ctrl" type="text" name="app_base_url" value="{{ app_base_url }}" spellcheck="false" style="width:230px;font-family:var(--mono);font-size:12px" placeholder="http://localhost:5070" aria-label="App URL" data-autosave>
+      {# placeholder = the host you're browsing from: a hint, never a value. The app can't
+         adopt it (it answers on the LAN IP too, so it'd pin the wrong name) — he picks. #}
+      <input class="ctrl" type="text" name="app_base_url" value="{{ app_base_url }}" spellcheck="false" style="width:230px;font-family:var(--mono);font-size:12px" placeholder="{{ request.host_url.rstrip('/') }}" aria-label="App URL" data-autosave>
     </div>
   </div>
 </form>
@@ -193,7 +195,7 @@
       </div>
       <div style="margin-top:13px"><a class="runbtn primary" href="/settings/google/connect" data-connect>Sign in with Google</a></div>
       {% else %}
-      <div class="sdesc"><b>Set up once:</b> <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud</a> → enable Gmail + Calendar → create a Web OAuth client with redirect <button type="button" class="cmdcopy" data-copy="{{ app_base_url or 'http://localhost:5070' }}/settings/google/callback">copy callback</button>, then paste its ID + secret:</div>
+      <div class="sdesc"><b>Set up once:</b> <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud</a> → enable Gmail + Calendar → create a Web OAuth client with redirect <button type="button" class="cmdcopy" data-copy="{{ callback_base }}/settings/google/callback">copy callback</button>, then paste its ID + secret:</div>
       <div class="credblock">
         <input class="ctrl" type="text" name="google_client_id" placeholder="client ID" spellcheck="false" aria-label="Google client ID">
         <input class="ctrl" type="text" name="google_client_secret" placeholder="client secret" autocomplete="off" spellcheck="false" aria-label="Google client secret">
@@ -230,7 +232,7 @@
       </div>
       <div style="margin-top:13px"><a class="runbtn primary" href="/settings/dropbox/connect" data-connect>Sign in with Dropbox</a></div>
       {% else %}
-      <div class="sdesc"><b>Set up once:</b> <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener">Dropbox app</a> → scoped access, files read → redirect <button type="button" class="cmdcopy" data-copy="{{ app_base_url or 'http://localhost:5070' }}/settings/dropbox/callback">copy callback</button>, then paste its key + secret:</div>
+      <div class="sdesc"><b>Set up once:</b> <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener">Dropbox app</a> → scoped access, files read → redirect <button type="button" class="cmdcopy" data-copy="{{ callback_base }}/settings/dropbox/callback">copy callback</button>, then paste its key + secret:</div>
       <div class="credblock">
         <input class="ctrl" type="text" name="dropbox_app_key" placeholder="app key" spellcheck="false" aria-label="Dropbox app key">
         <input class="ctrl" type="text" name="dropbox_app_secret" placeholder="app secret" autocomplete="off" spellcheck="false" aria-label="Dropbox app secret">
@@ -240,6 +242,24 @@
     </div>
   </div>
   {% endif %}
+</form>
+
+<form method="post" action="/settings/doc-roots" class="setgroup conn{{ ' connected' if doc_roots_count }}" id="docrootsform">
+  <div class="setrow">
+    <div class="sinfo">
+      <div class="slabel">Documents</div>
+      <div class="sdesc">Folders the bot searches when you ask for a file or a booking detail — your synced folders, one absolute path per line. Your vault is always searched.{% if doc_roots_count %} <span class="mono">{{ doc_roots_count }} folder{{ '' if doc_roots_count == 1 else 's' }}.</span>{% endif %}</div>
+      {% if doc_links_blocked %}<div class="cnote warn">Set App URL above, or the bot can only send files — not links to them.</div>{% endif %}
+      <div class="credblock">
+        <textarea class="ctrl" name="document_roots" rows="3" spellcheck="false" placeholder="/volume1/docker/projects/life-os-compose/data/Documents" aria-label="Document folders">{{ document_roots_text }}</textarea>
+        <div class="cnote rootlog" data-roots-detail hidden></div>
+      </div>
+    </div>
+    <div class="sctrls">
+      <button class="runbtn" type="button" data-test-roots>Test</button>
+      <button class="runbtn primary" type="submit">Save</button>
+    </div>
+  </div>
 </form>
 
 <div class="sect"><span>System health</span><span class="rule"></span></div>

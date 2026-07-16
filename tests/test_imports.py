@@ -59,7 +59,7 @@ def test_parse_indented_line_is_continuation():
 
 
 def test_parse_real_todo_file_nonzero():
-    path = "/Users/kelvintan/Desktop/todo.txt"
+    path = os.path.expanduser("~/Desktop/todo.txt")
     if not os.path.exists(path):
         return
     with open(path, encoding="utf-8") as f:

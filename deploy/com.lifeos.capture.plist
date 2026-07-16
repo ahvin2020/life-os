@@ -4,17 +4,17 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.kelvin.lifeos.capture</string>
+  <string>com.lifeos.capture</string>
 
   <!-- Run the Telegram capture daemon under the repo's venv. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/.venv/bin/python</string>
-    <string>/Users/kelvintan/SynologyDrive/Documents/life-os/capture_daemon.py</string>
+    <string>__REPO_DIR__/.venv/bin/python</string>
+    <string>__REPO_DIR__/capture_daemon.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/kelvintan/SynologyDrive/Documents/life-os</string>
+  <string>__REPO_DIR__</string>
 
   <!-- Restart if it ever exits (network blips, crashes). -->
   <key>KeepAlive</key>
@@ -30,12 +30,12 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/Users/kelvintan/.local/bin:/Users/kelvintan/.nvm/versions/node/v20.20.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__HOME__/.local/bin:__HOME__/.nvm/versions/node/v20.20.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/capture.daemon.out.log</string>
+  <string>__REPO_DIR__/data/capture.daemon.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/kelvintan/SynologyDrive/Documents/life-os/data/capture.daemon.err.log</string>
+  <string>__REPO_DIR__/data/capture.daemon.err.log</string>
 </dict>
 </plist>

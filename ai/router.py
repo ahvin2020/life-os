@@ -885,7 +885,7 @@ def apply_action(conn, act, ctx) -> tuple:
             hits = docs.prefer_owner(conn, hits, f"{query} {act.get('question') or ''}")
             link = docs.link_for_hit(conn, hits[0])
             if not link:
-                return (f"Couldn't make a link for {hits[0]['name']}.", None)
+                return (docs.link_failure_reply(hits[0]), None)
             # a vault/doc-root link only resolves over Tailscale — say so, or he taps it on
             # cellular and it just hangs. (Dropbox links are public, so they carry no caveat.)
             note = "" if hits[0].get("source") == "dropbox" else "\n(opens on your Tailscale network only)"
@@ -932,7 +932,7 @@ def apply_action(conn, act, ctx) -> tuple:
         if mode == "link":
             link = docs.link_for_hit(conn, hit)
             if not link:
-                return (f"Couldn't make a link for {hit['name']}.", None)
+                return (docs.link_failure_reply(hit), None)
             note = "" if hit.get("source") == "dropbox" else "\n(opens on your Tailscale network only)"
             return (f"🔗 {hit['name']}\n{link}{note}", None)
         # mode == "file": stash the path for the daemon to upload after the text reply.

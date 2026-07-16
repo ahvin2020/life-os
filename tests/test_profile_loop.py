@@ -186,10 +186,10 @@ def test_router_set_name_saves_display_name(client):
     import json
     from core.db import get_setting
     conn = _db()
-    res = router.route(conn, "call me Kelvin",
-                       claude_fn=lambda p: json.dumps({"action": "set_name", "name": "Kelvin"}))
-    assert res["applied"] == ["set_name"] and "Kelvin" in res["reply"]
-    assert get_setting(conn, "display_name") == "Kelvin"
+    res = router.route(conn, "call me Sam",
+                       claude_fn=lambda p: json.dumps({"action": "set_name", "name": "Sam"}))
+    assert res["applied"] == ["set_name"] and "Sam" in res["reply"]
+    assert get_setting(conn, "display_name") == "Sam"
     conn.close()
 
 

@@ -17,6 +17,9 @@ def _db():
     return connect(os.environ["LIFEOS_DB_PATH"])
 
 
+_APP_URL = "http://lifeos.example:5070"   # what a configured install knows about itself
+
+
 def _root(conn, tmp_path):
     set_setting(conn, "document_roots", json.dumps([str(tmp_path)]))
     return 1                                   # index 0 is always the vault
@@ -193,13 +196,31 @@ def test_router_find_document_file_mode(client, tmp_path):
 def test_router_find_document_link_mode(client, tmp_path):
     conn = _db()
     _root(conn, tmp_path)
+    set_setting(conn, "app_base_url", _APP_URL)   # a link needs it; blank fails loud instead
     key = docs._root_key(str(tmp_path))
     (tmp_path / "Insurance.pdf").write_text("x")
     out = router.route(conn, "link me the insurance policy", claude_fn=lambda p: json.dumps(
         {"action": "find_document", "query": "insurance", "mode": "link", "question": None}))
     conn.close()
-    assert f"/docs/{key}/Insurance.pdf" in out["reply"]
+    assert f"{_APP_URL}/docs/{key}/Insurance.pdf" in out["reply"]   # the whole url, not a path
     assert out["document"] is None
+
+
+def test_link_mode_says_so_when_it_cant_build_a_url(client, tmp_path):
+    """No app_base_url → the bot must SAY it, not guess localhost (a link that resolves to
+    the reader's own phone and hangs). And it must not silently send the file instead:
+    link mode is only reached when the model deliberately chose it over "file", so sending
+    would answer a different question AND push through Telegram's cloud the doc that link
+    mode exists to keep out of it."""
+    conn = _db()
+    _root(conn, tmp_path)                        # roots set, app_base_url deliberately not
+    (tmp_path / "Insurance.pdf").write_text("x")
+    out = router.route(conn, "link me the insurance policy", claude_fn=lambda p: json.dumps(
+        {"action": "find_document", "query": "insurance", "mode": "link", "question": None}))
+    conn.close()
+    assert "App URL" in out["reply"] and "Insurance.pdf" in out["reply"]
+    assert "localhost" not in out["reply"]
+    assert out["document"] is None               # privacy choice honoured: no auto-send
 
 
 def test_lookup_link_carries_the_tailscale_caveat(client, tmp_path):
@@ -208,12 +229,13 @@ def test_lookup_link_carries_the_tailscale_caveat(client, tmp_path):
     resolves on Tailscale, so without it he taps the link on cellular and it just hangs."""
     conn = _db()
     _root(conn, tmp_path)
+    set_setting(conn, "app_base_url", _APP_URL)
     key = docs._root_key(str(tmp_path))
     (tmp_path / "Insurance.pdf").write_text("x")
     out = router.route(conn, "link me the insurance policy", claude_fn=lambda p: json.dumps(
         {"action": "lookup", "query": "insurance", "want": "link", "question": None}))
     conn.close()
-    assert f"/docs/{key}/Insurance.pdf" in out["reply"]
+    assert f"{_APP_URL}/docs/{key}/Insurance.pdf" in out["reply"]
     assert "Tailscale" in out["reply"], "the preferred link path dropped the caveat"
 
 

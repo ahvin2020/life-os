@@ -154,6 +154,13 @@ def _integration_pending(conn) -> int:
         n += 1
     elif d_conn and get_setting(conn, "dropbox_last_err"):
         n += 1
+    # Documents configured but the app doesn't know its own URL = the same half-done shape:
+    # `docs.doc_link` runs in the BOT, which has no request to derive a host from, so link
+    # delivery can't build a URL and fails. Only nags once document_roots exists — with no
+    # folders configured nothing can ask for a link, so a blank App URL is untouched, not
+    # broken.
+    if get_setting(conn, "document_roots") and not get_setting(conn, "app_base_url"):
+        n += 1
     return n
 
 

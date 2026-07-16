@@ -148,7 +148,7 @@ _ACTION_VERBS = ("buy", "call", "pay", "renew", "cancel", "submit", "install", "
                  "reply to", "respond to", "follow up", "pick up", "drop off")
 
 # The next word proving the "verb" was really a NOUN ("email from mum", "order of service")
-# or a different intent ("call me Kelvin" sets the greeting name) — bail to the router.
+# or a different intent ("call me Sam" sets the greeting name) — bail to the router.
 _VERB_BAIL_NEXT = ("from", "about", "of", "by", "me")
 
 # Bail-guards. Each only ever HANDS BACK to the router, so the risk is one-directional: a

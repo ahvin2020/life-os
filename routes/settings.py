@@ -153,6 +153,10 @@ def settings_page():
         doc_roots_list = []
     document_roots_text = "\n".join(p for p in doc_roots_list if isinstance(p, str))
     app_base_url = get_setting(conn, "app_base_url") or ""
+    # The redirect the OAuth flow will REALLY send (_base_url, same helper the flow uses) —
+    # the copy-callback chips must show that, not a guess, or he registers a URI Google
+    # then rejects as a mismatch.
+    callback_base = _base_url(conn)
     # Connected-integration status for the connect/disconnect cards.
     from ai import google_client
     g_conn = google_client.is_configured()
@@ -195,6 +199,12 @@ def settings_page():
                            triage_days=_TRIAGE_DAYS, ai=ai,
                            ai_providers=AI_PROVIDERS, active_provider=active_provider,
                            document_roots_text=document_roots_text, app_base_url=app_base_url,
+                           doc_roots_count=len(doc_roots_list),
+                           # Roots configured but no App URL → the bot can't build /docs links
+                           # (it has no request to derive a host from). Same half-done shape
+                           # _integration_pending counts, so the card must say why.
+                           doc_links_blocked=bool(doc_roots_list and not app_base_url),
+                           callback_base=callback_base,
                            integrations=integrations,
                            health_why=health_why, capture_restartable=capture_restartable)
 
@@ -210,7 +220,9 @@ def settings_run(job):
             if not shutil.which("launchctl"):     # NAS container: no launchd to kick
                 return jsonify({"status": "error",
                                 "message": "Capture runs as a container here — restart it from Container Manager"}), 400
-            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/com.kelvin.lifeos.capture"],
+            # Must match the Label in deploy/com.lifeos.capture.plist — launchctl matches on
+            # the registered label, so a drift here 400s with a bare "no such process".
+            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/com.lifeos.capture"],
                            check=True, capture_output=True, text=True, timeout=15)
             msg = "Capture daemon restarting"
         elif job == "backup":

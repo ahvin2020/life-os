@@ -133,15 +133,77 @@ def test_app_url_save_validates_and_persists(client):
     assert bad.get_json()["status"] == "error"
 
 
+def test_blank_app_url_never_becomes_a_localhost_doc_link(client):
+    """The bot has no request to derive a host from, and must NOT guess: a localhost link
+    resolves to the reader's own phone and hangs — a dead link that reads like a real
+    answer. Blank → "" → the caller says so. (The web can't adopt the browsed host either:
+    compose publishes 5070 on every interface, so a LAN-IP visit would pin an address
+    that's unreachable off-network, and a wrong pin looks configured.)"""
+    from domain import docs
+    conn = _db()
+    assert not get_setting(conn, "app_base_url")
+    assert docs.doc_link(conn, 0, "passport.pdf") == ""
+    reply = docs.link_failure_reply({"name": "passport.pdf", "root_idx": 0, "rel": "p.pdf"})
+    assert "App URL" in reply and "passport.pdf" in reply       # actionable, names the file
+    # Dropbox failures are a different cause — don't point at a setting that isn't the fix.
+    assert "App URL" not in docs.link_failure_reply({"name": "x.pdf", "source": "dropbox"})
+    # ...and once it's set, links build normally.
+    set_setting(conn, "app_base_url", "http://lifeos.example:5070")
+    assert docs.doc_link(conn, 0, "passport.pdf").startswith(
+        "http://lifeos.example:5070/docs/")
+    conn.close()
+
+
+def test_copy_callback_shows_the_redirect_the_flow_really_sends(client):
+    """The chip and _google_redirect_uri must agree. They didn't: the chip fell back to
+    localhost while the flow fell back to the request host, so a blank setting told you to
+    register a URI Google would then reject as a redirect_uri_mismatch."""
+    html = client.get("/settings", base_url="http://lifeos.example:5070").data.decode()
+    assert "http://lifeos.example:5070/settings/google/callback" in html
+    assert "localhost:5070/settings/google/callback" not in html
+
+
+def test_doc_roots_card_is_wired(client, tmp_path):
+    """The routes existed but NO template read `document_roots_text`, so the only writer for
+    the setting that drives doc retrieval + the daily scan was the DB. The card must render,
+    prefill from the setting, and post to the route that saves it."""
+    html = client.get("/settings").data.decode()
+    assert 'action="/settings/doc-roots"' in html and 'name="document_roots"' in html
+    assert "data-test-roots" in html                       # Test probes before you commit a path
+    conn = _db()
+    set_setting(conn, "document_roots", '["%s"]' % tmp_path)
+    conn.close()
+    html = client.get("/settings").data.decode()
+    assert str(tmp_path) in html                           # prefilled → editable, not write-only
+    assert "1 folder." in html
+
+
+def test_doc_roots_without_app_url_nags(client, tmp_path):
+    """Half-done setup: folders configured but no App URL → the bot can't build a /docs link
+    (no request to derive a host from). Same shape as creds-saved-but-not-connected, so it
+    rides the SAME `_integration_pending` counter, not a bespoke card state. With no folders
+    it must stay silent — nothing can ask for a link, so blank is untouched, not broken."""
+    from core.health import _integration_pending
+    conn = _db()
+    assert _integration_pending(conn) == 0                 # nothing touched → no nag
+    set_setting(conn, "document_roots", '["%s"]' % tmp_path)
+    assert _integration_pending(conn) == 1                 # configured but link-blind → nag
+    assert "Set App URL above" in client.get("/settings").data.decode()
+    set_setting(conn, "app_base_url", "http://lifeos.example:5070")
+    assert _integration_pending(conn) == 0                 # resolved
+    assert "Set App URL above" not in client.get("/settings").data.decode()
+    conn.close()
+
+
 def test_doc_roots_save_round_trip(client, tmp_path):
     r = client.post("/settings/doc-roots", data={
         "document_roots": f"{tmp_path}\n  \nrelative/skip\n{tmp_path}\n",   # dedupe + drop relative/blank
-        "app_base_url": "http://nas.tail1234.ts.net:5070/"})
+        "app_base_url": "http://lifeos.example:5070/"})
     assert r.status_code in (200, 302)
     conn = _db()
     import json
     assert json.loads(get_setting(conn, "document_roots")) == [str(tmp_path)]
-    assert get_setting(conn, "app_base_url") == "http://nas.tail1234.ts.net:5070"   # trailing / trimmed
+    assert get_setting(conn, "app_base_url") == "http://lifeos.example:5070"   # trailing / trimmed
     conn.close()
 
 

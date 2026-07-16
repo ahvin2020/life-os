@@ -616,6 +616,9 @@ a:hover { text-decoration: underline; }
 .credblock { margin-top: 13px; display: flex; flex-direction: column; gap: 9px; }
 .credblock[hidden] { display: none; }                        /* hidden attr must beat display:flex */
 .credblock .ctrl { width: 100%; max-width: 340px; font-family: var(--mono); font-size: 12px; min-height: 40px; }
+/* Documents card: the Test report — one ✓/✗ line per folder, so it must keep its newlines. */
+.rootlog { white-space: pre-line; font-family: var(--mono); font-size: 12px; color: var(--muted); max-width: 340px; }
+.rootlog[hidden] { display: none; }                          /* hidden attr must beat .cnote's display:block */
 .linkish { background: none; border: none; color: var(--link); cursor: pointer; padding: 0; font: inherit; }
 .setsaved.on { opacity: 1; }
 /* enable checkboxes rendered as toggle switches */
