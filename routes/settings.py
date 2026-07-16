@@ -130,13 +130,6 @@ def settings_page():
         except ValueError:
             pass
     toggles = {k: get_setting(conn, k, "1") != "0" for k in TOGGLES}
-    # No "default offsite dir" is passed to the card on purpose. It used to show
-    # <root>/data-backups as the value blank falls back to; blank actually mirrors NOWHERE
-    # (backup_db.run_backup skips the mirror unless a destination is named), and inside the
-    # container <root> is the ephemeral /app that every Watchtower pull wipes — which is the
-    # very reason run_backup refuses to write there. The card promised the one thing the
-    # backup code deliberately won't do.
-    backup_location = get_setting(conn, "backup_location") or ""
     triage_day = get_setting(conn, "triage_day") or "sun"
     weekly_day = get_setting(conn, "weekly_day") or "sun"
     docscan_day = get_setting(conn, "docscan_day") or "daily"
@@ -197,7 +190,7 @@ def settings_page():
                            values=values, defaults=DEFAULTS, toggles=toggles,
                            status=status, tz_current=tz_current, nextrun=nextrun,
                            machine_tz=machine_tz, tz_options=tz_options,
-                           backup_location=backup_location, triage_day=triage_day,
+                           triage_day=triage_day,
                            weekly_day=weekly_day, docscan_day=docscan_day,
                            triage_days=_TRIAGE_DAYS, ai=ai,
                            ai_providers=AI_PROVIDERS, active_provider=active_provider,
@@ -729,10 +722,6 @@ def settings_save():
             raise _Invalid("Voice language must be letters/hyphens (≤10)")
         else:
             staged["voice_language"] = raw
-
-        # backup_location: blank OK (→ default offsite dir), else a path string
-        raw = (f.get("backup_location") or "").strip()
-        staged["backup_location"] = raw[:255] if raw else None
 
         # backup_keep: blank OK, else int 1–365 (retention count)
         staged["backup_keep"] = _int_range_field(f.get("backup_keep"), 1, 365, "Keep backups must be 1–365")

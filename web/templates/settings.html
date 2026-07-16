@@ -91,10 +91,6 @@
   <div class="sect"><span>Backup</span><span class="rule"></span></div>
   <div class="setgroup">
     <div class="setrow">
-      <div class="sinfo"><div class="slabel">Offsite location</div><div class="sdesc">Where the nightly copy is mirrored. Blank = no offsite copy</div></div>
-      <div class="sctrls"><input class="ctrl" style="width:230px;font-family:var(--mono);font-size:12px" type="text" name="backup_location" value="{{ backup_location }}" placeholder="/volume1/backups"></div>
-    </div>
-    <div class="setrow">
       <div class="sinfo"><div class="slabel">Keep backups</div><div class="sdesc">Older backups are pruned automatically</div></div>
       <div class="sctrls"><input class="ctrl dayin" type="number" min="1" max="365" inputmode="numeric" name="backup_keep" value="{{ values.backup_keep or defaults.backup_keep }}"><span class="unit">recent</span></div>
     </div>

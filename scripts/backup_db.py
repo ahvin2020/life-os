@@ -2,21 +2,28 @@
 """Nightly SQLite backup for Life OS.
 
 Uses sqlite3's online .backup (a consistent snapshot even while the DB is live in WAL
-mode) to write a timestamped copy into data/backups/, prunes to the most recent KEEP
-files, mirrors that copy into a Synology-synced data-backups/ folder at the repo root
-(offsite copy — gitignored), and stamps settings.backup_last_ran so the sidebar
-'backup' health dot goes green.
+mode) to write a timestamped copy into <db dir>/backups/, prunes to the most recent KEEP
+files, and stamps settings.backup_last_ran so the sidebar 'backup' health dot goes green.
+
+That is the WHOLE job. Making a consistent snapshot of a live WAL database is the one
+thing only this app can do; getting the bytes off the box is Synology's (Cloud Sync /
+Hyper Backup, pointed at the backups dir). There used to be an "offsite location" that
+shutil.copy2'd the snapshot somewhere else, and it was a worse duplicate of Cloud Sync:
+it silently no-op'd for days when unset while the health dot stayed green, and any path
+you gave it was created blind — inside the container that meant the ephemeral /app,
+wiped by every deploy, with the copy reporting success. Cut 2026-07-16. Don't re-add:
+the app cannot verify a destination is durable, and a backup that lies is worse than
+none.
 
 Run under launchd daily at 03:00 (deploy/com.kelvin.lifeos.backup.plist) or manually:
     python3 scripts/backup_db.py
 
-Dirs are overridable for tests via LIFEOS_BACKUP_DIR / LIFEOS_SYNCED_BACKUP_DIR.
+The backup dir is overridable for tests via LIFEOS_BACKUP_DIR.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -50,15 +57,6 @@ def backup_dir(db_path: str = DB_PATH) -> str:
     (the old repo-root default resolved to the ephemeral /app inside the image). Env
     LIFEOS_BACKUP_DIR still wins (tests)."""
     d = os.environ.get("LIFEOS_BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(db_path)), "backups")
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-def synced_dir() -> str:
-    """Synology-synced mirror at the repo root (gitignored) — the offsite copy. Used on
-    the Mac; on the NAS there's no synced folder mounted, so the offsite mirror is
-    opt-in via the backup_location setting instead (see run_backup)."""
-    d = os.environ.get("LIFEOS_SYNCED_BACKUP_DIR") or os.path.join(_REPO_ROOT, "data-backups")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -104,12 +102,9 @@ def stamp_heartbeat(db_path: str = DB_PATH) -> None:
 
 
 def run_backup(db_path: str = DB_PATH) -> dict:
-    """Full nightly job: online backup → prune local → (optional) mirror offsite →
-    heartbeat. The local snapshot lands next to the DB (persisted /data on the NAS).
-    The offsite mirror is OPT-IN — only when LIFEOS_SYNCED_BACKUP_DIR (tests) or the
-    backup_location setting names a real destination; without one we skip it rather
-    than write into the ephemeral container filesystem. Retention (backup_keep) is
-    user-overridable."""
+    """Full nightly job: online backup → prune → heartbeat. The snapshot lands next to the
+    DB, which on the NAS is the persisted /data volume. Retention (backup_keep) is
+    user-overridable. Replication off the box is Cloud Sync's job, not this script's."""
     keepv = _setting(db_path, "backup_keep")
     keep = int(keepv) if (keepv and str(keepv).isdigit()) else KEEP
     local_base = backup_dir(db_path)
@@ -120,18 +115,8 @@ def run_backup(db_path: str = DB_PATH) -> dict:
     _online_backup(db_path, local)
     pruned_local = prune(local_base, keep)
 
-    # offsite mirror: env override (tests) > backup_location setting > none
-    synced_base = os.environ.get("LIFEOS_SYNCED_BACKUP_DIR") or _setting(db_path, "backup_location")
-    synced, pruned_synced = None, []
-    if synced_base and os.path.abspath(synced_base) != os.path.abspath(local_base):
-        os.makedirs(synced_base, exist_ok=True)
-        synced = os.path.join(synced_base, name)
-        shutil.copy2(local, synced)
-        pruned_synced = prune(synced_base, keep)
-
     stamp_heartbeat(db_path)
-    return {"backup": local, "synced": synced,
-            "pruned_local": len(pruned_local), "pruned_synced": len(pruned_synced)}
+    return {"backup": local, "pruned_local": len(pruned_local)}
 
 
 def main() -> None:

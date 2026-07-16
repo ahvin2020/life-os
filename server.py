@@ -58,8 +58,7 @@ def _backup_loop(db_path: str, log) -> None:
                 conn.close()
                 if not _backup_ran_today(last, now):
                     res = backup_db.run_backup(db_path)
-                    log(f"backup written: {res.get('backup')}"
-                        + (f" (+offsite {res.get('synced')})" if res.get("synced") else ""))
+                    log(f"backup written: {res.get('backup')}")
         except Exception as e:                       # never let the scheduler die
             log(f"backup scheduler error: {e}")
         time.sleep(1800)                             # re-check every 30 min

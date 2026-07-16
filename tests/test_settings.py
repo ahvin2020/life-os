@@ -50,14 +50,12 @@ def test_settings_page_prefills_defaults_as_values(client):
     assert 'value="21:30"' in html            # reflection_hour default
     assert 'value="30"' in html               # purge/stale default
     assert 'value="7"' in html                # archive/backup_keep default
-    # backup_location stays blank (portable across the Mac↔NAS sync)
-    assert 'name="backup_location" value=""' in html
-    # ...and the card must not offer a "default" offsite dir. It used to show
-    # <root>/data-backups as what blank falls back to — but blank mirrors NOWHERE, and in
-    # the container <root> is the ephemeral /app that run_backup pointedly refuses to write
-    # to. A backup that silently vanishes on every deploy looks exactly like a working one.
-    assert "data-backups" not in html
-    assert "Blank = no offsite copy" in html
+    # The offsite-location field is GONE (2026-07-16) — the app makes the snapshot, Cloud
+    # Sync moves it off the box. It was a worse duplicate that failed silently both ways:
+    # unset it no-op'd for days behind a green dot, and set it created any path blind (in the
+    # container, the ephemeral /app) and reported success.
+    assert "backup_location" not in html
+    assert "data-backups" not in html and "Offsite" not in html
     # gear/link chrome points at /settings
     assert 'href="/settings"' in html
     # toggles default ON (missing row = enabled) → rendered checked

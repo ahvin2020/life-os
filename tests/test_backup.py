@@ -69,15 +69,12 @@ def test_stamp_heartbeat_sets_backup_last_ran(client):
     assert status["backup"] == "ok"
 
 
-# ── full job (backup + prune + mirror + heartbeat) ────────────────────────────
-def test_run_backup_writes_prunes_mirrors_and_heartbeats(client, tmp_path, monkeypatch):
+# ── full job (backup + prune + heartbeat) ─────────────────────────────────────
+def test_run_backup_writes_prunes_and_heartbeats(client, tmp_path, monkeypatch):
     db_path = os.environ["LIFEOS_DB_PATH"]
     local = tmp_path / "backups"
-    synced = tmp_path / "data-backups"
     local.mkdir()
-    synced.mkdir()
     monkeypatch.setenv("LIFEOS_BACKUP_DIR", str(local))
-    monkeypatch.setenv("LIFEOS_SYNCED_BACKUP_DIR", str(synced))
     # pre-seed 8 stale backups so prune has to fire (result keeps 7 incl. the new one)
     for i in range(8):
         _touch(str(local), f"app-2025010{i}-000000.db")
@@ -85,7 +82,6 @@ def test_run_backup_writes_prunes_mirrors_and_heartbeats(client, tmp_path, monke
     result = backup_db.run_backup(db_path)
 
     assert os.path.exists(result["backup"])                       # a fresh snapshot exists
-    assert os.path.exists(result["synced"])                       # mirrored offsite
     # the online-backup copy is a valid, openable SQLite DB with our schema
     b = connect(result["backup"])
     assert b.execute("SELECT COUNT(*) FROM settings").fetchone()[0] >= 0
@@ -96,23 +92,38 @@ def test_run_backup_writes_prunes_mirrors_and_heartbeats(client, tmp_path, monke
     conn.close()
 
 
-def test_run_backup_honors_backup_keep_and_location_settings(client, tmp_path, monkeypatch):
+def test_run_backup_honors_backup_keep_setting(client, tmp_path, monkeypatch):
     from core.db import set_setting, connect
     db_path = os.environ["LIFEOS_DB_PATH"]
     local = tmp_path / "backups"; local.mkdir()
-    dest = tmp_path / "my-offsite"                                 # user-chosen location (created by backup)
     monkeypatch.setenv("LIFEOS_BACKUP_DIR", str(local))
-    monkeypatch.delenv("LIFEOS_SYNCED_BACKUP_DIR", raising=False)  # so the setting takes effect
     conn = connect(db_path)
     with conn:
         set_setting(conn, "backup_keep", "3")                     # retention override
-        set_setting(conn, "backup_location", str(dest))           # location override
     conn.close()
     for i in range(5):
         _touch(str(local), f"app-2025010{i}-000000.db")
 
     result = backup_db.run_backup(db_path)
 
-    assert os.path.dirname(result["synced"]) == str(dest)         # mirrored to the chosen dir
-    assert os.path.exists(result["synced"])
+    assert os.path.exists(result["backup"])
     assert len([f for f in os.listdir(local) if f.startswith("app-")]) == 3   # pruned to backup_keep
+
+
+def test_backup_does_not_replicate_anywhere(client, tmp_path, monkeypatch):
+    """The app makes the consistent snapshot; moving bytes off the box is Cloud Sync's job.
+    The old "offsite location" was a worse duplicate of it and failed silently BOTH ways: it
+    no-op'd for days when unset while the health dot stayed green, and any path it was given
+    was created blind — in the container that was the ephemeral /app, wiped by every deploy,
+    with the copy reporting success. Removed 2026-07-16; a backup that lies is worse than
+    none, and this app cannot verify a destination is durable."""
+    db_path = os.environ["LIFEOS_DB_PATH"]
+    local = tmp_path / "backups"; local.mkdir()
+    monkeypatch.setenv("LIFEOS_BACKUP_DIR", str(local))
+    monkeypatch.setenv("LIFEOS_SYNCED_BACKUP_DIR", str(tmp_path / "nope"))   # must be ignored
+
+    result = backup_db.run_backup(db_path)
+
+    assert "synced" not in result and "pruned_synced" not in result
+    assert not (tmp_path / "nope").exists()          # named a destination; wrote nothing there
+    assert not hasattr(backup_db, "synced_dir")
