@@ -1180,7 +1180,7 @@
     }
     function closeAlert() { stopChime(); if (alertOv) { alertOv.classList.remove("on"); alertList.innerHTML = ""; } }
     if (okBtn) okBtn.addEventListener("click", closeAlert);
-    if (alertOv) alertOv.addEventListener("click", function (e) { if (e.target === alertOv) closeAlert(); });
+    closeOnBackdrop(alertOv, closeAlert);
 
     function fireDue() {
       var now = Date.now();

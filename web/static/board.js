@@ -598,7 +598,7 @@
     });
     function close() { ov.classList.remove("on"); current = null; }
     document.getElementById("te-close").addEventListener("click", close);
-    ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    closeOnBackdrop(ov, close);
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
 
     // Wire editor-open for a subtree (document at load, or a single spliced-in

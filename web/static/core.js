@@ -71,6 +71,24 @@ function confirmClick(btn, onConfirm, confirmLabel) {
 
 function reloadSoon() { setTimeout(function () { window.location.reload(); }, 250); }
 
+// ---- dismiss a modal by clicking its backdrop -------------------------------
+// Close only when the press AND the release both landed on the backdrop. A bare
+// `click` test can't tell those apart: the event fires on the nearest common
+// ancestor of its mousedown and mouseup, so drag-selecting text in the editor and
+// releasing over the backdrop targets the overlay itself — which used to close the
+// modal mid-selection and throw the edit away. Bind this, never a raw click.
+function closeOnBackdrop(ov, close) {
+  if (!ov) return;
+  // pointerdown/up (not mousedown/up) so a phone tap still dismisses.
+  var fromBackdrop = false, toBackdrop = false;
+  ov.addEventListener("pointerdown", function (e) { fromBackdrop = e.target === ov; });
+  ov.addEventListener("pointerup", function (e) { toBackdrop = e.target === ov; });
+  ov.addEventListener("click", function () {
+    if (fromBackdrop && toBackdrop) close();
+    fromBackdrop = toBackdrop = false;
+  });
+}
+
 // ---- server-rendered partials ----------------------------------------------
 // The server owns every card's markup (the _macros.html macros), so an in-place
 // update asks it to re-render rather than hand-building a node here — that's what
@@ -437,7 +455,7 @@ function openMedia(src, name) {
       if (prev && prev.focus) { try { prev.focus(); } catch (e) { } }   // restore focus
     };
     lb._close = close;
-    lb.addEventListener("click", function (e) { if (e.target === lb) close(); });
+    closeOnBackdrop(lb, close);
     document.addEventListener("keydown", function (e) {
       if (!lb.classList.contains("on")) return;
       if (e.key === "Escape") { close(); return; }
