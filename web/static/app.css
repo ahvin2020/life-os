@@ -727,8 +727,6 @@ input[type="time"], input[type="date"] { color-scheme: dark; }
 /* "This week" pool — secondary to the Today hero: smaller rows, no checkbox/ring. */
 .weekpool { padding: 14px 22px; }
 .weekpool .task { padding: 6px 0; font-size: 14.5px; }
-.weekpool .task label.taskedit { color: var(--muted); }
-.weekpool .task:hover label.taskedit, .weekpool .task:focus-within label.taskedit { color: var(--text); }
 /* category is glance-context, not a badge — bare muted label, no box. Sentence-case
    (capitalize) is the app-wide convention for category (filter chips + editor too). */
 .cat { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; text-transform: capitalize; }
