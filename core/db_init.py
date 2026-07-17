@@ -73,6 +73,7 @@ TABLES = [
             week_since   TEXT,
             media        TEXT,                 -- comma-sep vault/.media/ image pointers
             link         TEXT,                 -- one url the task REFERENCES (see capture._as_task)
+            description  TEXT,                 -- free-text detail, shown only in the task editor
             created      TEXT NOT NULL,
             updated      TEXT NOT NULL
         )
@@ -221,6 +222,16 @@ def migrate(conn) -> list:
         if "link" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN link TEXT")
             applied.append("v10: tasks.link")
+
+    # v11: tasks.description — free-text detail on a task (Trello/Jira-style body). The
+    # card face stays clean; the description shows only when the task editor is open, so a
+    # title can be the scannable one-liner while the scope/context lives one click in.
+    if 0 < disk < 11 and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "description" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN description TEXT")
+            applied.append("v11: tasks.description")
     return applied
 
 

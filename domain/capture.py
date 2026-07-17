@@ -51,7 +51,8 @@ def next_sort_order(conn, col: str, parent_id=None) -> int:
 
 def create_task(conn, title, *, col="backlog", priority=None, category=None,
                 due_date=None, planned_on=None, recur_rule=None, goal_id=None,
-                parent_id=None, at_top=False, media=None, link=None) -> int:
+                parent_id=None, at_top=False, media=None, link=None,
+                description=None) -> int:
     """Insert a task (or subtask when parent_id is set). Returns the new id.
     Single source of truth for task inserts. at_top=True surfaces the new task at
     the TOP of its column — used by the capture paths (bot / composer / refile),
@@ -74,10 +75,11 @@ def create_task(conn, title, *, col="backlog", priority=None, category=None,
         """INSERT INTO tasks
              (title, col, sort_order, priority, category, due_date, planned_on,
               recur_rule, goal_id, parent_id, done, completed_at, archived_at,
-              week_since, media, link, created, updated)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?,?,?)""",
+              week_since, media, link, description, created, updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,?,?,?,?,?,?)""",
         (title.strip(), col, sort_order, priority, category, due_date, planned_on,
-         recur_rule, goal_id, parent_id, week_since, media, link, ts, ts),
+         recur_rule, goal_id, parent_id, week_since, media, link,
+         (description or "").strip() or None, ts, ts),
     )
     return cur.lastrowid
 

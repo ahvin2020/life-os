@@ -69,13 +69,15 @@
   <div class="lcol">
     <div class="card hero">
       <div class="chead"><h2>Today's tasks</h2><a href="/tasks">→</a></div>
+      {# .tdrag = the drag-reorder stack (SortableJS, board.js initHomeDrag). Only
+         open rows live here; done rows fold away below and aren't reorderable. #}
       {% if all_done %}
         <div class="allclear"><div class="ac-big">You’re clear for today.</div><div class="ac-sub">Everything’s checked off — have a good one.</div></div>
-        {% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}
+        <div class="tdrag" data-drag="today">{% for t in tasks %}{{ m.today_item(t, today) }}{% endfor %}</div>
       {% elif tasks %}
         {# open tasks lead; done-today folds away so it can't bury what's left #}
         {% set done_tasks = tasks | selectattr('done') | list %}
-        {% for t in tasks if not t.done %}{{ m.today_item(t, today) }}{% endfor %}
+        <div class="tdrag" data-drag="today">{% for t in tasks if not t.done %}{{ m.today_item(t, today) }}{% endfor %}</div>
         {% if done_tasks %}
         <details class="donefold">
           <summary>{{ done_tasks | length }} done today</summary>
@@ -83,6 +85,7 @@
         </details>
         {% endif %}
       {% else %}
+        <div class="tdrag" data-drag="today"></div>
         <div class="empty">Nothing planned for today. Add a task above, or open a task and tap 'Do today'.</div>
       {% endif %}
     </div>
@@ -91,7 +94,7 @@
     <div class="card weekpool">
       <div class="chead"><h2>This week</h2><a href="/tasks">→</a></div>
       {# the whole week pool, no fold — this IS the week's pending work #}
-      {% for t in week %}{{ m.week_item(t, today) }}{% endfor %}
+      <div class="tdrag" data-drag="week">{% for t in week %}{{ m.week_item(t, today) }}{% endfor %}</div>
     </div>
     {% endif %}
   </div>

@@ -248,6 +248,39 @@ def test_complete_task_carries_undo(client):
     assert out["keyboard"]["inline_keyboard"][0][0]["callback_data"] == f"u|comp|{tid}"
 
 
+def test_router_create_task_with_description(client):
+    """Telegram can attach detail when creating a task — the model puts the scannable
+    action in `title` and the context in `description`."""
+    conn = _db()
+    router.route(conn, "add a task to prep the Q3 deck covering revenue churn and pricing",
+                 claude_fn=_fn({"action": "create_task", "title": "Prep Q3 deck",
+                                "description": "Cover revenue, churn, new pricing"}))
+    row = conn.execute("SELECT title, description FROM tasks ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    assert row["title"] == "Prep Q3 deck"
+    assert row["description"] == "Cover revenue, churn, new pricing"
+
+
+def test_router_set_description_replace_and_append(client):
+    """set_description edits an existing task's notes: append adds a line under what's
+    there; a non-append call replaces; empty text clears."""
+    conn = _db()
+    tid = _open_task(conn, "Ship the newsletter")
+    router.route(conn, f"set the notes on task {tid} to draft by friday",
+                 claude_fn=_fn({"action": "set_description", "id": tid,
+                                "text": "draft by friday", "append": False}))
+    assert conn.execute("SELECT description FROM tasks WHERE id=?", (tid,)).fetchone()[0] == "draft by friday"
+    router.route(conn, f"add to task {tid} notes: include the CPF section",
+                 claude_fn=_fn({"action": "set_description", "id": tid,
+                                "text": "include the CPF section", "append": True}))
+    assert conn.execute("SELECT description FROM tasks WHERE id=?", (tid,)).fetchone()[0] == \
+        "draft by friday\ninclude the CPF section"
+    router.route(conn, f"clear the notes on task {tid}",
+                 claude_fn=_fn({"action": "set_description", "id": tid, "text": "", "append": False}))
+    assert conn.execute("SELECT description FROM tasks WHERE id=?", (tid,)).fetchone()[0] is None
+    conn.close()
+
+
 def test_uncomplete_task(client):
     conn = _db()
     tid = _open_task(conn, "Weekly review")

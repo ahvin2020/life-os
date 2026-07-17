@@ -52,6 +52,56 @@ def test_v5_migration_adds_and_backfills_week_since(client, tmp_path):
     assert rows["later"] is None              # backlog untouched
 
 
+def test_v11_migration_adds_description(tmp_path):
+    """A v10 DB (no description) gains a nullable tasks.description column."""
+    import sqlite3
+    p = str(tmp_path / "old.db")
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        """CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+           INSERT INTO meta VALUES ('schema_version', '10');
+           CREATE TABLE tasks (
+             id INTEGER PRIMARY KEY, title TEXT, col TEXT DEFAULT 'backlog',
+             sort_order INTEGER DEFAULT 0, priority TEXT, category TEXT,
+             due_date TEXT, planned_on TEXT, recur_rule TEXT, goal_id INTEGER,
+             parent_id INTEGER, done INTEGER DEFAULT 0, completed_at TEXT,
+             archived_at TEXT, deleted_at TEXT,
+             reschedule_count INTEGER NOT NULL DEFAULT 0, week_since TEXT,
+             media TEXT, link TEXT, created TEXT, updated TEXT);
+           INSERT INTO tasks (title, col) VALUES ('a task', 'week');
+        """)
+    conn.commit()
+    conn.close()
+    result = db_init.init_db(p)
+    assert any("description" in m for m in result["migrated"])
+    conn = sqlite3.connect(p)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)")]
+    conn.close()
+    assert "description" in cols
+
+
+def test_task_description_round_trips_web_and_shows_marker(client):
+    """Web new + edit persist a description; the card wears the muted 'has notes' marker,
+    and clearing it removes both the value and the marker (detail lives in the editor,
+    the card just flags that it exists)."""
+    r = client.post("/tasks/new", data={"title": "Prep deck", "description": "cover churn",
+                                         "surface": "kcard"},
+                    headers={"X-Requested-With": "XMLHttpRequest"})
+    tid = r.get_json()["id"]
+    card = r.get_json()["card_html"]
+    assert 'class="kdesc"' in card and 'data-description="cover churn"' in card
+    conn = _db()
+    assert conn.execute("SELECT description FROM tasks WHERE id=?", (tid,)).fetchone()[0] == "cover churn"
+    conn.close()
+    # clearing wipes the value and drops the marker
+    r2 = client.post(f"/tasks/{tid}/edit", data={"description": "", "surface": "kcard"},
+                     headers={"X-Requested-With": "XMLHttpRequest"})
+    assert 'class="kdesc"' not in r2.get_json()["card_html"]
+    conn = _db()
+    assert conn.execute("SELECT description FROM tasks WHERE id=?", (tid,)).fetchone()[0] is None
+    conn.close()
+
+
 # ── sticky today ──────────────────────────────────────────────────────────────
 def test_planned_task_rolls_over_until_done(client):
     conn = _db()
@@ -156,6 +206,50 @@ def test_on_today_backlog_task_pins_into_week_column(client):
     col = conn.execute("SELECT col FROM tasks WHERE id=?", (tid,)).fetchone()["col"]
     conn.close()
     assert col == "backlog"                              # stored col untouched
+
+
+def test_pill_plan_order_persists_across_reload(client):
+    """Planning a backlog task via the ☀ pill pins it to the TOP of This week. The pill
+    path now persists that placement (the col-less reorder the JS posts after the move),
+    so a refresh keeps it on top instead of letting its stale backlog sort_order sink it
+    below the other pinned cards. Regression: only drags persisted order before, so the
+    on-today order was lost on reload."""
+    import re
+    conn = _db()
+    with conn:
+        a = create_task(conn, "Already on today", col="week", planned_on=today_iso())
+        b = create_task(conn, "Also on today", col="week", planned_on=today_iso())
+        newbie = create_task(conn, "Just planned", col="backlog")  # lands at a high sort_order
+    conn.close()
+    client.post(f"/tasks/{newbie}/plan")                       # promotes + pins by rule
+    # the pill's follow-up: persist the week stack with the just-planned card on top
+    client.post("/tasks/reorder", json={"ids": [newbie, a, b]})
+    html = client.get("/tasks").data.decode()
+    # the week region spans from its column header to the Done column's ('data-col="week"'
+    # recurs — the kstack carries it too — so slice by index, not split()[1])
+    w = html.find('data-col="week"')
+    week_col = html[w:html.find('data-col="done"', w)]
+    order = [int(m) for m in re.findall(r'<div class="kcard[^>]*?data-task-id="(\d+)"', week_col, re.S)]
+    assert order[:3] == [newbie, a, b], f"pinned order not persisted across reload: {order}"
+
+
+def test_on_today_badge_lights_for_due_and_overdue_not_only_planned(client):
+    """A card floats to the top of This week for a due date / overdue too, not only a
+    ☀ plan (is_pinned). So the persistent "On today ✓" badge must light for ALL of
+    them — otherwise a due/overdue card sits at the top with its status hidden behind
+    hover (the "☀ Do today" pill), which reads as "not on today" (2026-07-17)."""
+    conn = _db()
+    with conn:
+        due = create_task(conn, "Due today", col="backlog")
+        conn.execute("UPDATE tasks SET due_date=? WHERE id=?", (today_iso(), due))
+        od = create_task(conn, "Overdue", col="backlog")
+        conn.execute("UPDATE tasks SET due_date=? WHERE id=?", (_days_ago_iso(3), od))
+    conn.close()
+    html = client.get("/tasks").data.decode()
+    for tid in (due, od):
+        lit = (f'<button class="planbtn kplan on" data-task-id="{tid}" '
+               f'title="plan for today" type="button">☀ On today ✓</button>')
+        assert lit in html, f"due/overdue card {tid} must wear a lit On today badge"
 
 
 # ── week_since staleness clock ────────────────────────────────────────────────

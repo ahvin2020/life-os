@@ -78,6 +78,7 @@ def task_new():
             goal_id=int(f["goal_id"]) if f.get("goal_id") else None,
             parent_id=int(f["parent_id"]) if f.get("parent_id") else None,
             media=f.get("media") or None,
+            description=f.get("description") or None,
         )
     # hand back the rendered card so the caller splices it in place instead of reloading
     card = task_card_html(conn, tid, f.get("surface") or "week")
@@ -98,7 +99,8 @@ def task_edit(task_id):
         if old and old["due_date"] and new_due and new_due > old["due_date"]:
             postponed = True
     fields, params = [], []
-    for col in ("title", "priority", "category", "due_date", "recur_rule", "media"):
+    for col in ("title", "priority", "category", "due_date", "recur_rule", "media",
+                "description"):
         if col in f:
             val = f.get(col) or None
             fields.append(f"{col}=?")

@@ -367,6 +367,21 @@ a:hover { text-decoration: underline; }
 .kcard:hover { border-color: var(--border2); transform: translateY(-2px); background: var(--surface3); }
 .kcard.sortable-ghost { opacity: .35; }
 .kcard.sortable-chosen { transform: rotate(1.4deg) scale(1.02); background: var(--surface3); border-color: var(--accent); cursor: grabbing; }
+/* "just landed" cue: a card that relocates (☀ toggle, snap-back) can jump off-screen,
+   so flag WHERE it went with a brief accent ring that fades out. Outline, not a shadow
+   (no drop shadows in dark UI) and no layout shift. Reduced-motion keeps the ring solid
+   for the ~1.6s the class lives (the kill-switch drops the fade), still a clear cue. */
+/* "just landed" cue, Trello/Linear-style: the ring appears at full accent instantly,
+   then eases OUT to nothing (no ease-in — the colour is there the moment you look and
+   leaves gently). INSET (negative offset) so it draws inside the card box: the column
+   scrolls (.kstack overflow), and an outset ring got clipped at the column edge. */
+@keyframes cardLand { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
+.kcard.just-moved { outline: 2px solid var(--accent); outline-offset: -2px; animation: cardLand 1.5s cubic-bezier(.4, 0, 1, 1) forwards; }
+/* Today / This-week drag-reorder rows (see board.js initHomeDrag). Thin rows, so
+   the lift is a tint + rounded surface rather than the card's rotate. */
+.tdrag .task, .tdrag .ptask { cursor: grab; }
+.tdrag .task.sortable-ghost, .tdrag .ptask.sortable-ghost { opacity: .35; }
+.tdrag .task.sortable-chosen, .tdrag .ptask.sortable-chosen { cursor: grabbing; background: var(--surface2); border-radius: 8px; }
 .kcard .t { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .kcard .khead { display: flex; align-items: center; gap: 9px; }
 .kcard .khead .t { flex: 1; cursor: pointer; }
@@ -381,6 +396,9 @@ a:hover { text-decoration: underline; }
 /* week-column staleness confession ("8d · 2× moved") — data, so mono; muted,
    never amber (amber = needs-attention-now, and staleness is information) */
 .kstale { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* "has notes" marker — a description lives one click in (the editor); this just says
+   it's there. Muted, small, never amber (it's information, not attention-now). */
+.kdesc { font-size: 12px; line-height: 1; color: var(--muted); }
 .goalref { font-size: 11.5px; color: var(--link); }
 .kcard .subs { margin-left: 2px; margin-top: 2px; }
 /* prose hint — sans + muted (mono is reserved for data, per ux-standards) */
@@ -822,6 +840,9 @@ textarea.jadd { width: 100%; min-height: 112px; resize: vertical; line-height: 1
 .editor .ehead input:focus { outline: none; }
 .editor .ehead .etag { font-size: 10.5px; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 600; }
 .editor textarea { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 14.5px; line-height: 1.6; padding: 12px; min-height: 180px; resize: vertical; transition: border-color var(--dur) var(--ease); }
+/* the task editor's notes field is a compact detail box, not a full document body —
+   grows on demand (resize) rather than dominating the modal at rest */
+#te-desc { min-height: 64px; font-size: 14px; padding: 9px 11px; }
 .editor .erow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .editor .saved { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--good); }
 .editor .danger { color: var(--bad); border-color: rgba(var(--bad-rgb),.35); }

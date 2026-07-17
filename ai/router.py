@@ -456,7 +456,8 @@ You are Sam's Life OS assistant. He sends you ONE message; decide what he wants
 and reply with ONE JSON object (no prose, no code fences). Don't just file words —
 ACT on instructions. Pick the single best action:
 
-create_task    {"action":"create_task","title":str,"due":ISO-date|null,"category":"content|business|personal"|null,"priority":"high|med|low"|null,"link":url|null,"subtasks":[str,...]}
+create_task    {"action":"create_task","title":str,"due":ISO-date|null,"category":"content|business|personal"|null,"priority":"high|med|low"|null,"link":url|null,"subtasks":[str,...],"description":str|null}
+               # `description` = free-text DETAIL for the task (the "notes"/body, like a Trello card description) — use it when he gives context beyond the one-line title ("add a task to prep the Q3 deck — cover revenue, churn, and the new pricing"): title="Prep the Q3 deck", description="Cover revenue, churn, and the new pricing". Keep `title` the short scannable action; put the rest in `description`. null when there's no extra detail.
 create_note    {"action":"create_note","title":str,"tags":[str,...],"body":str}
 append_journal {"action":"append_journal","text":str}           # past-tense reflection about his day
 complete_task  {"action":"complete_task","id":int}              # "mark X done", "finished X"
@@ -465,6 +466,7 @@ plan_today     {"action":"plan_today","id":int}                 # "do X today", 
 unplan         {"action":"unplan","id":int}
 set_due        {"action":"set_due","id":int,"date":ISO-date}    # "push X to Friday", "X is due next week"
 rename_task    {"action":"rename_task","id":int,"title":str}
+set_description {"action":"set_description","id":int,"text":str,"append":bool}   # add / edit the DETAIL (notes) on an EXISTING task: "add a note to the deck task: also mention hiring", "set the description of X to …". `append`:true adds `text` as a new line under whatever's there (use for "add to"/"also note"); `append`:false (default) REPLACES the description with `text` (use for "change/set the description to"). Clear it with append:false + text:"".
 move_task      {"action":"move_task","id":int,"col":"backlog|week|done"}
 delete_task    {"action":"delete_task","id":int}                # "drop X", "remove X"
 create_goal    {"action":"create_goal","title":str,"timeframe":"week|month|quarter|year|by_date|ongoing","target":number|null,"unit":str|null}
@@ -651,7 +653,8 @@ def apply_action(conn, act, ctx) -> tuple:
 
     # --- actions that need a valid TASK id ---
     if kind in ("complete_task", "uncomplete_task", "plan_today", "unplan",
-                "set_due", "rename_task", "move_task", "delete_task"):
+                "set_due", "rename_task", "move_task", "delete_task",
+                "set_description"):
         tid = _as_int(act.get("id"))
         if tid is None or tid not in ctx["task_ids"]:
             return ("❓ I couldn't find that task — which one did you mean?", None)
@@ -718,6 +721,19 @@ def apply_action(conn, act, ctx) -> tuple:
                 conn.execute("UPDATE tasks SET title=?, updated=? WHERE id=?",
                              (new, now_iso(), tid))
             return (f"✏️ Renamed: {new}", None)
+        if kind == "set_description":
+            text = (act.get("text") or "").strip()
+            append = bool(act.get("append"))
+            if append and text:
+                cur = conn.execute("SELECT description FROM tasks WHERE id=?",
+                                   (tid,)).fetchone()
+                old = (cur["description"] or "").strip() if cur else ""
+                text = (old + "\n" + text).strip() if old else text
+            with conn:
+                conn.execute("UPDATE tasks SET description=?, updated=? WHERE id=?",
+                             (text or None, now_iso(), tid))
+            return ((f"📝 Notes updated: {title}" if text
+                     else f"📝 Notes cleared: {title}"), None)
         if kind == "move_task":
             col = act.get("col")
             if col not in _COLUMNS:
@@ -798,13 +814,15 @@ def apply_action(conn, act, ctx) -> tuple:
         # ASKED for `link` because only it knows which url goes with which action in a multi;
         # split_off_link is the belt-and-braces for when it buries the url in the title anyway.
         link = (act.get("link") or "").strip() or None
+        desc = (act.get("description") or "").strip() or None
         title, buried = capture.split_off_link(title)
         link = link or buried
         title = title or link or "Untitled task"
         with conn:
             tid = capture.create_task(conn, title, col="week", priority=pri,
                                       category=cat, due_date=due, at_top=True,
-                                      media=ctx.get("media_pointer"), link=link)
+                                      media=ctx.get("media_pointer"), link=link,
+                                      description=desc)
             for s in subs:
                 capture.create_task(conn, s.strip(), parent_id=tid)
         # surface the new id so the web capture can splice the card in place (no reload)

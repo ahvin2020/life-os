@@ -30,7 +30,7 @@ DB_PATH = os.environ.get("LIFEOS_DB_PATH") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app.db"
 )
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def data_dir() -> str:

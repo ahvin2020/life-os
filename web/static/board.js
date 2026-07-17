@@ -17,6 +17,27 @@
       if (cnt) cnt.textContent = colEl.querySelectorAll(".kcard").length;
     });
   }
+  // A card that relocates (pinned to the top of This week, dropped into another
+  // column) can land off-screen — the columns scroll internally. Bring it into
+  // view and flash a brief highlight ring so the eye can follow where it went.
+  function flashCard(card) {
+    if (!card) return;
+    var calm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    card.scrollIntoView({ block: "nearest", behavior: calm ? "auto" : "smooth" });
+    card.classList.remove("just-moved");
+    void card.offsetWidth;                 // restart the animation if it's re-triggered
+    card.classList.add("just-moved");
+    setTimeout(function () { card.classList.remove("just-moved"); }, 1600);
+  }
+  // Persist the current order of a board stack via the col-less reorder branch
+  // (sort_order only — never rewrites a pinned visitor's home col). Used after the
+  // ☀ pill moves a card, so a refresh keeps it where the toggle put it (only drags
+  // persisted before — the pill path lost the on-today order on reload).
+  function persistOrder(stack) {
+    if (!stack) return;
+    var ids = [].map.call(stack.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
+    postJSON("/tasks/reorder", { ids: ids });
+  }
 
   // ---- server-rendered cards: pin rule + placement -----------------------------
   // The sticky on-today rule: not done, AND due today/overdue OR ☀-planned. The
@@ -109,10 +130,27 @@
   // Syncs EVERY on-page representation of a task's on-today state — all its pills,
   // its data-planned attrs, and (on the board) its pinned position — so no surface
   // is ever left showing a stale ☀ state.
+  // A board card's meta row (.krow) is rendered `ghost` (display:none until hover)
+  // when it carries no visible meta. A lit pill IS meta, so keep the row shown while
+  // the pill is on — else planning a plain backlog card lights a pill inside a hidden
+  // row and it only appears on hover (server render omits ghost via meta_plan).
+  function syncKrowGhost(card, lit) {
+    var krow = card && card.querySelector(".krow");
+    if (!krow) return;
+    if (lit) { krow.classList.remove("ghost"); return; }
+    // no longer lit — re-hide only if nothing else keeps the row earning its space
+    if (!krow.querySelector(".due, .goalref, .kstale, .tlink")) krow.classList.add("ghost");
+  }
+
   function applyPlanState(id, on) {
     document.querySelectorAll('.planbtn[data-task-id="' + id + '"]').forEach(function (p) {
-      p.classList.toggle("on", !!on);
-      p.textContent = on ? "☀ On today ✓" : "☀ Do today";
+      // a due-today / overdue card is on today by its DATE — its badge stays lit even
+      // when ☀ (the plan) is cleared, so an on-today card never reads "Do today".
+      var host = p.closest(".kcard, .task, .ptask");
+      var lit = !!on || !!(host && host.querySelector(".due.today, .due.over"));
+      p.classList.toggle("on", lit);
+      p.textContent = lit ? "☀ On today ✓" : "☀ Do today";
+      if (host && host.classList.contains("kcard")) syncKrowGhost(host, lit);
     });
     document.querySelectorAll('[data-task-id="' + id + '"]').forEach(function (el) {
       if (el.dataset.planned !== undefined) el.dataset.planned = on ? "1" : "0";
@@ -143,6 +181,10 @@
         }
       }
       recountBoard();
+      // persist the new order so the refresh matches (the ☀ pill never did before —
+      // only drags posted a reorder), then flash the card so it isn't lost after the move
+      persistOrder(boardStack("week"));
+      flashCard(card);
     }
   }
 
@@ -163,10 +205,17 @@
       if (on) {
         var empty = hero.querySelector(".empty");
         if (empty) empty.remove();
-        hero.insertBefore(row, hero.querySelector(".donefold"));   // null target → append
+        // land inside the Today drag-stack so the promoted row stays reorderable
+        var hstack = hero.querySelector(".tdrag");
+        if (hstack) hstack.appendChild(row);
+        else hero.insertBefore(row, hero.querySelector(".donefold"));   // null → append
       } else {
-        var head = week.querySelector(".chead");
-        week.insertBefore(row, head ? head.nextSibling : week.firstChild);
+        var wstack = week.querySelector(".tdrag");
+        if (wstack) wstack.insertBefore(row, wstack.firstChild);
+        else {
+          var head = week.querySelector(".chead");
+          week.insertBefore(row, head ? head.nextSibling : week.firstChild);
+        }
       }
       requestAnimationFrame(function () { row.style.opacity = "1"; });
     }, 160);
@@ -258,7 +307,7 @@
               if (item.querySelector(".due.today, .due.over")) {
                 // a DATE holds it on Today — the drop can't unpin it; snap back
                 var wk = boardStack("week");
-                if (wk) { wk.insertBefore(item, wk.firstChild); recountBoard(); }
+                if (wk) { wk.insertBefore(item, wk.firstChild); recountBoard(); flashCard(item); }
                 toast("Due today — change the due date to move it off today");
               } else {
                 // dropping into Backlog = take it off Today AND re-home it there
@@ -267,6 +316,7 @@
                   item.dataset.planned = "0"; item.dataset.col = "backlog";
                   var p = item.querySelector(".planbtn");
                   if (p) { p.classList.remove("on"); p.textContent = "☀ Do today"; }
+                  syncKrowGhost(item, false);
                   recountBoard();
                   var ids = [].map.call(evt.to.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
                   postJSON("/tasks/reorder", { col: "backlog", ids: ids });
@@ -286,6 +336,35 @@
               postJSON("/tasks/reorder", { ids: ids });
             }
             return;
+          }
+
+          // ---- non-today card dropped INTO the today zone = "do this today" ----
+          // The top of This week IS today (pinned cards float there by rule), so a
+          // card dropped ABOVE any pinned card is being planned for today — pin it
+          // where it landed rather than let the pin rule float the today cards back
+          // over it on the next load. The inverse of drag-to-Backlog = unplan.
+          if (destCol === "week" && !item.classList.contains("done")) {
+            var sibs = [].slice.call(evt.to.querySelectorAll(".kcard"));
+            var pinnedBelow = sibs.slice(sibs.indexOf(item) + 1).some(function (k) {
+              return k.classList.contains("pinned");
+            });
+            if (pinnedBelow) {
+              item.dataset.col = "week";
+              item.classList.add("pinned");
+              item.dataset.planned = "1";
+              var pb = item.querySelector(".planbtn");
+              if (pb) { pb.classList.add("on"); pb.textContent = "☀ On today ✓"; }
+              syncKrowGhost(item, true);
+              recountBoard();
+              // plan (persist planned_on=today), THEN persist the drop order — a
+              // pinned card carries no col in the reorder payload (it lives in This
+              // week by rule), so post every week card's id, sort-only.
+              post("/tasks/" + id + "/plan", { surface: "kcard" }).then(function () {
+                var ids = [].map.call(evt.to.querySelectorAll(".kcard"), function (k) { return k.dataset.taskId; });
+                postJSON("/tasks/reorder", { ids: ids });
+              });
+              return;
+            }
           }
 
           // ---- normal cards ---------------------------------------------------
@@ -312,6 +391,31 @@
     });
   }
   if (document.querySelector(".board")) initKanban();
+
+  // ---- home page: drag-reorder within Today and within This week --------------
+  // Each list is its OWN Sortable (no shared group) so a card can't cross the
+  // divider — promotion/unplan stays the ☀ pill's job (user decision). onEnd just
+  // persists the new order via the col-less /tasks/reorder branch (sort_order only,
+  // exactly like the board's within-week reorder), so no col/plan state changes.
+  function initHomeDrag() {
+    if (typeof Sortable === "undefined") { setTimeout(initHomeDrag, 100); return; }
+    document.querySelectorAll(".tdrag[data-drag]").forEach(function (stack) {
+      Sortable.create(stack, {
+        animation: 140, draggable: ".task, .ptask", ghostClass: "sortable-ghost",
+        // the checkbox + ☀ pill keep their taps; the title/links click through to
+        // the editor/link because a no-move press is a click, not a drag
+        filter: ".planbtn, .tcheck-hit", preventOnFilter: false,
+        // touch: 150ms hold starts a drag; a plain swipe still scrolls the page
+        delay: 150, delayOnTouchOnly: true,
+        onEnd: function (evt) {
+          var ids = [].map.call(evt.to.querySelectorAll(".task, .ptask"),
+                                function (r) { return r.dataset.taskId; });
+          postJSON("/tasks/reorder", { ids: ids });
+        }
+      });
+    });
+  }
+  if (document.querySelector(".tdrag")) initHomeDrag();
 
   // ---- task category filter + live search (Tasks page) ------------------------
   (function () {
@@ -345,9 +449,13 @@
       priority: document.getElementById("te-priority"), category: document.getElementById("te-category"),
       col: document.getElementById("te-col"), recur: document.getElementById("te-recur"),
       goal: document.getElementById("te-goal"), plan: document.getElementById("te-plan"),
-      saved: document.getElementById("te-saved"), subs: document.getElementById("te-subs")
+      saved: document.getElementById("te-saved"), subs: document.getElementById("te-subs"),
+      desc: document.getElementById("te-desc")
     };
     var current = null, planned = false, newCol = null;
+    // subtasks typed before a brand-new task is saved: staged here (they have no
+    // parent id yet), created under the parent on Save — same lazy pattern as ☀/priority
+    var stagedSubs = [];
     var teAttach = document.getElementById("te-attach");
     if (teAttach) initAttach(teAttach);
     // populate goal dropdown
@@ -419,12 +527,13 @@
       current = null; planned = false; newCol = col || "backlog";
       f.title.value = ""; f.due.value = ""; f.priority.value = "";
       f.category.value = ""; f.col.value = newCol; f.recur.value = "";
-      f.goal.value = "";
+      f.goal.value = ""; f.desc.value = "";
       f.plan.classList.remove("on"); f.plan.textContent = "☀ Do today";
       f.saved.textContent = "";
       syncControls();
       var d = document.getElementById("te-delete"); if (d._disarm) d._disarm();
       if (teAttach) setAttach(teAttach, []);
+      stagedSubs = [];
       renderSubs("[]");
       ov.classList.add("on"); f.title.focus();
     }
@@ -437,6 +546,7 @@
       f.col.value = el.dataset.col || "backlog";
       f.recur.value = el.dataset.recur || "";
       f.goal.value = el.dataset.goalId || "";
+      f.desc.value = el.dataset.description || "";
       planned = el.dataset.planned === "1";
       f.plan.classList.toggle("on", planned);
       f.plan.textContent = planned ? "☀ On today ✓" : "☀ Do today";
@@ -444,21 +554,32 @@
       syncControls();
       var d = document.getElementById("te-delete"); if (d._disarm) d._disarm();
       if (teAttach) setAttach(teAttach, (el.dataset.media || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean));
+      stagedSubs = [];                        // real task → subtasks persist immediately
       renderSubs(el.dataset.subs);
       ov.classList.add("on"); f.title.focus();
     }
     function addSubRow(s) {
       var row = document.createElement("div"); row.className = "sub" + (s.done ? " done" : "");
       var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!s.done;
-      cb.addEventListener("change", function () {
-        post("/tasks/" + s.id + "/complete", { done: cb.checked ? "1" : "0" });
-        row.classList.toggle("done", cb.checked);
-      });
+      if (s.id) {
+        cb.addEventListener("change", function () {
+          post("/tasks/" + s.id + "/complete", { done: cb.checked ? "1" : "0" });
+          row.classList.toggle("done", cb.checked);
+        });
+      } else {
+        // a STAGED subtask on a not-yet-saved task has no id to complete against — the
+        // checkbox arms once the parent is created on Save (it becomes a real row then)
+        cb.disabled = true; cb.title = "save the task to enable";
+      }
       var lab = document.createElement("label"); lab.appendChild(titleSpan(s.title));
       row.appendChild(cb); row.appendChild(lab); f.subs.appendChild(row);
     }
     function renderSubs(json) {
       f.subs.innerHTML = "";
+      // reset the pending add-input too — un-added text must not ride into the
+      // next task's editor (both open() and openBlank() route through here)
+      var newsub = document.getElementById("te-subnew");
+      if (newsub) newsub.value = "";
       var subs = [];
       try { subs = JSON.parse(json || "[]"); } catch (e) {}
       subs.forEach(addSubRow);
@@ -469,7 +590,13 @@
     document.getElementById("te-subadd").addEventListener("click", function () {
       var inp = document.getElementById("te-subnew"); var t = inp.value.trim();
       if (!t) return;
-      if (!current) { toast("Save the task first, then add subtasks"); return; }
+      if (!current) {
+        // not saved yet → stage it; it's created under the parent on Save
+        stagedSubs.push(t);
+        addSubRow({ id: null, title: t, done: 0 });
+        inp.value = ""; inp.focus();
+        return;
+      }
       post("/tasks/new", { title: t, parent_id: current }).then(function (res) {
         inp.value = "";
         var sid = res.data && res.data.id;
@@ -545,17 +672,31 @@
           due_date: f.due.value, priority: f.priority.value,
           category: f.category.value, recur_rule: f.recur.value,
           goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : "",
+          description: f.desc.value,
           surface: "kcard"     // ＋ New task / ＋ Add task exist only on the board
         };
         if (planned) data.planned_on = window.LIFEOS_TODAY || "";
         post("/tasks/new", data).then(function (res) {
-          f.saved.textContent = "Saved ✓";
-          var node = htmlToNode((res.data && res.data.card_html) || "");
-          // No board to splice into (a future entry point elsewhere) → let the page redraw
-          if (!node || !placeCard(node, true)) { reloadSoon(); return; }
-          wireTaskRow(node);
-          // the draft is a real task now — Save again must EDIT it, not create a twin
-          current = res.data.id; newCol = null;
+          var id = res.data && res.data.id;
+          function placeFrom(html) {
+            var node = htmlToNode(html || "");
+            // No board to splice into (a future entry point elsewhere) → page redraw
+            if (!node || !placeCard(node, true)) { reloadSoon(); return; }
+            wireTaskRow(node);
+            close();   // card is on the board now — Save's job is done
+          }
+          if (!id || !stagedSubs.length) { placeFrom(res.data && res.data.card_html); return; }
+          // create the staged subtasks under the new parent (sequentially), THEN
+          // re-render the parent card so it arrives already carrying its ring (a
+          // no-op title edit is the way to fetch the fresh card_html with subs)
+          var chain = Promise.resolve();
+          stagedSubs.forEach(function (t) {
+            chain = chain.then(function () { return post("/tasks/new", { title: t, parent_id: id }); });
+          });
+          chain.then(function () {
+            post("/tasks/" + id + "/edit", { title: data.title, surface: "kcard" })
+              .then(function (r2) { placeFrom(r2.data && r2.data.card_html); });
+          });
         });
         return;
       }
@@ -564,10 +705,11 @@
         title: f.title.value, due_date: f.due.value, priority: f.priority.value,
         category: f.category.value, col: f.col.value, recur_rule: f.recur.value,
         goal_id: f.goal.value, media: teAttach ? getAttach(teAttach).join(",") : "",
+        description: f.desc.value,
         surface: surfaceFor(taskNode(id))
       }).then(function (res) {
-        f.saved.textContent = "Saved ✓";
         applyCard(id, res.data && res.data.card_html);
+        close();
       });
     });
     confirmClick(document.getElementById("te-delete"), function () {
@@ -616,7 +758,12 @@
       var cards = (root.matches && root.matches(CARD_SEL)) ? [root] : root.querySelectorAll(CARD_SEL);
       cards.forEach(function (card) {
         card.addEventListener("click", function (e) {
-          if (e.target.closest("input, button, a, label, .planbtn")) return;
+          // Bail only on REAL controls. `.tcheck-hit` is the checkbox's label
+          // wrapper (toggles the task); the title's own `.taskedit` handler already
+          // fires + stops. A subtask's title is a BARE <label> that controls nothing
+          // (its checkbox is a sibling, not wrapped) — so it must fall through and
+          // open the parent editor, not sit as a dead zone.
+          if (e.target.closest("input, button, a, .planbtn, .tcheck-hit")) return;
           open(card);
         });
       });

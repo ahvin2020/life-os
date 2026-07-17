@@ -30,6 +30,7 @@ def _row_to_task(r) -> dict:
         "reschedule_count": r["reschedule_count"],
         "media": (r["media"] if "media" in r.keys() else "") or "",
         "link": (r["link"] if "link" in r.keys() else "") or "",
+        "description": (r["description"] if "description" in r.keys() else "") or "",
     }
 
 

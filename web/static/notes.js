@@ -55,12 +55,7 @@
     }
     var elAttach = document.getElementById("ed-attach");
     if (elAttach) initAttach(elAttach);
-    var current = null, creating = false, savedTimer = null;
-    function flashSaved() {
-      elSaved.textContent = "Saved ✓";
-      clearTimeout(savedTimer);
-      savedTimer = setTimeout(function () { elSaved.textContent = ""; }, 1800);
-    }
+    var current = null, creating = false;
     function open(slug) {
       fetch("/notes/" + slug).then(function (r) { return r.json(); }).then(function (j) {
         if (j.status !== "ok") return;
@@ -114,7 +109,7 @@
         return post("/notes/" + current + "/save", {
           title: elTitle.value, tags: elTags.value, body: elBody.value,
           media: elAttach ? getAttach(elAttach).join(",") : ""
-        }).then(function () { flashSaved(); patchNoteCard(); });
+        }).then(function () { patchNoteCard(); close(); });
       }
       // no note yet: only create once there is real content (guard against a
       // double-click creating two notes before the POST resolves).
@@ -127,7 +122,9 @@
       }).then(function (res) {
         creating = false;
         if (res.data && res.data.slug) {
-          current = res.data.slug; flashSaved();
+          // no grid card to splice a brand-new note into → close and let the
+          // notes page redraw so the new card appears (deliberate reload).
+          current = res.data.slug; close(); reloadSoon();
         } else { elSaved.textContent = ""; }
       });
     }

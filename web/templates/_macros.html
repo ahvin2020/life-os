@@ -41,13 +41,18 @@ data-priority="{{ t.priority or '' }}" data-category="{{ t.category or '' }}"
 data-col="{{ t.col }}" data-recur="{{ t.recur_rule or '' }}" data-goal-id="{{ t.goal_id or '' }}"
 data-planned="{{ _onday(t, today) }}"
 data-media="{{ t.media or '' }}" data-link="{{ t.link or '' }}"
+data-description="{{ t.description or '' }}"
 data-subs='{{ t.subtasks|tojson }}'
 {%- endmacro %}
 
 {% macro plan_pill(t, today, extra_class='') -%}
-  {# a DONE task is never "on today" as status — its pill reads as the action
-     ("☀ Do today" = reopen), hover-revealed, not a stale amber badge #}
-  {% set on = (not t.done) and t.planned_on and t.planned_on <= today %}
+  {# "On today ✓" lights for ANY on-today card — ☀-planned OR due-today/overdue —
+     so it matches is_pinned (what floats a card to the top of This week). A card at
+     the top must WEAR its status, not hide it behind hover just because it's on today
+     by a due date rather than a plan. A DONE task is never "on today" as status — its
+     pill reads as the action ("☀ Do today" = reopen), hover-revealed. #}
+  {% set on = (not t.done) and ((t.planned_on and t.planned_on <= today)
+              or (t.due_date and t.due_date <= today)) %}
   <button class="planbtn {{ extra_class }} {{ 'on' if on else '' }}" data-task-id="{{ t.id }}" title="plan for today" type="button">{{ '☀ On today ✓' if on else '☀ Do today' }}</button>
 {%- endmacro %}
 
@@ -187,8 +192,10 @@ data-subs='{{ t.subtasks|tojson }}'
     {% set meta_plan = (not t.done) and _onday(t, today) == '1' %}
     {# category now reads as the card's coloured left rail (see .kcard[data-cat]) #}
     {% set meta_link = t.link and not t.done %}
-    <div class="krow{% if not (meta_due or t.goal_id or stale or meta_plan or meta_link) %} ghost{% endif %}">
+    {% set meta_desc = t.description and not t.done %}
+    <div class="krow{% if not (meta_due or t.goal_id or stale or meta_plan or meta_link or meta_desc) %} ghost{% endif %}">
       {% if meta_due %}{{ due_span(t, today) }}{% endif %}
+      {% if meta_desc %}<span class="kdesc" title="has notes" aria-label="has notes">≡</span>{% endif %}
       {% if meta_link %}{{ link_chip(t) }}{% endif %}
       {% if t.goal_id %}<span class="goalref">◎ goal</span>{% endif %}
       {% if stale %}<span class="kstale">{% if wage is not none and wage >= 7 %}{{ wage }}d{% endif %}{% if (t.reschedule_count or 0) >= 2 %}{{ ' · ' if wage is not none and wage >= 7 }}{{ t.reschedule_count }}× moved{% endif %}</span>{% endif %}
