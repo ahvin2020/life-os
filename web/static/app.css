@@ -202,6 +202,12 @@ a:hover { text-decoration: underline; }
 .remitem:hover .remx, .remitem:focus-within .remx { opacity: 1; }
 .remitem .remx:hover { color: var(--bad); }
 @media (hover: none) { .remitem .remx { opacity: 1; } }
+/* Fired but not yet cleared: it rang and is LINGERING (needs-attention-now = amber) so a
+   missed alarm doesn't vanish. Its ✓ is always visible — clearing it is the point now. */
+.remitem.fired .rbell { margin-right: 5px; font-size: 11px; }
+.remitem.fired .rwhen { color: var(--accent); }
+.remitem.fired .remx { opacity: 1; }
+.remitem.fired .remx:hover { color: var(--good); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .card.wide { grid-column: 1 / -1; }
 .chead { display: flex; align-items: baseline; gap: 10px; }

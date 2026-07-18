@@ -109,10 +109,10 @@
       <div class="chead"><h2>Reminders</h2></div>
       <div class="remlist" id="remlist">
         {% for r in reminders %}
-        <div class="remitem" data-id="{{ r.id }}" data-text="{{ r.text }}" data-fire="{{ r.fire_at }}">
-          <span class="rt">{{ r.text }}</span>
+        <div class="remitem{% if r.fired %} fired{% endif %}" data-id="{{ r.id }}" data-text="{{ r.text }}" data-fire="{{ r.fire_at }}"{% if r.fired %} data-fired="1"{% endif %}>
+          <span class="rt">{% if r.fired %}<span class="rbell" aria-hidden="true">⏰</span>{% endif %}{{ r.text }}</span>
           <time class="rwhen">{{ r.label }}</time>
-          <button class="remx" type="button" aria-label="Cancel reminder">✕</button>
+          <button class="remx" type="button" aria-label="{% if r.fired %}Clear reminder{% else %}Cancel reminder{% endif %}">{% if r.fired %}✓{% else %}✕{% endif %}</button>
         </div>
         {% endfor %}
       </div>

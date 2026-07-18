@@ -58,7 +58,7 @@ def home():
     any_goal = conn.execute("SELECT 1 FROM goals LIMIT 1").fetchone()
     goals_list = [dict(g) for g in conn.execute(
         "SELECT id, title FROM goals WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created").fetchall()]
-    pending_reminders = reminders.pending_reminders(conn)
+    pending_reminders = reminders.strip_reminders(conn)
     conn.close()
     first_run = not any_task and not any_goal and not vault_store.list_notes() \
         and not vault_store.list_journal_days()
@@ -164,13 +164,15 @@ def reminder_dismiss(rid):
 
 @bp.route("/reminders/restore", methods=["POST"])
 def reminder_restore():
-    """Undo a dismiss: re-insert the reminder verbatim (fire_at is UTC ISO)."""
+    """Undo a dismiss: re-insert the reminder verbatim (fire_at is UTC ISO). fired_at, if
+    present, comes back so a dismissed-fired reminder undoes to fired, not re-armed."""
     text = (request.form.get("text") or "").strip()
     fire_at = (request.form.get("fire_at") or "").strip()
+    fired_at = (request.form.get("fired_at") or "").strip() or None
     if not text or not fire_at:
         return jsonify({"status": "error", "message": "bad restore"}), 400
     conn = db()
-    r = reminders.restore_reminder(conn, text, fire_at)
+    r = reminders.restore_reminder(conn, text, fire_at, fired_at)
     conn.close()
     return jsonify({"status": "ok", **r})
 

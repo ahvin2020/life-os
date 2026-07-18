@@ -168,8 +168,33 @@ def test_web_fire_stamps_and_is_idempotent(client):
     # a second tab (or the daemon) racing the same reminder gets fired=False, so it won't re-notify
     second = client.post(f"/reminders/{rid}/fire")
     assert second.status_code == 200 and second.get_json()["fired"] is False
-    # and it's dropped from the pending strip
-    assert "stretch" not in client.get("/").get_data(as_text=True)
+    # a fired reminder LINGERS on the strip (overdue state, dismissable) rather than vanishing —
+    # a missed alarm shouldn't disappear without a trace
+    html = client.get("/").get_data(as_text=True)
+    assert "stretch" in html
+    assert 'data-fired="1"' in html
+
+
+def test_fired_reminder_lingers_then_purges(client):
+    from domain import reminders
+    conn = _db()
+    # fired 1h ago → still on the strip (within the 24h linger window)
+    conn.execute("INSERT INTO reminders (text, fire_at, created, fired_at) VALUES (?,?,?,?)",
+                 ("recent", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z", _hours_ago(1)))
+    # fired 30h ago → past the window: hidden from the strip AND purged
+    conn.execute("INSERT INTO reminders (text, fire_at, created, fired_at) VALUES (?,?,?,?)",
+                 ("stale", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z", _hours_ago(30)))
+    conn.commit()
+    strip = {r["text"]: r["fired"] for r in reminders.strip_reminders(conn)}
+    assert strip == {"recent": True}                 # only the recent fired one lingers
+    assert reminders.purge_fired_reminders(conn) == 1   # the 30h-old row is deleted
+    assert conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] == 1
+    conn.close()
+
+
+def _hours_ago(h):
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc) - timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── deterministic reminder parsing (shared by BOTH surfaces) ──────────────────

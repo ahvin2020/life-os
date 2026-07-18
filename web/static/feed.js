@@ -1182,10 +1182,27 @@
     if (okBtn) okBtn.addEventListener("click", closeAlert);
     closeOnBackdrop(alertOv, closeAlert);
 
+    // A rung reminder used to be removed; now it LINGERS on the strip in a fired/overdue
+    // state (server keeps the row 24h too) so a missed alarm doesn't vanish. Mark it fired,
+    // flip ✕→✓, and float it to the top — the overdue item is the needs-attention one.
+    function markFired(it) {
+      it.classList.add("fired");
+      it.dataset.fired = "1";
+      delete it.dataset.firing;
+      var x = it.querySelector(".remx");
+      if (x) { x.textContent = "✓"; x.setAttribute("aria-label", "Clear reminder"); }
+      var rt = it.querySelector(".rt");
+      if (rt && !rt.querySelector(".rbell")) {
+        var b = document.createElement("span");
+        b.className = "rbell"; b.setAttribute("aria-hidden", "true"); b.textContent = "⏰";
+        rt.insertBefore(b, rt.firstChild);
+      }
+      list.insertBefore(it, list.firstChild);
+    }
     function fireDue() {
       var now = Date.now();
       list.querySelectorAll(".remitem").forEach(function (it) {
-        if (it.dataset.firing) return;                 // a POST is already in flight for this one
+        if (it.dataset.fired || it.dataset.firing) return;   // already rung / a POST in flight
         var t = Date.parse(it.dataset.fire);
         if (isNaN(t) || t > now) return;
         it.dataset.firing = "1";
@@ -1193,11 +1210,11 @@
         // Always alarm — the POST's `fired` only says who stamped fired_at FIRST, not whether
         // THIS dashboard has shown it. The daemon polls faster than we do, so gating on it
         // meant a Telegram push silently swallowed the on-screen alarm. Telegram and the
-        // dashboard are separate surfaces; a row is only here if it was pending at load, and
-        // it's removed once shown, so this can't double-pop or resurrect an old reminder.
+        // dashboard are separate surfaces; a row only alarms here if it was un-fired at load,
+        // and markFired stops it re-alarming, so this can't double-pop.
         post("/reminders/" + it.dataset.id + "/fire").then(function () {
           popAlert(text, when); osNotify(text);
-          it.remove(); syncEmpty();
+          markFired(it);
         }).catch(function () { delete it.dataset.firing; });       // let a later tick retry
       });
     }
@@ -1208,12 +1225,15 @@
       var x = e.target.closest(".remx");
       if (!x) return;
       var item = x.closest(".remitem");
+      var fired = !!item.dataset.fired;
       post("/reminders/" + item.dataset.id + "/dismiss").then(function (res) {
-        if (!res.ok) { toast("Could not cancel"); return; }
+        if (!res.ok) { toast(fired ? "Could not clear" : "Could not cancel"); return; }
         removeWithUndo(item, {
-          msg: "Reminder cancelled",
+          msg: fired ? "Reminder cleared" : "Reminder cancelled",
           restore: "/reminders/restore",
-          restoreData: { text: res.data.text, fire_at: res.data.fire_at },
+          // fired_at rides along so undoing a cleared-fired reminder comes back fired,
+          // not re-armed to alarm again on a past time.
+          restoreData: { text: res.data.text, fire_at: res.data.fire_at, fired_at: res.data.fired_at || "" },
           after: syncEmpty,
         });
       });

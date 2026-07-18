@@ -101,6 +101,9 @@ def maybe_fire_reminders(conn, tg, chat_id) -> int:
             _log(f"reminder send failed: {e}")
     if sent:
         conn.commit()
+    # Fired reminders linger 24h on the Today strip, then this backstop clears the rows.
+    from domain import reminders
+    reminders.purge_fired_reminders(conn)
     return sent
 
 

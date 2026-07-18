@@ -129,23 +129,56 @@ def create_reminder(conn, text: str, fire_local: str) -> dict:
             "fire_at": fire_utc, "label": reminder_label(fire_utc)}
 
 
-def restore_reminder(conn, text: str, fire_utc: str) -> dict:
-    """Re-insert a dismissed reminder verbatim (undo). fire_utc is already UTC ISO."""
+def restore_reminder(conn, text: str, fire_utc: str, fired_utc: str | None = None) -> dict:
+    """Re-insert a dismissed reminder verbatim (undo). fire_utc is already UTC ISO. Preserve
+    `fired_utc` so undoing a dismissed-fired reminder comes back fired (not re-armed to alarm
+    again on a past time)."""
     cur = conn.execute(
-        "INSERT INTO reminders (text, fire_at, created, fired_at) VALUES (?,?,?,NULL)",
-        (text, fire_utc, now_iso()))
+        "INSERT INTO reminders (text, fire_at, created, fired_at) VALUES (?,?,?,?)",
+        (text, fire_utc, now_iso(), fired_utc or None))
     conn.commit()
-    return {"id": cur.lastrowid, "text": text,
-            "fire_at": fire_utc, "label": reminder_label(fire_utc)}
+    return {"id": cur.lastrowid, "text": text, "fire_at": fire_utc,
+            "fired_at": fired_utc or None, "label": reminder_label(fire_utc)}
 
 
-def pending_reminders(conn) -> list[dict]:
-    """Unfired reminders, soonest first — for the Today strip. Each carries a local label."""
+# A fired reminder used to vanish the instant it rang — miss the alarm and it was gone with
+# no trace (the #1 complaint about ephemeral-alert apps; Apple Reminders/Outlook keep overdue
+# ones visible until you clear them). It now LINGERS in a fired/overdue state on the strip so
+# you can act on it, and auto-clears after this window as a backstop so they don't pile up.
+_FIRED_LINGER = timedelta(hours=24)
+
+
+def _fired_cutoff() -> str:
+    """UTC ISO floor: reminders fired before this drop off the strip (and get purged)."""
+    return (datetime.now(timezone.utc) - _FIRED_LINGER).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def strip_reminders(conn) -> list[dict]:
+    """Reminders for the Today strip: every unfired one, PLUS any fired in the last 24h kept
+    in an overdue state (dismissable, not auto-vanishing). Fired/overdue sort on TOP (most
+    recent first — that's the needs-attention-now item you may have missed), then unfired
+    soonest-first. Each dict carries `fired` so the template can style it and the browser
+    alarm loop can skip an already-rung row instead of re-alarming it."""
     rows = conn.execute(
-        "SELECT id, text, fire_at FROM reminders WHERE fired_at IS NULL ORDER BY fire_at"
+        "SELECT id, text, fire_at, fired_at FROM reminders "
+        "WHERE fired_at IS NULL OR fired_at >= ? ORDER BY fire_at", (_fired_cutoff(),)
     ).fetchall()
-    return [{"id": r["id"], "text": r["text"], "fire_at": r["fire_at"],
-             "label": reminder_label(r["fire_at"])} for r in rows]
+    pending, fired = [], []
+    for r in rows:
+        d = {"id": r["id"], "text": r["text"], "fire_at": r["fire_at"],
+             "label": reminder_label(r["fire_at"]), "fired": r["fired_at"] is not None}
+        (fired if d["fired"] else pending).append(d)
+    fired.reverse()                       # rows were soonest-first → most-recently-fired first
+    return fired + pending
+
+
+def purge_fired_reminders(conn) -> int:
+    """Hard-delete reminders fired more than the linger window ago — the strip already hides
+    them (see strip_reminders); this just stops the table growing. Returns rows removed."""
+    cur = conn.execute(
+        "DELETE FROM reminders WHERE fired_at IS NOT NULL AND fired_at < ?", (_fired_cutoff(),))
+    conn.commit()
+    return cur.rowcount
 
 
 def fire_reminder(conn, rid: int) -> bool:
@@ -159,11 +192,13 @@ def fire_reminder(conn, rid: int) -> bool:
 
 
 def dismiss_reminder(conn, rid: int) -> dict | None:
-    """Cancel a pending reminder. Returns its {text, fire_at} for undo, or None if gone/fired."""
+    """Clear a reminder off the strip — a pending one (cancel before it fires) OR a lingering
+    fired one (acknowledge it). Returns its {text, fire_at, fired_at} for a faithful undo, or
+    None if already gone."""
     row = conn.execute(
-        "SELECT text, fire_at FROM reminders WHERE id=? AND fired_at IS NULL", (rid,)).fetchone()
+        "SELECT text, fire_at, fired_at FROM reminders WHERE id=?", (rid,)).fetchone()
     if not row:
         return None
     conn.execute("DELETE FROM reminders WHERE id=?", (rid,))
     conn.commit()
-    return {"text": row["text"], "fire_at": row["fire_at"]}
+    return {"text": row["text"], "fire_at": row["fire_at"], "fired_at": row["fired_at"]}
