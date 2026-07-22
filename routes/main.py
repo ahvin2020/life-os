@@ -13,11 +13,61 @@ from core.web_core import db, today_iso, task_card_html
 from core.db import now_sg, get_setting, set_setting
 from domain.capture import (route_capture, route_deterministic, convert_note_to_task,
                      convert_task_to_note, convert_note_to_journal, convert_task_to_journal)
-from domain.tasks_core import today_tasks, week_tasks, day_score, archive_old_done
+from domain.tasks_core import (today_tasks, week_tasks, day_score, archive_old_done,
+                               task_dict, is_pinned)
 from domain.goals_core import goal_progress
 from domain import vault_store, reminders
 
 bp = Blueprint("main", __name__)
+
+
+def _task_splice(conn, task_id):
+    """A freshly captured task splices into the panel it actually BELONGS to on Today:
+    the hero (`today_html`, today_item macro) when it's on-today (is_pinned — due today /
+    overdue / ☀-planned), else the This-week pool (`week_html`, week_item macro). The same
+    is_pinned predicate the page buckets with, so a spliced card lands where a reload would
+    have put it — not always in the week pool. Returns {} if the task is gone."""
+    row = conn.execute("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL",
+                       (task_id,)).fetchone()
+    if not row:
+        return {}
+    if is_pinned(task_dict(conn, row), today_iso()):
+        return {"today_html": task_card_html(conn, task_id, "today")}
+    return {"week_html": task_card_html(conn, task_id, "week")}
+
+
+def _touched_card(conn, task_id):
+    """Re-render a task the router CHANGED, tagged with the panel it NOW belongs to so
+    the composer can MOVE it across Today's panels — a plan promotes it into the hero, an
+    unplan drops it into the This-week pool — instead of leaving it stranded where it was.
+    `panel`: 'today' (hero, open) | 'week' (This-week pool) | 'done' (completed today →
+    animate into Today's "done today" fold) | 'keep' (content-only change — swap in place) |
+    'gone' (deleted or no longer on Today → remove the node). html is rendered at the surface
+    matching the panel."""
+    row = conn.execute("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL",
+                       (task_id,)).fetchone()
+    if not row:
+        return {"id": task_id, "panel": "gone", "html": ""}
+    today = today_iso()
+    # A subtask row has no top-level card of its own on Today → swap its parent card in place.
+    if row["parent_id"] is not None:
+        return {"id": task_id, "panel": "keep",
+                "html": task_card_html(conn, task_id, "today")}
+    if row["done"]:
+        # completed TODAY belongs in the hero's "done today" fold (the client animates it
+        # there); completed earlier / archived is off the Today page → drop the node.
+        if row["completed_at"] == today and row["archived_at"] is None:
+            return {"id": task_id, "panel": "done",
+                    "html": task_card_html(conn, task_id, "today")}
+        return {"id": task_id, "panel": "gone", "html": ""}
+    if is_pinned(task_dict(conn, row), today):
+        return {"id": task_id, "panel": "today",
+                "html": task_card_html(conn, task_id, "today")}
+    if row["col"] == "week" and row["archived_at"] is None:
+        return {"id": task_id, "panel": "week",
+                "html": task_card_html(conn, task_id, "week")}
+    # open but off the Today page now (moved to backlog / archived) → drop the node
+    return {"id": task_id, "panel": "gone", "html": ""}
 
 # A warm one-liner after the greeting, rotated per load so opening Today feels like
 # arriving somewhere rather than facing a pile. Kept short (one line), time-of-day
@@ -216,7 +266,7 @@ def capture():
             # path renders), so a simple add never full-reloads the page.
             new_tid = res.get("created_task_id")
             if applied == ["create_task"] and new_tid:
-                extra["week_html"] = task_card_html(conn, new_tid, "week")
+                extra.update(_task_splice(conn, new_tid))
             # Same idea for a new reminder: hand back the row so the composer drops it into
             # the reminders strip in place — no toast, no reload.
             if applied == ["set_reminder"] and res.get("created_reminder"):
@@ -226,8 +276,7 @@ def capture():
             # (deleted) → the caller removes that node.
             touched = [t for t in (res.get("touched_task_ids") or []) if t != new_tid]
             if touched:
-                extra["cards"] = [{"id": t, "html": task_card_html(conn, t, "week")}
-                                  for t in touched]
+                extra["cards"] = [_touched_card(conn, t) for t in touched]
             conn.close()
             # Reload only for what still can't be patched: a goal change (the goals rail owns
             # its own markup), a router fallback, or a multi-create we can't splice one-by-one.
@@ -235,7 +284,8 @@ def capture():
             unpatchable = {"update_goal_number", "mark_goal_achieved"}
             reload_needed = (res.get("fell_back")
                              or any(a in unpatchable for a in applied)
-                             or (applied.count("create_task") and not extra.get("week_html")))
+                             or (applied.count("create_task")
+                                 and not (extra.get("week_html") or extra.get("today_html"))))
             return jsonify({"status": "ok", "ai": True, "reply": res.get("reply", ""),
                             "applied": applied, "reload": bool(reload_needed), **extra})
         # no claude → fall through to route_capture below, which files an #unsorted note
@@ -249,7 +299,7 @@ def capture():
     # Notes/journal have no card on Today; the toast is their confirmation.
     extra = {}
     if result.get("kind") == "task" and result.get("id"):
-        extra["week_html"] = task_card_html(conn, result["id"], "week")
+        extra.update(_task_splice(conn, result["id"]))
     conn.close()
     return jsonify({"status": "ok", **result, **extra})
 

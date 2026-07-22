@@ -33,21 +33,109 @@
     // was fully handled (so the composer can skip the reload); false → reload, to
     // cover kinds/edge-states with no partial (journal) or a missing container.
     // Returns true when the capture was shown (or needs no slot) → composer skips the
-    // reload. A task splices into This-week; a note/journal has no card on Today anymore,
-    // so the toast is the whole confirmation. Only a task with no week card yet reloads.
+    // reload. The server tells us WHICH panel the task belongs to (the same is_pinned rule
+    // the page buckets with): an on-today task → the hero (today_html), else the This-week
+    // pool (week_html). A note/journal has no card on Today, so the toast is the whole
+    // confirmation. Only a task whose target panel isn't on the page yet reloads.
     function insertCapture(d) {
+      if (d.today_html) {
+        var hero = document.querySelector(".card.hero");
+        var stack = hero && hero.querySelector('.tdrag[data-drag="today"]');
+        if (stack) {
+          // the hero's empty ("Nothing planned") / all-clear states no longer hold now
+          // that a real task is arriving — clear them so the list reads honestly
+          var empty = hero.querySelector(".empty"); if (empty) empty.remove();
+          var ac = hero.querySelector(".allclear"); if (ac) ac.remove();
+          var row = htmlToNode(d.today_html);
+          stack.insertBefore(row, stack.firstChild);
+          if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(row);
+          flashIn(row); return true;
+        }
+        return false;   // no hero stack on this page → reload to render one
+      }
       if (d.week_html) {
         var week = document.querySelector(".weekpool");
         if (week) {
-          var row = htmlToNode(d.week_html);
+          var wrow = htmlToNode(d.week_html);
           var whead = week.querySelector(".chead");
-          week.insertBefore(row, whead ? whead.nextSibling : week.firstChild);
-          if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(row);
-          flashIn(row); return true;
+          week.insertBefore(wrow, whead ? whead.nextSibling : week.firstChild);
+          if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(wrow);
+          flashIn(wrow); return true;
         }
         return false;   // no week-pool card yet → reload to render one
       }
       return true;       // note/journal: toast is enough, no reload
+    }
+    // Relocate a task's card into the Today panel it now belongs to (after its content was
+    // already swapped): 'today' → the hero's open drag-stack, 'week' → the This-week pool.
+    // Returns false when the target panel isn't on the page (empty week pool not rendered) →
+    // the caller reloads to build it. Also tidies the panels a reload would: clears the
+    // hero's empty state when a row lands, and drops an emptied week-pool card.
+    function placeHomeCard(id, panel) {
+      var node = document.querySelector('[data-task-id="' + id + '"][data-title]');
+      if (!node) return false;
+      var hero = document.querySelector(".card.hero");
+      var week = document.querySelector(".weekpool");
+      if (panel === "today") {
+        var hstack = hero && hero.querySelector('.tdrag[data-drag="today"]');
+        if (!hstack) return false;
+        if (!hstack.contains(node)) {
+          var empty = hero.querySelector(".empty"); if (empty) empty.remove();
+          var ac = hero.querySelector(".allclear"); if (ac) ac.remove();
+          hstack.insertBefore(node, hstack.firstChild);
+          flashIn(node);
+        }
+      } else if (panel === "week") {
+        var wstack = week && week.querySelector('.tdrag[data-drag="week"]');
+        if (!wstack) return false;   // no week-pool card on the page yet → reload builds it
+        if (!wstack.contains(node)) {
+          wstack.insertBefore(node, wstack.firstChild);
+          flashIn(node);
+        }
+      }
+      if (window.LifeOS && window.LifeOS.wireTaskRow) window.LifeOS.wireTaskRow(node);
+      pruneEmptyPanels();
+      return true;
+    }
+    // A row leaving the hero open-stack should restore its "Nothing planned" line (a reload
+    // would); a row leaving the week pool empty removes the whole pool card (the page only
+    // renders it when it has rows).
+    function pruneEmptyPanels() {
+      var hero = document.querySelector(".card.hero");
+      var week = document.querySelector(".weekpool");
+      if (hero) {
+        var hstack = hero.querySelector('.tdrag[data-drag="today"]');
+        var heroEmpty = hstack && !hstack.querySelector(".task, .ptask")
+                        && !hero.querySelector(".empty, .allclear, .donefold");
+        if (heroEmpty) {
+          var msg = document.createElement("div");
+          msg.className = "empty";
+          msg.textContent = "Nothing planned for today. Add a task above, or open a task and tap 'Do today'.";
+          hstack.parentNode.insertBefore(msg, hstack.nextSibling);
+        }
+      }
+      if (week && !week.querySelector(".task, .ptask")) week.remove();
+      // a row that just left (or entered) the done fold → keep its count honest
+      if (window.LifeOS && window.LifeOS.refreshDoneFold) window.LifeOS.refreshDoneFold();
+    }
+    // A task the router changed: update its card in place, then move it to the panel the
+    // server says it now belongs to. 'gone' drops the node; 'keep' is a content-only change
+    // (rename / completion) that stays put; 'today'/'week' relocate. Returns false when the
+    // change can't be applied in place (nothing to swap, or the target panel is absent) so
+    // the caller falls back to a reload.
+    function applyTouched(c) {
+      if (!c.html || c.panel === "gone") {
+        document.querySelectorAll('[data-task-id="' + c.id + '"][data-title]')
+          .forEach(function (el) { removeNode(el, pruneEmptyPanels); });
+        return true;   // node gone (or never here) — nothing left to reload for
+      }
+      if (!swapCard(c.id, c.html)) return false;   // no node on the page → reload
+      if (c.panel === "done") {                    // completed → slide into the done fold
+        return !!(window.LifeOS && window.LifeOS.foldTaskDone
+                  && window.LifeOS.foldTaskDone(c.id));
+      }
+      if (c.panel === "keep") return true;
+      return placeHomeCard(c.id, c.panel);
     }
     var busy = false;
     // Freeze/unfreeze the composer for the duration of an in-flight capture: the textarea
@@ -90,14 +178,16 @@
         }
         if (d.ai) {                                       // AI router: its reply IS the confirmation
           if (!remSpliced) toast(d.reply || "Done");
-          if (d.week_html) insertCapture(d);              // a new task splices in place — no reload
-          // Tasks the router CHANGED ("mark X done", "push X to friday", "drop X") come back
-          // as re-rendered cards — swap each in place. Empty html means the row is gone from
-          // this surface (deleted / no longer on Today), so drop the node instead.
+          // a new task splices into its panel (hero if on-today, else the week pool); if that
+          // panel isn't on the page yet, insertCapture is false → reload so it shows up
+          var spliced = (d.today_html || d.week_html) ? insertCapture(d) : true;
+          if (!spliced) d.reload = true;
+          // Tasks the router CHANGED ("plan X for today", "push X to friday", "drop X")
+          // come back tagged with the panel they now belong to — applyTouched updates the
+          // card in place AND moves it across panels when its Today membership changed
+          // (plan → hero, unplan → week pool). A change we can't place cleanly → reload.
           (d.cards || []).forEach(function (c) {
-            if (c.html) { swapCard(c.id, c.html); return; }
-            document.querySelectorAll('[data-task-id="' + c.id + '"][data-title]')
-              .forEach(function (el) { removeNode(el); });
+            if (!applyTouched(c)) d.reload = true;
           });
           setTimeout(function () {
             qgo.textContent = "Add"; qgo.classList.remove("did");

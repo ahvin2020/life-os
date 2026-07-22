@@ -102,6 +102,102 @@
   window.LifeOS = window.LifeOS || {};
   window.LifeOS.wireTaskRow = wireTaskRow;
 
+  // ---- animate a completed Today row into the "N done today" fold --------------
+  // A row that was just completed shouldn't sit dimmed among the open ones — it slides
+  // down into the collapsible "done today" fold (the same place a page load parks it),
+  // and reverses on undo/uncomplete. Shared by the checkbox AND the composer's router-
+  // completion path (exported below). No-op off the home page (no hero).
+  var FOLD_MS = 240, DONE_SETTLE = 360;
+  function ensureDoneFold(hero) {
+    var stack = hero.querySelector('.tdrag[data-drag="today"]');
+    var fold = hero.querySelector(".donefold");
+    if (!fold && stack) {
+      fold = document.createElement("details");
+      fold.className = "donefold";
+      fold.innerHTML = "<summary></summary>";
+      stack.parentNode.insertBefore(fold, stack.nextSibling);
+    }
+    return fold;
+  }
+  // Keep the fold's "N done today" summary honest, and drop the fold when it empties.
+  function refreshDoneFold() {
+    var hero = document.querySelector(".card.hero");
+    var fold = hero && hero.querySelector(".donefold");
+    if (!fold) return;
+    var n = fold.querySelectorAll('[data-task-id][data-title]').length;
+    if (!n) { fold.remove(); return; }
+    var s = fold.querySelector("summary");
+    if (s) s.textContent = n + " done today";
+  }
+  // Collapse a row's height/opacity to nothing, then run `after` (which relocates it),
+  // restoring its original inline style (the done macro carries an inline opacity).
+  function collapseAway(row, after) {
+    var orig = row.getAttribute("style") || "";
+    var h = row.offsetHeight;
+    row.style.overflow = "hidden";
+    row.style.height = h + "px";
+    row.style.transition = "height " + FOLD_MS + "ms var(--ease), opacity var(--dur-fast) "
+      + "var(--ease), margin " + FOLD_MS + "ms var(--ease), padding " + FOLD_MS + "ms var(--ease)";
+    row.getBoundingClientRect();                       // reflow so the collapse animates
+    row.style.opacity = "0"; row.style.height = "0px";
+    row.style.marginTop = "0px"; row.style.marginBottom = "0px";
+    row.style.paddingTop = "0px"; row.style.paddingBottom = "0px";
+    setTimeout(function () {
+      if (orig) row.setAttribute("style", orig); else row.removeAttribute("style");
+      if (after) after();
+    }, FOLD_MS + 30);
+  }
+  function foldTaskDone(id) {
+    var hero = document.querySelector(".card.hero");
+    if (!hero) return false;
+    var row = hero.querySelector('.tdrag[data-drag="today"] [data-task-id="' + id + '"][data-title]')
+      || document.querySelector('.weekpool [data-task-id="' + id + '"][data-title]');
+    if (!row) return false;
+    row.classList.add("done");
+    if (row.closest(".donefold")) return true;         // already folded — nothing to move
+    var fold = ensureDoneFold(hero);
+    if (!fold) return false;
+    // reflect the incoming row in the summary right away, so a freshly-created fold never
+    // flashes an empty "▸" line during the collapse (refreshDoneFold recounts on landing).
+    var s = fold.querySelector("summary");
+    if (s) s.textContent = (fold.querySelectorAll('[data-task-id][data-title]').length + 1) + " done today";
+    setTimeout(function () {
+      collapseAway(row, function () {
+        fold.appendChild(row);
+        refreshDoneFold();
+        var wp = document.querySelector(".weekpool");   // completed a week-pool row → it emptied?
+        if (wp && !wp.querySelector(".task, .ptask")) wp.remove();
+        wireTaskRow(row);
+      });
+    }, DONE_SETTLE);
+    return true;
+  }
+  // Grow a row back into the open stack (the reverse of collapseAway).
+  function growIn(row) {
+    var h = row.offsetHeight;
+    row.style.overflow = "hidden"; row.style.height = "0px"; row.style.opacity = "0";
+    row.getBoundingClientRect();
+    row.style.transition = "height " + FOLD_MS + "ms var(--ease), opacity var(--dur) var(--ease)";
+    row.style.height = h + "px"; row.style.opacity = "1";
+    setTimeout(function () { row.removeAttribute("style"); }, FOLD_MS + 30);
+  }
+  function unfoldTaskDone(id) {
+    var hero = document.querySelector(".card.hero");
+    var fold = hero && hero.querySelector(".donefold");
+    var row = fold && fold.querySelector('[data-task-id="' + id + '"][data-title]');
+    if (!row) return false;
+    row.classList.remove("done");
+    var stack = hero.querySelector('.tdrag[data-drag="today"]');
+    if (!stack) return false;
+    stack.appendChild(row);
+    refreshDoneFold();
+    growIn(row); wireTaskRow(row);
+    return true;
+  }
+  window.LifeOS.foldTaskDone = foldTaskDone;
+  window.LifeOS.unfoldTaskDone = unfoldTaskDone;
+  window.LifeOS.refreshDoneFold = refreshDoneFold;
+
   // ---- task complete with undo (Today rows + week-pool rows; the BOARD has no
   // checkboxes — there, drag-to-Done is the completion gesture) ------------------
   function wireCheckbox(c) {
@@ -109,17 +205,23 @@
       var row = c.closest(".task"); var id = c.dataset.taskId;
       row.classList.toggle("done", c.checked);
       if (c.checked) {
+        // slide it down into the "done today" fold (home page); off-home this is a no-op
+        // and the row just dims in place, exactly as before.
+        foldTaskDone(id);
         post("/tasks/" + id + "/complete", { done: "1" }).then(function (res) {
           // A recurring task spawns its next occurrence on completion; the undo
           // inverse must also remove that fresh copy (soft-delete, itself undoable).
           var respawn = res.data && res.data.respawned;
           toast("Task completed", function () {
             c.checked = false; row.classList.remove("done");
+            unfoldTaskDone(id);                 // lift it back out of the fold
             post("/tasks/" + id + "/complete", { done: "0" });
             if (respawn) post("/tasks/" + respawn + "/delete");
           });
         });
       } else {
+        row.classList.remove("done");
+        unfoldTaskDone(id);                       // un-ticking a folded row lifts it back out
         post("/tasks/" + id + "/complete", { done: "0" });
       }
     });

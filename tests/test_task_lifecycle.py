@@ -401,6 +401,54 @@ def test_captured_task_lands_at_the_top_of_week(client):
     assert ids[0] == res["id"]
 
 
+def test_capture_splices_task_into_the_panel_it_belongs_to(client):
+    """A task captured on Today must splice into the panel the page would bucket it
+    into: an on-today task (due today / overdue / ☀-planned) → the hero (today_html),
+    a plain week task → the This-week pool (week_html). The composer used to always
+    return week_html, so a "today" task landed in the wrong panel until a reload."""
+    from routes.main import _task_splice
+    from core import web_core as wc
+    conn = _db()
+    with conn:
+        on_today = create_task(conn, "call plumber", col="week", due_date=today_iso())
+        planned = create_task(conn, "planned one", col="week", planned_on=today_iso())
+        plain = create_task(conn, "next week thing", col="week", due_date=_days(3))
+    with wc.app.app_context():
+        assert set(_task_splice(conn, on_today)) == {"today_html"}
+        assert set(_task_splice(conn, planned)) == {"today_html"}
+        assert set(_task_splice(conn, plain)) == {"week_html"}
+    conn.close()
+
+
+def test_touched_card_tags_the_panel_it_now_belongs_to(client):
+    """A task the router CHANGED comes back tagged with the panel it now belongs to, so
+    the composer can MOVE it across Today's panels: plan → hero ('today'), unplan → the
+    week pool ('week'), moved-to-backlog / deleted → 'gone', completed → 'keep' (dim in
+    place). Without this a planned task stayed stranded in This-week until a reload."""
+    from routes.main import _touched_card
+    from core import web_core as wc
+    from core.db import now_iso
+    conn = _db()
+    today = today_iso()
+    with conn:
+        tid = create_task(conn, "invoice", col="week")
+    with wc.app.app_context():
+        assert _touched_card(conn, tid)["panel"] == "week"
+        conn.execute("UPDATE tasks SET planned_on=? WHERE id=?", (today, tid))
+        assert _touched_card(conn, tid)["panel"] == "today"
+        conn.execute("UPDATE tasks SET planned_on=NULL WHERE id=?", (tid,))
+        assert _touched_card(conn, tid)["panel"] == "week"
+        conn.execute("UPDATE tasks SET col='backlog' WHERE id=?", (tid,))
+        assert _touched_card(conn, tid)["panel"] == "gone"
+        conn.execute("UPDATE tasks SET done=1, completed_at=?, col='done' WHERE id=?",
+                     (today, tid))
+        assert _touched_card(conn, tid)["panel"] == "done"
+        conn.execute("UPDATE tasks SET deleted_at=? WHERE id=?", (now_iso(), tid))
+        gone = _touched_card(conn, tid)
+        assert gone["panel"] == "gone" and gone["html"] == ""
+    conn.close()
+
+
 def test_new_task_lands_at_the_bottom(client):
     conn = _db()
     with conn:
