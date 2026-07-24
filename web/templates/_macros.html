@@ -100,9 +100,10 @@ data-subs='{{ t.subtasks|tojson }}'
     </div>
   {% else %}
     <div class="task {{ 'done' if t.done else '' }}" {{ _data(t, today) }} {% if t.done %}style="opacity:.55"{% endif %}>
-      {# fixed gutter: dot only for high/med (focus cue), empty slot keeps checkboxes aligned #}
-      <span class="prislot">{% if t.priority in ('high', 'med', 'h', 'm') %}<span class="pri {{ t.priority }}" title="{{ 'high priority' if t.priority in ('high', 'h') else 'medium priority' }}"></span>{% endif %}</span>
-      <label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}" {{ 'checked' if t.done else '' }}></label>
+      {# the whole left gutter (priority-dot slot + checkbox) is ONE tap target, so a
+         near-miss toggles instead of falling through to open the editor. Dot only for
+         high/med (focus cue); empty slot keeps checkboxes aligned. #}
+      <label class="tcheck-hit"><span class="prislot">{% if t.priority in ('high', 'med', 'h', 'm') %}<span class="pri {{ t.priority }}" title="{{ 'high priority' if t.priority in ('high', 'h') else 'medium priority' }}"></span>{% endif %}</span><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}" {{ 'checked' if t.done else '' }}></label>
       <div class="tmain">
         <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
         {% if not t.done and (t.category or t.due_date or t.link) %}
@@ -124,8 +125,8 @@ data-subs='{{ t.subtasks|tojson }}'
 {% macro week_item(t, today) -%}
   {% set has_subs = t.sub_total and t.sub_total > 0 %}
   <div class="task" {{ _data(t, today) }}>
-    <span class="prislot">{% if t.priority in ('high', 'med', 'h', 'm') %}<span class="pri {{ t.priority }}" title="{{ 'high priority' if t.priority in ('high', 'h') else 'medium priority' }}"></span>{% endif %}</span>
-    {% if not has_subs %}<label class="tcheck-hit"><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}"></label>{% endif %}
+    {% if has_subs %}<span class="prislot">{% if t.priority in ('high', 'med', 'h', 'm') %}<span class="pri {{ t.priority }}" title="{{ 'high priority' if t.priority in ('high', 'h') else 'medium priority' }}"></span>{% endif %}</span>
+    {% else %}<label class="tcheck-hit"><span class="prislot">{% if t.priority in ('high', 'med', 'h', 'm') %}<span class="pri {{ t.priority }}" title="{{ 'high priority' if t.priority in ('high', 'h') else 'medium priority' }}"></span>{% endif %}</span><input type="checkbox" class="tcheck" data-task-id="{{ t.id }}"></label>{% endif %}
     <div class="tmain">
       <label class="taskedit" tabindex="0" role="button"><span class="tt">{{ t.title }}</span></label>
       {% if has_subs or t.category or t.due_date or t.link %}

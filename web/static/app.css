@@ -301,8 +301,13 @@ a:hover { text-decoration: underline; }
   background-image: linear-gradient(var(--accent-dim), var(--accent-dim));
 }
 /* checkbox hit-area wrapper — visible box stays small, tap area grows on phones.
+   Wraps the priority-dot slot + the box so the WHOLE left gutter toggles (a near-miss
+   left of the box hits the checkbox, not the row's open-editor). The 10px gap restores
+   the spacing the old two-child [dot][box] layout had; the negative-margin/left-padding
+   grows the target leftward WITHOUT reaching right into the title's tap zone (a label
+   that crept right mis-fired the editor — see the phone ::after note below).
    Must NOT inherit the `.task label` title styles (flex:1 + strikethrough bg). */
-.task label.tcheck-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; height: 1.35em; cursor: pointer; background-image: none; overflow: visible; }
+.task label.tcheck-hit { display: inline-flex; align-items: center; justify-content: center; gap: 10px; flex: 0 0 auto; height: 1.35em; margin-left: -8px; padding-left: 8px; cursor: pointer; background-image: none; overflow: visible; }
 
 /* parent task w/ subtasks */
 .ptask { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
